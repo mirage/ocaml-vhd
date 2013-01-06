@@ -1,0 +1,24 @@
+OASISFormat: 0.3
+Name:        ocaml-vhd
+Version:     0.1.0
+Synopsis:    .vhd file manipulation
+Authors:     Jonathan Ludlam
+License:     LGPL-2.1 with OCaml linking exception
+Plugins:     META (0.3)
+BuildTools:  ocamlbuild
+
+Library vhd
+  CompiledObject:     best
+  Path:               lib
+  Findlibname:        vhd
+  Modules:            Vhd
+  BuildDepends:       lwt, lwt.unix
+
+Executable vhdtool
+  CompiledObject:     best
+  Path:               cli
+  MainIs:             cli.ml
+  Custom:             true
+  Install:            false
+  BuildDepends:       lwt, lwt.unix, vhd
+
