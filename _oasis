@@ -29,3 +29,11 @@ Executable disk_to_ocaml
   Custom:             true
   Install:            false
   BuildDepends:       lwt, lwt.unix, vhd, cstruct
+
+Executable parse_test
+  CompiledObject:     best
+  Path:               lib_test
+  MainIs:             parse_test.ml
+  Custom:             true
+  Install:            false
+  BuildDepends:       lwt, lwt.unix, vhd, cstruct, oUnit

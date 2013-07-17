@@ -18,6 +18,8 @@ module Int64Map = Map.Make(struct type t = int64 let compare = Int64.compare end
 
 type t = Cstruct.t Int64Map.t
 
+let empty = Int64Map.empty
+
 let sector_size = 512
 
 let empty_sector = String.make sector_size '\000'
