@@ -22,3 +22,10 @@ Executable vhdtool
   Install:            false
   BuildDepends:       lwt, lwt.unix, vhd
 
+Executable disk_to_ocaml
+  CompiledObject:     best
+  Path:               lib_test
+  MainIs:             disk_to_ocaml.ml
+  Custom:             true
+  Install:            false
+  BuildDepends:       lwt, lwt.unix, vhd, cstruct
