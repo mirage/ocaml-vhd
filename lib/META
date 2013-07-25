@@ -1,6 +1,6 @@
 # OASIS_START
-# DO NOT EDIT (digest: a6d0948942e8fac4313afc4570cafd92)
-version = "0.1.0"
+# DO NOT EDIT (digest: 00be23a8f598fb0df501456d2b8f6e96)
+version = "0.0.2"
 description = ".vhd file manipulation"
 requires = "lwt lwt.unix"
 archive(byte) = "vhd.cma"
