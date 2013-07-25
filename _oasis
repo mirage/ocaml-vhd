@@ -1,6 +1,6 @@
 OASISFormat: 0.3
-Name:        ocaml-vhd
-Version:     0.1.0
+Name:        vhd-format
+Version:     0.0.2
 Synopsis:    .vhd file manipulation
 Authors:     Jonathan Ludlam
 License:     LGPL-2.1 with OCaml linking exception
@@ -10,7 +10,7 @@ BuildTools:  ocamlbuild
 Library vhd
   CompiledObject:     best
   Path:               lib
-  Findlibname:        vhd
+  Findlibname:        vhd-format
   Modules:            Vhd
   BuildDepends:       lwt, lwt.unix
 
@@ -20,7 +20,7 @@ Executable vhdtool
   MainIs:             cli.ml
   Custom:             true
   Install:            false
-  BuildDepends:       lwt, lwt.unix, vhd
+  BuildDepends:       lwt, lwt.unix, vhd-format
 
 Executable disk_to_ocaml
   CompiledObject:     best
@@ -28,7 +28,7 @@ Executable disk_to_ocaml
   MainIs:             disk_to_ocaml.ml
   Custom:             true
   Install:            false
-  BuildDepends:       lwt, lwt.unix, vhd, cstruct
+  BuildDepends:       lwt, lwt.unix, vhd-format, cstruct
 
 Executable parse_test
   CompiledObject:     best
@@ -36,4 +36,4 @@ Executable parse_test
   MainIs:             parse_test.ml
   Custom:             true
   Install:            false
-  BuildDepends:       lwt, lwt.unix, vhd, cstruct, oUnit
+  BuildDepends:       lwt, lwt.unix, vhd-format, cstruct, oUnit
