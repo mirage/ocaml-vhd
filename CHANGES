@@ -1,0 +1,7 @@
+0.0.2 (2013-07-25):
+* rename to vhd-format in ocamlfind
+* start adding some unit tests
+
+0.0.1 (2013-07-25):
+* Initial development snapshot
+
