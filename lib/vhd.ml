@@ -146,7 +146,7 @@ module Footer = struct
     geometry : Geometry.t;
     disk_type : Disk_type.t;
     checksum : int32;
-    uid : string;
+    uid : Uuidm.t;
     saved_state : bool
   }
 
@@ -170,7 +170,7 @@ module Footer = struct
     Printf.printf "geometry            : %s\n" (Geometry.to_string t.geometry);
     Printf.printf "disk_type           : %s\n" (Disk_type.to_string t.disk_type);
     Printf.printf "checksum            : %lu\n" t.checksum;
-    Printf.printf "uid                 : %s\n" t.uid;
+    Printf.printf "uid                 : %s\n" (Uuidm.to_string t.uid);
     Printf.printf "saved_state         : %b\n\n" t.saved_state
 end
 
@@ -261,7 +261,7 @@ module Header = struct
     max_table_entries : int32;
     block_size : int32;
     checksum : int32;
-    parent_unique_id : string;
+    parent_unique_id : Uuidm.t;
     parent_time_stamp : int32;
     parent_unicode_name : int array;
     parent_locators : Parent_locator.t array;
@@ -313,7 +313,7 @@ module Header = struct
     Printf.printf "max_table_entries   : 0x%lx\n" t.max_table_entries;
     Printf.printf "block_size          : 0x%lx\n" t.block_size;
     Printf.printf "checksum            : %lu\n" t.checksum;
-    Printf.printf "parent_unique_id    : %s\n" t.parent_unique_id;
+    Printf.printf "parent_unique_id    : %s\n" (Uuidm.to_string t.parent_unique_id);
     Printf.printf "parent_time_stamp   : %lu\n" t.parent_time_stamp;
     Printf.printf "parent_unicode_name : '%s' (%d bytes)\n" (utf16_to_string t.parent_unicode_name) (Array.length t.parent_unicode_name);
     Printf.printf "parent_locators     : %s\n" 
@@ -604,12 +604,6 @@ let parse_bitfield num =
       else inner (n+1) (Int64.shift_left mask 1) cur
   in inner 0 Int64.one []
 
-let uuidarr_to_string uuid =
-  Printf.sprintf "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x"
-    uuid.(0) uuid.(1) uuid.(2) uuid.(3) uuid.(4) uuid.(5)
-    uuid.(6) uuid.(7) uuid.(8) uuid.(9) uuid.(10) uuid.(11)
-    uuid.(12) uuid.(13) uuid.(14) uuid.(15)
-
 let read_footer mmap pos read_512 =
   lwt footer = really_read mmap pos (if read_512 then 512L else 511L) in
   let footer = (footer,0) in
@@ -636,8 +630,12 @@ let read_footer mmap pos read_512 =
     let num,pos = unmarshal_uint32 pos in
     Disk_type.of_int32 num, pos in
   let checksum,pos = unmarshal_uint32 pos in
-  lwt list,pos = unmarshal_n 16 pos (fun pos -> Lwt.return (unmarshal_uint8 pos) ) in
-  let uid = uuidarr_to_string (Array.of_list list) in
+  let uid,pos =
+    let bytes,pos = unmarshal_string 16 pos in
+    let uid = match Uuidm.of_bytes bytes with
+    | None -> failwith (Printf.sprintf "Failed to decode UUID: %s" (String.escaped bytes))
+    | Some uid -> uid in
+    uid,pos in
   let saved_state,pos = let n,pos = unmarshal_uint8 pos in n=1, pos in
   let footer_buffer,_ = footer in
   let open Footer in
@@ -661,8 +659,12 @@ let read_header mmap pos =
   let max_table_entries,pos = unmarshal_uint32 pos in
   let block_size,pos = unmarshal_uint32 pos in
   let checksum,pos = unmarshal_uint32 pos in
-  lwt list,pos = unmarshal_n 16 pos (fun pos -> Lwt.return (unmarshal_uint8 pos)) in
-  let parent_unique_id = uuidarr_to_string (Array.of_list list) in
+  let parent_unique_id,pos =
+    let bytes,pos = unmarshal_string 16 pos in
+    let uid = match Uuidm.of_bytes bytes with
+    | None -> failwith (Printf.sprintf "Failed to decode UUID: %s" (String.escaped bytes))
+    | Some uid -> uid in
+    uid,pos in
   let parent_time_stamp,pos = unmarshal_uint32 pos in
   let _,pos = unmarshal_uint32 pos in
   let parent_unicode_name,pos = unmarshal_utf16_string 512 pos in
@@ -742,22 +744,6 @@ let marshal_geometry geom =
 
 let marshal_disk_type ty = marshal_int32 (Disk_type.to_int32 ty)
 
-let string_to_uuidarr str =
-  let list = 
-    Scanf.sscanf str "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x" 
-      (fun a b c d e f g h i j k l m n o p ->
-	[a;b;c;d;e;f;g;h;i;j;k;l;m;n;o;p]) 
-  in
-  Array.of_list list
-
-let marshal_uuid uuid =
-  let arr = 
-    try 
-      string_to_uuidarr uuid 
-    with _ -> [|0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0|] 
-  in
-  String.concat "" (List.map marshal_int8 (Array.to_list arr))
-
 let marshal_parent_locator_entry e =
   let open Parent_locator in
   let output =
@@ -792,7 +778,7 @@ let marshal_footer_no_checksum f =
       marshal_geometry f.geometry;
       marshal_disk_type f.disk_type;
       (String.make 4 '\000'); (* checksum - calculate afterwards *)
-      marshal_uuid f.uid;
+      Uuidm.to_bytes f.uid;
       marshal_int8 (if f.saved_state then 1 else 0) ] 
   in
   pad_string_to (String.concat "" output) 512
@@ -818,7 +804,7 @@ let marshal_header_no_checksum h =
       marshal_int32 h.max_table_entries;
       marshal_int32 h.block_size;
       String.make 4 '\000';
-      marshal_uuid h.parent_unique_id;
+      Uuidm.to_bytes h.parent_unique_id;
       marshal_int32 h.parent_time_stamp;
       String.make 4 '\000';
       pad_string_to (marshal_utf16 h.parent_unicode_name) 512;
@@ -1074,6 +1060,10 @@ let check_overlapping_blocks vhd =
 
 (* Constructors *)
 
+let blank_uuid = match Uuidm.of_bytes (String.make 16 '\000') with
+  | Some x -> x
+  | None -> assert false (* never happens *)
+
 (* Create a completely new sparse VHD file *)
 let create_new_dynamic filename requested_size uuid ?(sparse=true) ?(table_offset=2048L) 
     ?(block_size=block_size) ?(data_offset=512L) ?(saved_state=false)
@@ -1105,7 +1095,7 @@ let create_new_dynamic filename requested_size uuid ?(sparse=true) ?(table_offse
       max_table_entries = Int64.to_int32 (Int64.div size (Int64.of_int32 block_size));
       block_size;
       checksum = 0l;
-      parent_unique_id = "";
+      parent_unique_id = blank_uuid;
       parent_time_stamp = 0l;
       parent_unicode_name = [| |];
       parent_locators = Array.make 8 Parent_locator.null
@@ -1175,10 +1165,6 @@ let create_new_difference filename backing_vhd uuid ?(features=[])
    parent=Some parent;
    bat=bat}
 
-let make_uuid () =
-  let arr = Array.init 16 (fun i -> Random.int 255) in
-  uuidarr_to_string arr
-    
 let round_up_to_2mb_block size = 
   let newsize = Int64.mul 2097152L 
     (Int64.div (Int64.add 2097151L size) 2097152L) in

@@ -63,7 +63,7 @@ module Footer: sig
     disk_type : Disk_type.t;
     checksum : int32;
     (** one's complement checksum of the footer with the checksum set to 0l *)
-    uid : string;
+    uid : Uuidm.t;
     (** 128-bit UUID *)
     saved_state : bool
     (** true if the virtual machine is in a saved (suspended) state *)
@@ -73,11 +73,11 @@ end
 
 type vhd
 
-val create_new_dynamic: string -> int64 -> string -> ?sparse:bool -> ?table_offset:int64 ->
+val create_new_dynamic: string -> int64 -> Uuidm.t -> ?sparse:bool -> ?table_offset:int64 ->
     ?block_size:int32 -> ?data_offset:int64 -> ?saved_state:bool -> ?features:Feature.t list ->
     unit -> vhd Lwt.t
 
-val create_new_difference: string -> string -> string -> ?features: Feature.t list ->
+val create_new_difference: string -> string -> Uuidm.t -> ?features: Feature.t list ->
     ?data_offset:int64 -> ?saved_state:bool -> ?table_offset:int64 ->
     unit -> vhd Lwt.t
 
@@ -90,7 +90,5 @@ val write_sector: vhd -> int64 -> string -> unit Lwt.t
 val check_overlapping_blocks: vhd -> unit
 
 val round_up_to_2mb_block: int64 -> int64
-
-val make_uuid: unit -> string
 
 val really_read: Lwt_bytes.t -> int64 -> int64 -> string Lwt.t
