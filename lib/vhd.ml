@@ -15,41 +15,109 @@
 
 (* VHD manipulation *)
 
-type feature = 
-    | Feature_no_features_enabled
-    | Feature_temporary
-    | Feature_reserved
+module Feature = struct
+  type t = 
+    | Temporary
 
-type disk_type = 
-    | DT_None
-    | DT_Reserved of int
-    | DT_Fixed_hard_disk
-    | DT_Dynamic_hard_disk
-    | DT_Differencing_hard_disk
+  let of_int x =
+    if x land 1 <> 0 then [ Temporary ] else []
 
-type geometry = {
-  g_cylinders : int;
-  g_heads : int;
-  g_sectors : int;
-}
+  let to_int ts =
+    let one = function
+      | Temporary -> 1 in
+    let reserved = 2 in (* always set *)
+    List.fold_left (lor) reserved (List.map one ts)
 
-type vhd_footer = {
-  f_cookie : string;
-  f_features : feature list;
-  f_format_version : int32;
-  f_data_offset : int64;
-  f_time_stamp : int32;
-  f_creator_application : string;
-  f_creator_version : int32;
-  f_creator_host_os : string;
-  f_original_size : int64;
-  f_current_size : int64;
-  f_geometry : geometry;
-  f_disk_type : disk_type;
-  f_checksum : int32;
-  f_uid : string;
-  f_saved_state : bool
-}
+  let to_string = function
+    | Temporary -> "Temporary"
+end
+
+module Disk_type = struct
+  type t = 
+    | None
+    | Reserved of int
+    | Fixed_hard_disk
+    | Dynamic_hard_disk
+    | Differencing_hard_disk
+
+  let of_int32 = function
+    | 0l -> None
+    | 1l -> Reserved 1
+    | 2l -> Fixed_hard_disk 
+    | 3l -> Dynamic_hard_disk
+    | 4l -> Differencing_hard_disk
+    | 5l -> Reserved 5
+    | 6l -> Reserved 6
+    | _ -> failwith "Unhandled disk type!"
+
+  let to_int32 = function
+    | None -> 0l
+    | Reserved i -> Int32.of_int i
+    | Fixed_hard_disk -> 2l
+    | Dynamic_hard_disk -> 3l
+    | Differencing_hard_disk -> 4l
+
+  let to_string = function
+    | None -> "None"
+    | Reserved x -> Printf.sprintf "Reserved %d" x
+    | Fixed_hard_disk -> "Fixed_hard_disk"
+    | Dynamic_hard_disk -> "Dynamic_hard_disk"
+    | Differencing_hard_disk -> "Differencing_hard_disk"
+end
+
+module Host_OS = struct
+  type t =
+    | Windows
+    | Macintosh
+    | Other of string
+
+  let of_bytes = function
+    | "\x57\x69\x32\x6b" -> Windows
+    | "\x4d\x61\x63\x20" -> Macintosh
+    | x -> Other x
+
+  let to_bytes = function
+    | Windows -> "\x57\x69\x32\x6b"
+    | Macintosh -> "\x4d\x61\x63\x20"
+    | Other x -> x
+
+  let to_string = function
+    | Windows -> "Windows"
+    | Macintosh -> "Macintosh"
+    | Other x -> Printf.sprintf "Other [%02x %02x %02x %02x]"
+      (int_of_char x.[0]) (int_of_char x.[1]) (int_of_char x.[2]) (int_of_char x.[3])
+end
+
+module Geometry = struct
+  type t = {
+    cylinders : int;
+    heads : int;
+    sectors : int;
+  }
+
+  let to_string t = Printf.sprintf "{ cylinders = %d; heads = %d; sectors = %d }"
+    t.cylinders t.heads t.sectors
+end
+
+module Footer = struct
+  type t = {
+    cookie : string;
+    features : Feature.t list;
+    format_version : int32;
+    data_offset : int64;
+    time_stamp : int32;
+    creator_application : string;
+    creator_version : int32;
+    creator_host_os : Host_OS.t;
+    original_size : int64;
+    current_size : int64;
+    geometry : Geometry.t;
+    disk_type : Disk_type.t;
+    checksum : int32;
+    uid : string;
+    saved_state : bool
+  }
+end
 
 type parent_locator = {
   platform_code : int32;
@@ -83,7 +151,7 @@ type vhd = {
   filename : string;
   mmap : Lwt_bytes.t;
   header : vhd_header;
-  footer : vhd_footer;
+  footer : Footer.t;
   parent : vhd option;
   bat : int32 array;
 }
@@ -399,9 +467,8 @@ let unmarshal_geometry pos =
   let cyl,pos = unmarshal_uint16 pos in
   let heads,pos = unmarshal_uint8 pos in
   let sectors, pos = unmarshal_uint8 pos in
-  {g_cylinders = cyl;
-   g_heads = heads;
-   g_sectors = sectors}, pos
+  {Geometry.cylinders = cyl;
+   heads; sectors}, pos
 
 let unmarshal_parent_locator mmap pos =
   let platform_code,pos = unmarshal_uint32 pos in
@@ -459,43 +526,33 @@ let uuidarr_to_string uuid =
 let read_footer mmap pos read_512 =
   lwt footer = really_read mmap pos (if read_512 then 512L else 511L) in
   let footer = (footer,0) in
-  let f_cookie,pos = unmarshal_string 8 footer in
-  let f_features,pos = 
-    let f_featuresnum,pos = unmarshal_uint32 pos in
-    List.map (function | 0 -> Feature_temporary | 1 -> Feature_reserved | _ -> failwith "Unhandled feature!") 
-      (parse_bitfield (Int64.of_int32 f_featuresnum)), pos
-  in
-  let f_format_version,pos = unmarshal_uint32 pos in
-  let f_data_offset,pos = unmarshal_uint64 pos in
-  let f_time_stamp,pos = unmarshal_uint32 pos in
-  let f_creator_application,pos = unmarshal_string 4 pos in
-  let f_creator_version,pos = unmarshal_uint32 pos in
-  let f_creator_host_os,pos = unmarshal_string 4 pos in
-  let f_original_size,pos = unmarshal_uint64 pos in
-  let f_current_size,pos = unmarshal_uint64 pos in
-  let f_geometry,pos = unmarshal_geometry pos in
-  let f_disk_type,pos = 
+  let cookie,pos = unmarshal_string 8 footer in
+  let features,pos = 
+    let featuresnum,pos = unmarshal_uint32 pos in
+    Feature.of_int (Int32.to_int featuresnum), pos in
+  let format_version,pos = unmarshal_uint32 pos in
+  let data_offset,pos = unmarshal_uint64 pos in
+  let time_stamp,pos = unmarshal_uint32 pos in
+  let creator_application,pos = unmarshal_string 4 pos in
+  let creator_version,pos = unmarshal_uint32 pos in
+  let creator_host_os,pos =
+    let s,pos = unmarshal_string 4 pos in
+    Host_OS.of_bytes s, pos in
+  let original_size,pos = unmarshal_uint64 pos in
+  let current_size,pos = unmarshal_uint64 pos in
+  let geometry,pos = unmarshal_geometry pos in
+  let disk_type,pos = 
     let num,pos = unmarshal_uint32 pos in
-    (match Int32.to_int num with
-      | 0 -> DT_None
-      | 1 -> DT_Reserved 1
-      | 2 -> DT_Fixed_hard_disk 
-      | 3 -> DT_Dynamic_hard_disk
-      | 4 -> DT_Differencing_hard_disk
-      | 5 -> DT_Reserved 5
-      | 6 -> DT_Reserved 6
-      | _ -> failwith "Unhandled disk type!"), pos
-  in
-  let f_checksum,pos = unmarshal_uint32 pos in
+    Disk_type.of_int32 num, pos in
+  let checksum,pos = unmarshal_uint32 pos in
   lwt list,pos = unmarshal_n 16 pos (fun pos -> Lwt.return (unmarshal_uint8 pos) ) in
-  let uuid = uuidarr_to_string (Array.of_list list) in
-  let f_saved_state,pos = let n,pos = unmarshal_uint8 pos in n=1, pos in
+  let uid = uuidarr_to_string (Array.of_list list) in
+  let saved_state,pos = let n,pos = unmarshal_uint8 pos in n=1, pos in
   let footer_buffer,_ = footer in
-  Lwt.return {f_cookie=f_cookie;f_features=f_features;f_format_version=f_format_version;
-   f_data_offset=f_data_offset;f_time_stamp=f_time_stamp;f_creator_version=f_creator_version;
-   f_creator_application=f_creator_application;f_creator_host_os=f_creator_host_os;
-   f_original_size=f_original_size;f_current_size=f_current_size;f_geometry=f_geometry;
-   f_disk_type=f_disk_type;f_checksum=f_checksum;f_uid=uuid;f_saved_state=f_saved_state}
+  let open Footer in
+  Lwt.return {cookie; features; format_version; data_offset; time_stamp; creator_version;
+   creator_application; creator_host_os; original_size; current_size; geometry;
+   disk_type; checksum; uid; saved_state}
 
 let read_header mmap pos =
   lwt str = really_read mmap pos 1024L in
@@ -564,7 +621,7 @@ let rec load_vhd filename =
   lwt header = read_header mmap 512L in
   lwt bat = read_bat mmap footer header in
   lwt parent = 
-    if footer.f_disk_type = DT_Differencing_hard_disk then
+    if footer.Footer.disk_type = Disk_type.Differencing_hard_disk then
       let parent_filename = get_parent_filename header in
       lwt parent = load_vhd parent_filename in
       Lwt.return (Some parent)
@@ -577,32 +634,17 @@ let rec load_vhd filename =
 (* Specific VHD marshalling functions                                         *)
 (******************************************************************************)
 
-let marshal_features fts =
-  let feature_to_number f =
-    match f with
-      | Feature_no_features_enabled -> 0
-      | Feature_temporary -> 1
-      | Feature_reserved -> 2
-  in 
-  let v = List.fold_left (lor) 0 (List.map feature_to_number fts) in
-  marshal_int32 (Int32.of_int v)
+let marshal_features xs = marshal_int32 (Int32.of_int (Feature.to_int xs))
 
 let marshal_geometry geom =
+  let open Geometry in
   let output =
-    [ marshal_int16 geom.g_cylinders;
-      marshal_int8 geom.g_heads;
-      marshal_int8 geom.g_sectors ] in
+    [ marshal_int16 geom.cylinders;
+      marshal_int8 geom.heads;
+      marshal_int8 geom.sectors ] in
   String.concat "" output
 
-let marshal_disk_type ty = 
-  let v = match ty with
-    | DT_None -> 0
-    | DT_Reserved i -> i
-    | DT_Fixed_hard_disk -> 2
-    | DT_Dynamic_hard_disk -> 3
-    | DT_Differencing_hard_disk -> 4
-  in
-  marshal_int32 (Int32.of_int v)
+let marshal_disk_type ty = marshal_int32 (Disk_type.to_int32 ty)
 
 let string_to_uuidarr str =
   let list = 
@@ -638,22 +680,23 @@ let generic_calc_checksum m =
   Int32.lognot (inner 0 0l)
 
 let marshal_footer_no_checksum f =
+  let open Footer in
   let output =
-    [ f.f_cookie;
-      marshal_features f.f_features;
-      marshal_int32 f.f_format_version;
-      marshal_int64 f.f_data_offset;
-      marshal_int32 f.f_time_stamp;
-      f.f_creator_application;
-      marshal_int32 f.f_creator_version;
-      f.f_creator_host_os;
-      marshal_int64 f.f_original_size;
-      marshal_int64 f.f_current_size;
-      marshal_geometry f.f_geometry;
-      marshal_disk_type f.f_disk_type;
+    [ f.cookie;
+      marshal_features f.features;
+      marshal_int32 f.format_version;
+      marshal_int64 f.data_offset;
+      marshal_int32 f.time_stamp;
+      f.creator_application;
+      marshal_int32 f.creator_version;
+      Host_OS.to_bytes f.creator_host_os;
+      marshal_int64 f.original_size;
+      marshal_int64 f.current_size;
+      marshal_geometry f.geometry;
+      marshal_disk_type f.disk_type;
       (String.make 4 '\000'); (* checksum - calculate afterwards *)
-      marshal_uuid f.f_uid;
-      marshal_int8 (if f.f_saved_state then 1 else 0) ] 
+      marshal_uuid f.uid;
+      marshal_int8 (if f.saved_state then 1 else 0) ] 
   in
   pad_string_to (String.concat "" output) 512
 
@@ -741,20 +784,6 @@ let dump_sector sector =
 	Printf.printf "%02x " (Char.code sector.[i])
     done
 
-let feature_to_string f =
-  match f with
-    | Feature_no_features_enabled -> "No features enabled"
-    | Feature_temporary -> "Temporary"
-    | Feature_reserved -> "Reserved"
-	
-let disk_type_to_string f =
-  match f with
-    | DT_None -> "None"
-    | DT_Reserved i -> Printf.sprintf "Reserved (%d)" i
-    | DT_Fixed_hard_disk -> "Fixed_hard_disk"
-    | DT_Dynamic_hard_disk -> "Dynamic_hard_disk"
-    | DT_Differencing_hard_disk -> "Differencing_hard_disk"
-
 let parent_locator_to_string p =
   let pc2s x = match x with 
     | 0x0l -> "None"
@@ -770,23 +799,24 @@ let parent_locator_to_string p =
     p.platform_data_length p.platform_data_offset p.platform_data
 
 let dump_footer f =
+  let open Footer in
   Printf.printf "VHD FOOTER\n";
   Printf.printf "-=-=-=-=-=\n\n";
-  Printf.printf "cookie              : %s\n" f.f_cookie;
-  Printf.printf "features            : %s\n" (String.concat "," (List.map feature_to_string f.f_features));
-  Printf.printf "format_version      : 0x%lx\n" f.f_format_version;
-  Printf.printf "data_offset         : 0x%Lx\n" f.f_data_offset;
-  Printf.printf "time_stamp          : %lu\n" f.f_time_stamp;
-  Printf.printf "creator_application : %s\n" f.f_creator_application;
-  Printf.printf "creator_version     : 0x%lx\n" f.f_creator_version;
-  Printf.printf "creator_host_os     : %s\n" f.f_creator_host_os;
-  Printf.printf "original_size       : 0x%Lx\n" f.f_original_size;
-  Printf.printf "current_size        : 0x%Lx\n" f.f_current_size;
-  Printf.printf "geometry            : (%d,%d,%d)\n" f.f_geometry.g_cylinders f.f_geometry.g_heads f.f_geometry.g_sectors;
-  Printf.printf "disk_type           : %s\n" (disk_type_to_string f.f_disk_type);
-  Printf.printf "checksum            : %lu\n" f.f_checksum;
-  Printf.printf "uid                 : %s\n" f.f_uid;
-  Printf.printf "saved_state         : %b\n\n" f.f_saved_state
+  Printf.printf "cookie              : %s\n" f.cookie;
+  Printf.printf "features            : %s\n" (String.concat "," (List.map Feature.to_string f.features));
+  Printf.printf "format_version      : 0x%lx\n" f.format_version;
+  Printf.printf "data_offset         : 0x%Lx\n" f.data_offset;
+  Printf.printf "time_stamp          : %lu\n" f.time_stamp;
+  Printf.printf "creator_application : %s\n" f.creator_application;
+  Printf.printf "creator_version     : 0x%lx\n" f.creator_version;
+  Printf.printf "creator_host_os     : %s\n" (Host_OS.to_string f.creator_host_os);
+  Printf.printf "original_size       : 0x%Lx\n" f.original_size;
+  Printf.printf "current_size        : 0x%Lx\n" f.current_size;
+  Printf.printf "geometry            : %s\n" (Geometry.to_string f.geometry);
+  Printf.printf "disk_type           : %s\n" (Disk_type.to_string f.disk_type);
+  Printf.printf "checksum            : %lu\n" f.checksum;
+  Printf.printf "uid                 : %s\n" f.uid;
+  Printf.printf "saved_state         : %b\n\n" f.saved_state
 
 let dump_header f =
   Printf.printf "VHD HEADER\n";
@@ -836,17 +866,17 @@ let get_offset_info_of_sector vhd sector =
   (block_num,sec_in_block,Int64.to_int bitmap_size, Int64.to_int bitmap_byte,Int64.to_int bitmap_bit,mask,sectorpos,bitmap_byte_pos)
 
 let rec get_sector_pos vhd sector =
-  if Int64.mul sector 512L > vhd.footer.f_current_size then
+  if Int64.mul sector 512L > vhd.footer.Footer.current_size then
     failwith "Sector out of bounds";
 
   let (block_num,sec_in_block,bitmap_size,bitmap_byte,bitmap_bit,mask,sectorpos,bitmap_byte_pos) = 
     get_offset_info_of_sector vhd sector in
 
   let maybe_get_from_parent () =
-    match vhd.footer.f_disk_type,vhd.parent with
-      | DT_Differencing_hard_disk,Some vhd2 -> get_sector_pos vhd2 sector
-      | DT_Differencing_hard_disk,None -> failwith "Sector in parent but no parent found!"
-      | DT_Dynamic_hard_disk,_ -> Lwt.return None
+    match vhd.footer.Footer.disk_type,vhd.parent with
+      | Disk_type.Differencing_hard_disk,Some vhd2 -> get_sector_pos vhd2 sector
+      | Disk_type.Differencing_hard_disk,None -> failwith "Sector in parent but no parent found!"
+      | Disk_type.Dynamic_hard_disk,_ -> Lwt.return None
   in
 
   if (vhd.bat.(block_num) = 0xffffffffl)
@@ -855,7 +885,7 @@ let rec get_sector_pos vhd sector =
   else 
     begin      
       lwt bitmap = read_bitmap vhd block_num in
-      if vhd.footer.f_disk_type = DT_Differencing_hard_disk &&
+      if vhd.footer.Footer.disk_type = Disk_type.Differencing_hard_disk &&
 	bitmap.(bitmap_byte) land mask <> mask
       then
 	maybe_get_from_parent ()
@@ -891,7 +921,7 @@ let write_trailing_footer vhd =
     
 let write_vhd vhd =
   lwt () = really_write vhd.mmap 0L (marshal_footer vhd.footer) in
-  lwt () = really_write vhd.mmap (vhd.footer.f_data_offset) (marshal_header vhd.header) in
+  lwt () = really_write vhd.mmap (vhd.footer.Footer.data_offset) (marshal_header vhd.header) in
   lwt () = write_locators vhd.mmap vhd.header in
   lwt () = write_bat vhd.mmap vhd in
   (* Assume the data is there, or will be written later *)
@@ -953,9 +983,9 @@ let check_overlapping_blocks vhd =
     [Start (name,start); End (name,Int64.sub (Int64.add start length) 1L)] 
   in
   let blocks = tomarkers "footer_at_top" 0L 512L in
-  let blocks = (tomarkers "header" vhd.footer.f_data_offset 1024L) @ blocks in
+  let blocks = (tomarkers "header" vhd.footer.Footer.data_offset 1024L) @ blocks in
   let blocks =
-    if vhd.footer.f_disk_type = DT_Differencing_hard_disk 
+    if vhd.footer.Footer.disk_type = Disk_type.Differencing_hard_disk 
     then
       begin
 	let locators = Array.mapi (fun i l -> (i,l)) vhd.header.h_parent_locators in
@@ -996,7 +1026,7 @@ let check_overlapping_blocks vhd =
 (* Create a completely new sparse VHD file *)
 let create_new_dynamic filename requested_size uuid ?(sparse=true) ?(table_offset=2048L) 
     ?(block_size=block_size) ?(data_offset=512L) ?(saved_state=false)
-    ?(features=[Feature_reserved; Feature_temporary]) () =
+    ?(features=[Feature.Temporary]) () =
 
   (* Round up to the nearest 2-meg block *)
   let size = Int64.mul (Int64.div (Int64.add 2097151L requested_size) 2097152L) 2097152L in
@@ -1004,28 +1034,27 @@ let create_new_dynamic filename requested_size uuid ?(sparse=true) ?(table_offse
   let geometry = 
     let (cyls,heads,secs) = get_chs (Int64.to_int (Int64.div size sector_sizeL)) in
     {
-      g_cylinders = cyls; 
-      g_heads=heads; 
-      g_sectors=secs
+      Geometry.cylinders = cyls; 
+      heads; 
+      sectors=secs
     }
   in
   let footer = 
     {
-      f_cookie = footer_cookie;
-      f_features = features;
-      f_format_version = footer_version;
-      f_data_offset = data_offset; (* pointer to header *)
-      f_time_stamp = 0l;
-      f_creator_application = creator_application;
-      f_creator_version = creator_version;
-      f_creator_host_os = "\000\000\000\000";
-      f_original_size = size;
-      f_current_size = size;
-      f_geometry = geometry;
-      f_disk_type = DT_Dynamic_hard_disk;
-      f_checksum = 0l; (* Filled in later *)
-      f_uid = uuid;
-      f_saved_state = saved_state;
+      Footer.cookie = footer_cookie;
+      features;
+      format_version = footer_version;
+      data_offset;
+      time_stamp = 0l;
+      creator_application; creator_version;
+      creator_host_os = Host_OS.Other "\000\000\000\000";
+      original_size = size;
+      current_size = size;
+      geometry;
+      disk_type = Disk_type.Dynamic_hard_disk;
+      checksum = 0l; (* Filled in later *)
+      uid = uuid;
+      saved_state;
     }
   in
   let header = 
@@ -1054,26 +1083,25 @@ let create_new_dynamic filename requested_size uuid ?(sparse=true) ?(table_offse
    parent=None;
    bat=bat}
 
-let create_new_difference filename backing_vhd uuid ?(features=[Feature_reserved])
+let create_new_difference filename backing_vhd uuid ?(features=[])
     ?(data_offset=512L) ?(saved_state=false) ?(table_offset=2048L) () =
   lwt parent = load_vhd backing_vhd in
   let footer = 
     {
-      f_cookie = footer_cookie;
-      f_features = features;
-      f_format_version = footer_version;
-      f_data_offset = data_offset;
-      f_time_stamp = get_now ();
-      f_creator_application = creator_application;
-      f_creator_version = creator_version;
-      f_creator_host_os = "\000\000\000\000";
-      f_original_size = parent.footer.f_current_size;
-      f_current_size = parent.footer.f_current_size;
-      f_geometry = parent.footer.f_geometry;
-      f_disk_type = DT_Differencing_hard_disk;
-      f_checksum = 0l;
-      f_uid = uuid;
-      f_saved_state = saved_state;
+      Footer.cookie = footer_cookie;
+      features;
+      format_version = footer_version;
+      data_offset;
+      time_stamp = get_now ();
+      creator_application; creator_version;
+      creator_host_os = Host_OS.Other "\000\000\000\000";
+      original_size = parent.footer.Footer.current_size;
+      current_size = parent.footer.Footer.current_size;
+      geometry = parent.footer.Footer.geometry;
+      disk_type = Disk_type.Differencing_hard_disk;
+      checksum = 0l;
+      uid = uuid;
+      saved_state = saved_state;
     }
   in
   let locator0 = 
@@ -1096,7 +1124,7 @@ let create_new_difference filename backing_vhd uuid ?(features=[Feature_reserved
       h_max_table_entries = parent.header.h_max_table_entries;
       h_block_size = parent.header.h_block_size;
       h_checksum = 0l;
-      h_parent_unique_id = parent.footer.f_uid;
+      h_parent_unique_id = parent.footer.Footer.uid;
       h_parent_time_stamp = get_parent_modification_time backing_vhd;
       h_parent_unicode_name = utf16_of_utf8 backing_vhd;
       h_parent_locators = [| locator0; null_locator; null_locator; null_locator;
