@@ -196,24 +196,31 @@ module Parent_locator = struct
       t.platform_data_length t.platform_data_offset t.platform_data
 end
 
-type vhd_header = {
-  h_cookie : string;
-  h_data_offset : int64;
-  h_table_offset : int64;
-  h_header_version : int32;
-  h_max_table_entries : int32;
-  h_block_size : int32;
-  h_checksum : int32;
-  h_parent_unique_id : string;
-  h_parent_time_stamp : int32;
-  h_parent_unicode_name : int array;
-  h_parent_locators : Parent_locator.t array;
-}
+module Header = struct
+
+  type t = {
+    (* cxsparse *)
+    (* 0xFFFFFFFF *)
+    table_offset : int64;
+    header_version : int32;
+    max_table_entries : int32;
+    block_size : int32;
+    checksum : int32;
+    parent_unique_id : string;
+    parent_time_stamp : int32;
+    parent_unicode_name : int array;
+    parent_locators : Parent_locator.t array;
+  }
+
+  let magic = "cxsparse"
+
+  let expected_data_offset = 0xFFFFFFFFFFFFFFFFL (* XXX: the spec says 8 bytes containing 0xFFFFFFFF *)
+end
 
 type vhd = {
   filename : string;
   mmap : Lwt_bytes.t;
-  header : vhd_header;
+  header : Header.t;
   footer : Footer.t;
   parent : vhd option;
   bat : int32 array;
@@ -221,13 +228,11 @@ type vhd = {
 
 
 let footer_cookie = "conectix"
-let header_cookie = "cxsparse"
 
 let sector_size = 512
 let sector_sizeL = 512L
 let block_size = 0x200000l
 let unusedl = 0xffffffffl
-let unusedL = 0xffffffffffffffffL
 
 let header_version = 0x00010000l
 let footer_version = 0x00010000l
@@ -506,7 +511,7 @@ let pad_string_to str n =
 (******************************************************************************)
 
 let get_block_sizes vhd =
-  let block_size = vhd.header.h_block_size in
+  let block_size = vhd.header.Header.block_size in
   let nsectors = Int32.div block_size 512l in
   let bitmap_size = Int32.div nsectors 8l in
   (block_size, bitmap_size, Int32.add block_size bitmap_size)
@@ -606,28 +611,30 @@ let read_footer mmap pos read_512 =
 let read_header mmap pos =
   lwt str = really_read mmap pos 1024L in
   let header = (str,0) in
-  let h_cookie,pos = unmarshal_string 8 header in
-  let h_data_offset,pos = unmarshal_uint64 pos in
-  let h_table_offset,pos = unmarshal_uint64 pos in
-  let h_header_version,pos = unmarshal_uint32 pos in
-  let h_max_table_entries,pos = unmarshal_uint32 pos in
-  let h_block_size,pos = unmarshal_uint32 pos in
-  let h_checksum,pos = unmarshal_uint32 pos in
+  let cookie,pos = unmarshal_string 8 header in
+  if cookie <> Header.magic
+  then failwith (Printf.sprintf "Expected cookie %s, got %s" Header.magic cookie);
+  let data_offset,pos = unmarshal_uint64 pos in
+  if data_offset <> Header.expected_data_offset
+  then failwith (Printf.sprintf "Expected header data_offset %Lx, got %Lx" Header.expected_data_offset data_offset);
+  let table_offset,pos = unmarshal_uint64 pos in
+  let header_version,pos = unmarshal_uint32 pos in
+  let max_table_entries,pos = unmarshal_uint32 pos in
+  let block_size,pos = unmarshal_uint32 pos in
+  let checksum,pos = unmarshal_uint32 pos in
   lwt list,pos = unmarshal_n 16 pos (fun pos -> Lwt.return (unmarshal_uint8 pos)) in
-  let parent_uuid = uuidarr_to_string (Array.of_list list) in
-  let h_parent_time_stamp,pos = unmarshal_uint32 pos in
+  let parent_unique_id = uuidarr_to_string (Array.of_list list) in
+  let parent_time_stamp,pos = unmarshal_uint32 pos in
   let _,pos = unmarshal_uint32 pos in
-  let h_parent_unicode_name,pos = unmarshal_utf16_string 512 pos in
-  lwt h_parent_locators,pos = unmarshal_parent_locators mmap pos in
-  Lwt.return {h_cookie=h_cookie; h_data_offset=h_data_offset;h_table_offset=h_table_offset;
-   h_header_version=h_header_version;h_max_table_entries=h_max_table_entries;
-   h_block_size=h_block_size; h_checksum=h_checksum; h_parent_unique_id=parent_uuid;
-   h_parent_time_stamp=h_parent_time_stamp; h_parent_unicode_name=h_parent_unicode_name;
-   h_parent_locators=h_parent_locators}
+  let parent_unicode_name,pos = unmarshal_utf16_string 512 pos in
+  lwt parent_locators,pos = unmarshal_parent_locators mmap pos in
+  Lwt.return {Header.table_offset;header_version;max_table_entries;
+   block_size; checksum; parent_unique_id; parent_time_stamp; parent_unicode_name;
+   parent_locators}
 
 let read_bat mmap footer header =
-  let bat_start = header.h_table_offset in
-  let bat_size = Int32.to_int header.h_max_table_entries in
+  let bat_start = header.Header.table_offset in
+  let bat_size = Int32.to_int header.Header.max_table_entries in
   lwt str = really_read mmap bat_start (Int64.of_int (bat_size * 4)) in
   let pos = (str,0) in
   lwt list,pos = unmarshal_n bat_size pos (fun pos -> Lwt.return (unmarshal_uint32 pos)) in
@@ -644,8 +651,8 @@ let read_bitmap vhd block =
 (* Get the filename of the parent VHD if necessary *)
 let get_parent_filename header =
   let rec test n =
-    if n>=Array.length header.h_parent_locators then (failwith "Failed to find parent!");
-    let l = header.h_parent_locators.(n) in
+    if n>=Array.length header.Header.parent_locators then (failwith "Failed to find parent!");
+    let l = header.Header.parent_locators.(n) in
     let open Parent_locator in
     Printf.printf "locator %d\nplatform_code: %s\nplatform_data: %s\n" n (Platform_code.to_string l.platform_code) l.platform_data;
     match l.platform_code with
@@ -763,26 +770,27 @@ let marshal_footer f =
   marshalled
 
 let marshal_header_no_checksum h =
+  let open Header in
   let output = 
-    [ h.h_cookie;
-      marshal_int64 h.h_data_offset;
-      marshal_int64 h.h_table_offset;
-      marshal_int32 h.h_header_version;
-      marshal_int32 h.h_max_table_entries;
-      marshal_int32 h.h_block_size;
+    [ magic;
+      marshal_int64 expected_data_offset;
+      marshal_int64 h.table_offset;
+      marshal_int32 h.header_version;
+      marshal_int32 h.max_table_entries;
+      marshal_int32 h.block_size;
       String.make 4 '\000';
-      marshal_uuid h.h_parent_unique_id;
-      marshal_int32 h.h_parent_time_stamp;
+      marshal_uuid h.parent_unique_id;
+      marshal_int32 h.parent_time_stamp;
       String.make 4 '\000';
-      pad_string_to (marshal_utf16 h.h_parent_unicode_name) 512;
-      marshal_parent_locator_entry h.h_parent_locators.(0);
-      marshal_parent_locator_entry h.h_parent_locators.(1);
-      marshal_parent_locator_entry h.h_parent_locators.(2);
-      marshal_parent_locator_entry h.h_parent_locators.(3);
-      marshal_parent_locator_entry h.h_parent_locators.(4);
-      marshal_parent_locator_entry h.h_parent_locators.(5);
-      marshal_parent_locator_entry h.h_parent_locators.(6);
-      marshal_parent_locator_entry h.h_parent_locators.(7);
+      pad_string_to (marshal_utf16 h.parent_unicode_name) 512;
+      marshal_parent_locator_entry h.parent_locators.(0);
+      marshal_parent_locator_entry h.parent_locators.(1);
+      marshal_parent_locator_entry h.parent_locators.(2);
+      marshal_parent_locator_entry h.parent_locators.(3);
+      marshal_parent_locator_entry h.parent_locators.(4);
+      marshal_parent_locator_entry h.parent_locators.(5);
+      marshal_parent_locator_entry h.parent_locators.(6);
+      marshal_parent_locator_entry h.parent_locators.(7);
     ] 
   in
   pad_string_to (String.concat "" output) 1024
@@ -809,10 +817,10 @@ let write_locator mmap entry =
   end else Lwt.return ()
 
 let write_locators mmap header =
-  Lwt_list.iter_p (fun entry -> write_locator mmap entry) (Array.to_list header.h_parent_locators)
+  Lwt_list.iter_p (fun entry -> write_locator mmap entry) (Array.to_list header.Header.parent_locators)
 
 let write_bat mmap vhd =
-  let bat_start = vhd.header.h_table_offset in
+  let bat_start = vhd.header.Header.table_offset in
   let rec inner i =
 	  if i=Array.length vhd.bat then Lwt.return () else begin
 		  let entry = vhd.bat.(i) in
@@ -857,20 +865,21 @@ let dump_footer f =
   Printf.printf "saved_state         : %b\n\n" f.saved_state
 
 let dump_header f =
+  let open Header in
   Printf.printf "VHD HEADER\n";
   Printf.printf "-=-=-=-=-=\n";
-  Printf.printf "cookie              : %s\n" f.h_cookie;
-  Printf.printf "data_offset         : %Lx\n" f.h_data_offset;
-  Printf.printf "table_offset        : %Lu\n" f.h_table_offset;
-  Printf.printf "header_version      : 0x%lx\n" f.h_header_version;
-  Printf.printf "max_table_entries   : 0x%lx\n" f.h_max_table_entries;
-  Printf.printf "block_size          : 0x%lx\n" f.h_block_size;
-  Printf.printf "checksum            : %lu\n" f.h_checksum;
-  Printf.printf "parent_unique_id    : %s\n" f.h_parent_unique_id;
-  Printf.printf "parent_time_stamp   : %lu\n" f.h_parent_time_stamp;
-  Printf.printf "parent_unicode_name : '%s' (%d bytes)\n" (utf16_to_string f.h_parent_unicode_name) (Array.length f.h_parent_unicode_name);
+  Printf.printf "cookie              : %s\n" magic;
+  Printf.printf "data_offset         : %Lx\n" expected_data_offset;
+  Printf.printf "table_offset        : %Lu\n" f.table_offset;
+  Printf.printf "header_version      : 0x%lx\n" f.header_version;
+  Printf.printf "max_table_entries   : 0x%lx\n" f.max_table_entries;
+  Printf.printf "block_size          : 0x%lx\n" f.block_size;
+  Printf.printf "checksum            : %lu\n" f.checksum;
+  Printf.printf "parent_unique_id    : %s\n" f.parent_unique_id;
+  Printf.printf "parent_time_stamp   : %lu\n" f.parent_time_stamp;
+  Printf.printf "parent_unicode_name : '%s' (%d bytes)\n" (utf16_to_string f.parent_unicode_name) (Array.length f.Header.parent_unicode_name);
   Printf.printf "parent_locators     : %s\n" 
-    (String.concat "\n                      " (List.map Parent_locator.to_string (Array.to_list f.h_parent_locators)))
+    (String.concat "\n                      " (List.map Parent_locator.to_string (Array.to_list f.parent_locators)))
     
 let dump_bat b =
   Printf.printf "BAT\n";
@@ -890,7 +899,7 @@ let rec dump_vhd vhd =
 (******************************************************************************)
 
 let get_offset_info_of_sector vhd sector =
-  let block_size_in_sectors = Int64.div (Int64.of_int32 vhd.header.h_block_size) 512L in
+  let block_size_in_sectors = Int64.div (Int64.of_int32 vhd.header.Header.block_size) 512L in
   let block_num = Int64.to_int (Int64.div sector block_size_in_sectors) in
   let sec_in_block = Int64.rem sector block_size_in_sectors in
   let bitmap_byte = Int64.div sec_in_block 8L in
@@ -949,8 +958,8 @@ let get_top_unused_offset vhd =
     total_offset
   with 
     | EmptyVHD ->
-	let pos = Int64.add vhd.header.h_table_offset 
-	  (Int64.mul 4L (Int64.of_int32 vhd.header.h_max_table_entries)) in
+	let pos = Int64.add vhd.header.Header.table_offset 
+	  (Int64.mul 4L (Int64.of_int32 vhd.header.Header.max_table_entries)) in
 	pos
      
 let write_trailing_footer vhd =
@@ -971,7 +980,7 @@ let write_clean_block vhd block_num =
   let offset = Int64.mul (Int64.of_int32 vhd.bat.(block_num)) 512L in
   let bitmap=String.make (Int32.to_int bitmap_size) '\000' in
   ignore(really_write vhd.mmap offset bitmap);
-  let block_size_in_sectors = Int32.to_int (Int32.div vhd.header.h_block_size 512l) in
+  let block_size_in_sectors = Int32.to_int (Int32.div vhd.header.Header.block_size 512l) in
   let sector=String.make sector_size '\000' in
   for_lwt i=0 to block_size_in_sectors do
 	  let pos = Int64.add offset (Int64.of_int (sector_size * i)) in
@@ -979,7 +988,7 @@ let write_clean_block vhd block_num =
   done
 
 let write_sector vhd sector data =
-  let block_size_in_sectors = Int64.div (Int64.of_int32 vhd.header.h_block_size) 512L in
+  let block_size_in_sectors = Int64.div (Int64.of_int32 vhd.header.Header.block_size) 512L in
   let block_num = Int64.to_int (Int64.div sector block_size_in_sectors) in
   lwt () = 
   if (vhd.bat.(block_num) = unusedl)
@@ -1026,7 +1035,7 @@ let check_overlapping_blocks vhd =
     if vhd.footer.Footer.disk_type = Disk_type.Differencing_hard_disk 
     then
       begin
-	let locators = Array.mapi (fun i l -> (i,l)) vhd.header.h_parent_locators in
+	let locators = Array.mapi (fun i l -> (i,l)) vhd.header.Header.parent_locators in
 	let locators = Array.to_list locators in
         let open Parent_locator in
 	let locators = List.filter (fun (_,l) -> l.platform_code <> Platform_code.None) locators in
@@ -1040,8 +1049,8 @@ let check_overlapping_blocks vhd =
     else
       blocks
   in
-  let bat_start = vhd.header.h_table_offset in
-  let bat_size = Int64.of_int32 vhd.header.h_max_table_entries in
+  let bat_start = vhd.header.Header.table_offset in
+  let bat_size = Int64.of_int32 vhd.header.Header.max_table_entries in
   let bat = tomarkers "BAT" bat_start bat_size in
   let blocks = bat @ blocks in
   let bat_blocks = Array.to_list (Array.mapi (fun i b -> (i,b)) vhd.bat) in
@@ -1049,7 +1058,7 @@ let check_overlapping_blocks vhd =
   let bat_blocks = List.map (fun (i,b) ->
     let name = Printf.sprintf "block %d" i in
     let start = Int64.mul 512L (Int64.of_int32 vhd.bat.(i)) in
-    let size = Int64.of_int32 vhd.header.h_block_size in
+    let size = Int64.of_int32 vhd.header.Header.block_size in
     tomarkers name start size) bat_blocks in
   let blocks = (List.flatten bat_blocks) @ blocks in
   let get_pos = function | Start (_,a) -> a | End (_,a) -> a in
@@ -1098,21 +1107,19 @@ let create_new_dynamic filename requested_size uuid ?(sparse=true) ?(table_offse
   in
   let header = 
     {
-      h_cookie = header_cookie;
-      h_data_offset = unusedL;
-      h_table_offset = table_offset; (* Stick the BAT at this offset *)
-      h_header_version = header_version;
-      h_max_table_entries = Int64.to_int32 (Int64.div size (Int64.of_int32 block_size));
-      h_block_size = block_size;
-      h_checksum = 0l;
-      h_parent_unique_id = "";
-      h_parent_time_stamp = 0l;
-      h_parent_unicode_name = [| |];
-      h_parent_locators = Array.make 8 Parent_locator.null
+      Header.table_offset; (* Stick the BAT at this offset *)
+      header_version;
+      max_table_entries = Int64.to_int32 (Int64.div size (Int64.of_int32 block_size));
+      block_size;
+      checksum = 0l;
+      parent_unique_id = "";
+      parent_time_stamp = 0l;
+      parent_unicode_name = [| |];
+      parent_locators = Array.make 8 Parent_locator.null
     } 
   in
-  let bat = Array.make (Int32.to_int header.h_max_table_entries) unusedl in
-  Printf.printf "max_table_entries: %ld (size=%Ld)\n" (header.h_max_table_entries) size;
+  let bat = Array.make (Int32.to_int header.Header.max_table_entries) unusedl in
+  Printf.printf "max_table_entries: %ld (size=%Ld)\n" (header.Header.max_table_entries) size;
   lwt fd = Lwt_unix.openfile filename [Unix.O_RDWR; Unix.O_CREAT; Unix.O_EXCL] 0o640 in
   let mmap = Lwt_bytes.map_file ~fd:(Lwt_unix.unix_file_descr fd) ~shared:true ~size:(1024*1024*64) () in
   Lwt.return {filename=filename;
@@ -1156,21 +1163,19 @@ let create_new_difference filename backing_vhd uuid ?(features=[])
   in
   let header = 
     {
-      h_cookie = header_cookie;
-      h_data_offset = unusedL;
-      h_table_offset = table_offset;
-      h_header_version = header_version;
-      h_max_table_entries = parent.header.h_max_table_entries;
-      h_block_size = parent.header.h_block_size;
-      h_checksum = 0l;
-      h_parent_unique_id = parent.footer.Footer.uid;
-      h_parent_time_stamp = get_parent_modification_time backing_vhd;
-      h_parent_unicode_name = utf16_of_utf8 backing_vhd;
-      h_parent_locators = [| locator0; Parent_locator.null; Parent_locator.null; Parent_locator.null;
+      Header.table_offset;
+      header_version;
+      max_table_entries = parent.header.Header.max_table_entries;
+      block_size = parent.header.Header.block_size;
+      checksum = 0l;
+      parent_unique_id = parent.footer.Footer.uid;
+      parent_time_stamp = get_parent_modification_time backing_vhd;
+      parent_unicode_name = utf16_of_utf8 backing_vhd;
+      parent_locators = [| locator0; Parent_locator.null; Parent_locator.null; Parent_locator.null;
 			     Parent_locator.null; Parent_locator.null; Parent_locator.null; Parent_locator.null; |];
     }
   in
-  let bat = Array.make (Int32.to_int header.h_max_table_entries) unusedl in
+  let bat = Array.make (Int32.to_int header.Header.max_table_entries) unusedl in
   lwt fd = Lwt_unix.openfile filename [Unix.O_RDWR; Unix.O_CREAT; Unix.O_EXCL] 0o640 in
   let mmap = Lwt_bytes.map_file ~fd:(Lwt_unix.unix_file_descr fd) ~shared:true () ~size:(1024*1024*64) in
   Lwt.return {filename=filename;
