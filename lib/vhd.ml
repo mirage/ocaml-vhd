@@ -95,6 +95,39 @@ module Geometry = struct
     sectors : int;
   }
 
+  (* from the Appendix 'CHS calculation' *)
+  let of_sectors sectors =
+    let max_secs = 65535*255*16 in
+    let secs = min max_secs sectors in
+
+    let secs_per_track = ref 0 in
+    let heads = ref 0 in
+    let cyls_times_heads = ref 0 in
+  
+    if secs > 65535*63*16 then begin
+      secs_per_track := 255;
+      heads := 16;
+      cyls_times_heads := secs / !secs_per_track;
+    end else begin
+      secs_per_track := 17;
+      cyls_times_heads := secs / !secs_per_track;
+
+      heads := max ((!cyls_times_heads+1023)/1024) 4;
+
+      if (!cyls_times_heads >= (!heads * 1024) || !heads > 16) then begin
+        secs_per_track := 31;
+        heads := 16;
+        cyls_times_heads := secs / !secs_per_track;
+      end;
+
+      if (!cyls_times_heads >= (!heads*1024)) then begin
+        secs_per_track := 63;
+        heads := 16;
+        cyls_times_heads := secs / !secs_per_track;
+      end	    
+    end;
+    { cylinders = !cyls_times_heads / !heads; heads = !heads; sectors = !secs_per_track }
+
   let to_string t = Printf.sprintf "{ cylinders = %d; heads = %d; sectors = %d }"
     t.cylinders t.heads t.sectors
 end
@@ -327,45 +360,7 @@ let really_read mmap pos n =
 let really_write mmap pos str =
     Lwt.return (Lwt_bytes.blit_string_bytes str 0 mmap (Int64.to_int pos) (String.length str))
 
-(** bizarre CHS calculation *)
-let get_chs sectors =
-  let max_secs = 65535*255*16 in
-  let secs = min max_secs sectors in
 
-  let secs_per_track = ref 0 in
-  let heads = ref 0 in
-  let cyls_times_heads = ref 0 in
-  
-  if secs > 65535*63*16 then
-    begin
-      secs_per_track := 255;
-      heads := 16;
-      cyls_times_heads := secs / !secs_per_track;
-    end
-  else
-    begin
-      secs_per_track := 17;
-      cyls_times_heads := secs / !secs_per_track;
-      
-      heads := max ((!cyls_times_heads+1023)/1024) 4;
-
-      if (!cyls_times_heads >= (!heads * 1024) || !heads > 16)
-      then
-	begin
-	  secs_per_track := 31;
-	  heads := 16;
-	  cyls_times_heads := secs / !secs_per_track;
-	end;
-      
-      if (!cyls_times_heads >= (!heads*1024))
-      then
-	begin
-	  secs_per_track := 63;
-	  heads := 16;
-	  cyls_times_heads := secs / !secs_per_track;
-	end	    
-    end;
-  (!cyls_times_heads / !heads, !heads, !secs_per_track)
 
 let get_vhd_time time =
   Int32.of_int (int_of_float (time -. y2k))
@@ -1087,14 +1082,7 @@ let create_new_dynamic filename requested_size uuid ?(sparse=true) ?(table_offse
   (* Round up to the nearest 2-meg block *)
   let size = Int64.mul (Int64.div (Int64.add 2097151L requested_size) 2097152L) 2097152L in
 
-  let geometry = 
-    let (cyls,heads,secs) = get_chs (Int64.to_int (Int64.div size sector_sizeL)) in
-    {
-      Geometry.cylinders = cyls; 
-      heads; 
-      sectors=secs
-    }
-  in
+  let geometry = Geometry.of_sectors (Int64.to_int (Int64.div size sector_sizeL)) in
   let footer = 
     {
       Footer.features;
