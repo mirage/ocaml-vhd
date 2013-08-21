@@ -236,7 +236,7 @@ module Header = struct
 
   let expected_data_offset = 0xFFFFFFFFFFFFFFFFL (* XXX: the spec says 8 bytes containing 0xFFFFFFFF *)
 
-  let expected_header_version = 0x00010000l
+  let expected_version = 0x00010000l
 
   (** Turn an array of ints into a utf8 encoded string *)
   let utf16_to_string s =
@@ -274,7 +274,7 @@ module Header = struct
     Printf.printf "cookie              : %s\n" magic;
     Printf.printf "data_offset         : %Lx\n" expected_data_offset;
     Printf.printf "table_offset        : %Lu\n" t.table_offset;
-    Printf.printf "header_version      : 0x%lx\n" expected_header_version;
+    Printf.printf "header_version      : 0x%lx\n" expected_version;
     Printf.printf "max_table_entries   : 0x%lx\n" t.max_table_entries;
     Printf.printf "block_size          : 0x%lx\n" t.block_size;
     Printf.printf "checksum            : %lu\n" t.checksum;
@@ -658,8 +658,8 @@ let read_header mmap pos =
   then failwith (Printf.sprintf "Expected header data_offset %Lx, got %Lx" Header.expected_data_offset data_offset);
   let table_offset,pos = unmarshal_uint64 pos in
   let header_version,pos = unmarshal_uint32 pos in
-  if header_version <> Header.expected_header_version
-  then failwith (Printf.sprintf "Expected header_version %lx, got %lx" Header.expected_header_version header_version);
+  if header_version <> Header.expected_version
+  then failwith (Printf.sprintf "Expected header_version %lx, got %lx" Header.expected_version header_version);
   let max_table_entries,pos = unmarshal_uint32 pos in
   let block_size,pos = unmarshal_uint32 pos in
   let checksum,pos = unmarshal_uint32 pos in
@@ -816,7 +816,7 @@ let marshal_header_no_checksum h =
     [ magic;
       marshal_int64 expected_data_offset;
       marshal_int64 h.table_offset;
-      marshal_int32 expected_header_version;
+      marshal_int32 expected_version;
       marshal_int32 h.max_table_entries;
       marshal_int32 h.block_size;
       String.make 4 '\000';
