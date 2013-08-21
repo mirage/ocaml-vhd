@@ -101,7 +101,7 @@ end
 
 module Footer = struct
   type t = {
-    cookie : string;
+    (* "conectix" *)
     features : Feature.t list;
     data_offset : int64;
     time_stamp : int32;
@@ -117,12 +117,14 @@ module Footer = struct
     saved_state : bool
   }
 
+  let magic = "conectix"
+
   let expected_version = 0x00010000l
 
   let dump t =
     Printf.printf "VHD FOOTER\n";
     Printf.printf "-=-=-=-=-=\n\n";
-    Printf.printf "cookie              : %s\n" t.cookie;
+    Printf.printf "cookie              : %s\n" magic;
     Printf.printf "features            : %s\n" (String.concat "," (List.map Feature.to_string t.features));
     Printf.printf "format_version      : 0x%lx\n" expected_version;
     Printf.printf "data_offset         : 0x%Lx\n" t.data_offset;
@@ -296,7 +298,6 @@ type vhd = {
 }
 
 
-let footer_cookie = "conectix"
 
 let sector_size = 512
 let sector_sizeL = 512L
@@ -618,6 +619,8 @@ let read_footer mmap pos read_512 =
   lwt footer = really_read mmap pos (if read_512 then 512L else 511L) in
   let footer = (footer,0) in
   let cookie,pos = unmarshal_string 8 footer in
+  if cookie <> Footer.magic
+  then failwith (Printf.sprintf "Unsupported footer cookie: expected %s, got %s" Footer.magic cookie);
   let features,pos = 
     let featuresnum,pos = unmarshal_uint32 pos in
     Feature.of_int (Int32.to_int featuresnum), pos in
@@ -643,7 +646,7 @@ let read_footer mmap pos read_512 =
   let saved_state,pos = let n,pos = unmarshal_uint8 pos in n=1, pos in
   let footer_buffer,_ = footer in
   let open Footer in
-  Lwt.return {cookie; features; data_offset; time_stamp; creator_version;
+  Lwt.return {features; data_offset; time_stamp; creator_version;
    creator_application; creator_host_os; original_size; current_size; geometry;
    disk_type; checksum; uid; saved_state}
 
@@ -781,7 +784,7 @@ let generic_calc_checksum m =
 let marshal_footer_no_checksum f =
   let open Footer in
   let output =
-    [ f.cookie;
+    [ magic;
       marshal_features f.features;
       marshal_int32 expected_version;
       marshal_int64 f.data_offset;
@@ -1094,8 +1097,7 @@ let create_new_dynamic filename requested_size uuid ?(sparse=true) ?(table_offse
   in
   let footer = 
     {
-      Footer.cookie = footer_cookie;
-      features;
+      Footer.features;
       data_offset;
       time_stamp = 0l;
       creator_application; creator_version;
@@ -1137,8 +1139,7 @@ let create_new_difference filename backing_vhd uuid ?(features=[])
   lwt parent = load_vhd backing_vhd in
   let footer = 
     {
-      Footer.cookie = footer_cookie;
-      features;
+      Footer.features;
       data_offset;
       time_stamp = get_now ();
       creator_application; creator_version;

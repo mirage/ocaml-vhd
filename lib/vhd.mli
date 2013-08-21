@@ -43,8 +43,6 @@ end
 
 module Footer: sig
   type t = {
-    cookie : string;
-    (** 8 bytes which uniquely identify the original creator of the disk image *)
     features : Feature.t list;
     data_offset : int64;
     (** For dynamic and differencing disks, this is the absolute byte offset
