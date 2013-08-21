@@ -199,9 +199,9 @@ end
 type vhd_header = {
   h_cookie : string;
   h_data_offset : int64;
-  mutable h_table_offset : int64;
+  h_table_offset : int64;
   h_header_version : int32;
-  mutable h_max_table_entries : int32;
+  h_max_table_entries : int32;
   h_block_size : int32;
   h_checksum : int32;
   h_parent_unique_id : string;
