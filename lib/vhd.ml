@@ -103,7 +103,6 @@ module Footer = struct
   type t = {
     cookie : string;
     features : Feature.t list;
-    format_version : int32;
     data_offset : int64;
     time_stamp : int32;
     creator_application : string;
@@ -118,13 +117,14 @@ module Footer = struct
     saved_state : bool
   }
 
+  let expected_version = 0x00010000l
 
   let dump t =
     Printf.printf "VHD FOOTER\n";
     Printf.printf "-=-=-=-=-=\n\n";
     Printf.printf "cookie              : %s\n" t.cookie;
     Printf.printf "features            : %s\n" (String.concat "," (List.map Feature.to_string t.features));
-    Printf.printf "format_version      : 0x%lx\n" t.format_version;
+    Printf.printf "format_version      : 0x%lx\n" expected_version;
     Printf.printf "data_offset         : 0x%Lx\n" t.data_offset;
     Printf.printf "time_stamp          : %lu\n" t.time_stamp;
     Printf.printf "creator_application : %s\n" t.creator_application;
@@ -303,7 +303,6 @@ let sector_sizeL = 512L
 let block_size = 0x200000l
 let unusedl = 0xffffffffl
 
-let footer_version = 0x00010000l
 
 let creator_application = "caml"
 let creator_version = 0x00000001l
@@ -623,6 +622,8 @@ let read_footer mmap pos read_512 =
     let featuresnum,pos = unmarshal_uint32 pos in
     Feature.of_int (Int32.to_int featuresnum), pos in
   let format_version,pos = unmarshal_uint32 pos in
+  if format_version <> Footer.expected_version
+  then failwith (Printf.sprintf "Unsupported footer version: expected %lx, got %lx" Footer.expected_version format_version);
   let data_offset,pos = unmarshal_uint64 pos in
   let time_stamp,pos = unmarshal_uint32 pos in
   let creator_application,pos = unmarshal_string 4 pos in
@@ -642,7 +643,7 @@ let read_footer mmap pos read_512 =
   let saved_state,pos = let n,pos = unmarshal_uint8 pos in n=1, pos in
   let footer_buffer,_ = footer in
   let open Footer in
-  Lwt.return {cookie; features; format_version; data_offset; time_stamp; creator_version;
+  Lwt.return {cookie; features; data_offset; time_stamp; creator_version;
    creator_application; creator_host_os; original_size; current_size; geometry;
    disk_type; checksum; uid; saved_state}
 
@@ -782,7 +783,7 @@ let marshal_footer_no_checksum f =
   let output =
     [ f.cookie;
       marshal_features f.features;
-      marshal_int32 f.format_version;
+      marshal_int32 expected_version;
       marshal_int64 f.data_offset;
       marshal_int32 f.time_stamp;
       f.creator_application;
@@ -1095,7 +1096,6 @@ let create_new_dynamic filename requested_size uuid ?(sparse=true) ?(table_offse
     {
       Footer.cookie = footer_cookie;
       features;
-      format_version = footer_version;
       data_offset;
       time_stamp = 0l;
       creator_application; creator_version;
@@ -1139,7 +1139,6 @@ let create_new_difference filename backing_vhd uuid ?(features=[])
     {
       Footer.cookie = footer_cookie;
       features;
-      format_version = footer_version;
       data_offset;
       time_stamp = get_now ();
       creator_application; creator_version;

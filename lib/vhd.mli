@@ -46,10 +46,6 @@ module Footer: sig
     cookie : string;
     (** 8 bytes which uniquely identify the original creator of the disk image *)
     features : Feature.t list;
-    format_version : int32;
-    (** The version of the vhd specification used to create the disk. The major
-        number is in the two most significant bytes and the minor version is
-        in the two least significant bytes. *)
     data_offset : int64;
     (** For dynamic and differencing disks, this is the absolute byte offset
         from the beginning of the file to the next structure. For fixed disks
