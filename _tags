@@ -53,7 +53,7 @@
 <lib_test/*.ml{,i}>: pkg_uuidm
 <lib_test/parse_test.{native,byte}>: custom
 # OASIS_STOP
-<lib/*>: syntax_camlp4o, pkg_lwt.syntax
+<lib/*>: syntax_camlp4o, pkg_lwt.syntax, pkg_cstruct.syntax
 <lib_test/*>: syntax_camlp4o, pkg_lwt.syntax
 <cli/*>: syntax_camlp4o, pkg_lwt.syntax
 #<lib/*>: pkg_bitstring.syntax, pkg_lwt.syntax

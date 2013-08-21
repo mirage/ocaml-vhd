@@ -22,11 +22,11 @@ module Feature = struct
   let of_int x =
     if x land 1 <> 0 then [ Temporary ] else []
 
-  let to_int ts =
+  let to_int32 ts =
     let one = function
       | Temporary -> 1 in
     let reserved = 2 in (* always set *)
-    List.fold_left (lor) reserved (List.map one ts)
+    Int32.of_int (List.fold_left (lor) reserved (List.map one ts))
 
   let to_string = function
     | Temporary -> "Temporary"
@@ -63,6 +63,7 @@ module Disk_type = struct
     | Fixed_hard_disk -> "Fixed_hard_disk"
     | Dynamic_hard_disk -> "Dynamic_hard_disk"
     | Differencing_hard_disk -> "Differencing_hard_disk"
+
 end
 
 module Host_OS = struct
@@ -80,6 +81,11 @@ module Host_OS = struct
     | Windows -> "\x57\x69\x32\x6b"
     | Macintosh -> "\x4d\x61\x63\x20"
     | Other x -> x
+
+  let to_int32 = function
+    | Windows -> 0x5769326bl
+    | Macintosh -> 0x4d616320l
+    | Other x -> assert false (* TODO: temporary hack *)
 
   let to_string = function
     | Windows -> "Windows"
@@ -130,6 +136,7 @@ module Geometry = struct
 
   let to_string t = Printf.sprintf "{ cylinders = %d; heads = %d; sectors = %d }"
     t.cylinders t.heads t.sectors
+
 end
 
 module Footer = struct
@@ -172,6 +179,52 @@ module Footer = struct
     Printf.printf "checksum            : %lu\n" t.checksum;
     Printf.printf "uid                 : %s\n" (Uuidm.to_string t.uid);
     Printf.printf "saved_state         : %b\n\n" t.saved_state
+
+  cstruct footer {
+    uint8_t magic[8];
+    uint32_t features;
+    uint32_t version;
+    uint64_t data_offset;
+    uint32_t time_stamp;
+    uint8_t creator_application[4];
+    uint32_t creator_version;
+    uint32_t creator_host_os;
+    uint64_t original_size;
+    uint64_t current_size;
+    uint16_t cylinders;
+    uint8_t heads;
+    uint8_t sectors;
+    uint32_t disk_type;
+    uint32_t checksum;
+    uint8_t uid[16];
+    uint8_t saved_state
+    (* 427 zeroed *)
+  } as big_endian
+
+  let marshal (buf: Cstruct.t) t =
+    set_footer_magic magic 0 buf;
+    set_footer_features buf (Feature.to_int32 t.features);
+    set_footer_version buf expected_version;
+    set_footer_data_offset buf t.data_offset;
+    set_footer_time_stamp buf t.time_stamp;
+    set_footer_creator_application t.creator_application 0 buf;
+    set_footer_creator_version buf t.creator_version;
+    set_footer_creator_host_os buf (Host_OS.to_int32 t.creator_host_os);
+    set_footer_original_size buf t.original_size;
+    set_footer_current_size buf t.current_size;
+    set_footer_cylinders buf t.geometry.Geometry.cylinders;
+    set_footer_heads buf t.geometry.Geometry.heads;
+    set_footer_sectors buf t.geometry.Geometry.sectors;
+    set_footer_disk_type buf (Disk_type.to_int32 t.disk_type);
+    set_footer_checksum buf t.checksum;
+    set_footer_uid (Uuidm.to_string t.uid) 0 buf;
+    set_footer_saved_state buf (if t.saved_state then 1 else 0);
+    let remaining = Cstruct.shift buf sizeof_footer in
+    for i = 0 to 426 do
+      Cstruct.set_uint8 remaining i 0
+    done
+
+  let sizeof = 512
 end
 
 module Platform_code = struct
@@ -732,18 +785,6 @@ let rec load_vhd filename =
 (* Specific VHD marshalling functions                                         *)
 (******************************************************************************)
 
-let marshal_features xs = marshal_int32 (Int32.of_int (Feature.to_int xs))
-
-let marshal_geometry geom =
-  let open Geometry in
-  let output =
-    [ marshal_int16 geom.cylinders;
-      marshal_int8 geom.heads;
-      marshal_int8 geom.sectors ] in
-  String.concat "" output
-
-let marshal_disk_type ty = marshal_int32 (Disk_type.to_int32 ty)
-
 let marshal_parent_locator_entry e =
   let open Parent_locator in
   let output =
@@ -763,25 +804,9 @@ let generic_calc_checksum m =
   Int32.lognot (inner 0 0l)
 
 let marshal_footer_no_checksum f =
-  let open Footer in
-  let output =
-    [ magic;
-      marshal_features f.features;
-      marshal_int32 expected_version;
-      marshal_int64 f.data_offset;
-      marshal_int32 f.time_stamp;
-      f.creator_application;
-      marshal_int32 f.creator_version;
-      Host_OS.to_bytes f.creator_host_os;
-      marshal_int64 f.original_size;
-      marshal_int64 f.current_size;
-      marshal_geometry f.geometry;
-      marshal_disk_type f.disk_type;
-      (String.make 4 '\000'); (* checksum - calculate afterwards *)
-      Uuidm.to_bytes f.uid;
-      marshal_int8 (if f.saved_state then 1 else 0) ] 
-  in
-  pad_string_to (String.concat "" output) 512
+  let sector = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout Footer.sizeof)) in
+  Footer.marshal sector f;
+  Cstruct.to_string sector
 
 let calc_checksum_footer f =
   let marshalled = marshal_footer_no_checksum f in
