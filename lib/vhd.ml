@@ -222,7 +222,7 @@ module Header = struct
     (* cxsparse *)
     (* 0xFFFFFFFF *)
     table_offset : int64;
-    header_version : int32;
+    (* 0x00010000l *)
     max_table_entries : int32;
     block_size : int32;
     checksum : int32;
@@ -235,6 +235,8 @@ module Header = struct
   let magic = "cxsparse"
 
   let expected_data_offset = 0xFFFFFFFFFFFFFFFFL (* XXX: the spec says 8 bytes containing 0xFFFFFFFF *)
+
+  let expected_header_version = 0x00010000l
 
   (** Turn an array of ints into a utf8 encoded string *)
   let utf16_to_string s =
@@ -272,7 +274,7 @@ module Header = struct
     Printf.printf "cookie              : %s\n" magic;
     Printf.printf "data_offset         : %Lx\n" expected_data_offset;
     Printf.printf "table_offset        : %Lu\n" t.table_offset;
-    Printf.printf "header_version      : 0x%lx\n" t.header_version;
+    Printf.printf "header_version      : 0x%lx\n" expected_header_version;
     Printf.printf "max_table_entries   : 0x%lx\n" t.max_table_entries;
     Printf.printf "block_size          : 0x%lx\n" t.block_size;
     Printf.printf "checksum            : %lu\n" t.checksum;
@@ -301,7 +303,6 @@ let sector_sizeL = 512L
 let block_size = 0x200000l
 let unusedl = 0xffffffffl
 
-let header_version = 0x00010000l
 let footer_version = 0x00010000l
 
 let creator_application = "caml"
@@ -656,6 +657,8 @@ let read_header mmap pos =
   then failwith (Printf.sprintf "Expected header data_offset %Lx, got %Lx" Header.expected_data_offset data_offset);
   let table_offset,pos = unmarshal_uint64 pos in
   let header_version,pos = unmarshal_uint32 pos in
+  if header_version <> Header.expected_header_version
+  then failwith (Printf.sprintf "Expected header_version %lx, got %lx" Header.expected_header_version header_version);
   let max_table_entries,pos = unmarshal_uint32 pos in
   let block_size,pos = unmarshal_uint32 pos in
   let checksum,pos = unmarshal_uint32 pos in
@@ -665,7 +668,7 @@ let read_header mmap pos =
   let _,pos = unmarshal_uint32 pos in
   let parent_unicode_name,pos = unmarshal_utf16_string 512 pos in
   lwt parent_locators,pos = unmarshal_parent_locators mmap pos in
-  Lwt.return {Header.table_offset;header_version;max_table_entries;
+  Lwt.return {Header.table_offset; max_table_entries;
    block_size; checksum; parent_unique_id; parent_time_stamp; parent_unicode_name;
    parent_locators}
 
@@ -812,7 +815,7 @@ let marshal_header_no_checksum h =
     [ magic;
       marshal_int64 expected_data_offset;
       marshal_int64 h.table_offset;
-      marshal_int32 h.header_version;
+      marshal_int32 expected_header_version;
       marshal_int32 h.max_table_entries;
       marshal_int32 h.block_size;
       String.make 4 '\000';
@@ -1109,7 +1112,6 @@ let create_new_dynamic filename requested_size uuid ?(sparse=true) ?(table_offse
   let header = 
     {
       Header.table_offset; (* Stick the BAT at this offset *)
-      header_version;
       max_table_entries = Int64.to_int32 (Int64.div size (Int64.of_int32 block_size));
       block_size;
       checksum = 0l;
@@ -1165,7 +1167,6 @@ let create_new_difference filename backing_vhd uuid ?(features=[])
   let header = 
     {
       Header.table_offset;
-      header_version;
       max_table_entries = parent.header.Header.max_table_entries;
       block_size = parent.header.Header.block_size;
       checksum = 0l;
