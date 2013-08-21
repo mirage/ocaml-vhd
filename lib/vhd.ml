@@ -165,19 +165,36 @@ module Platform_code = struct
     | MacX -> "MacX"
 end
 
-type parent_locator = {
-  platform_code : Platform_code.t;
+module Parent_locator = struct
+  type t = {
+    platform_code : Platform_code.t;
 
-  (* WARNING WARNING - the following field is measured in *bytes* because Viridian VHDs 
-     do this. This is a deviation from the spec. When reading in this field, we multiply
-     by 512 if the value is less than 511 *)
-  platform_data_space : int32;
-  platform_data_space_original : int32; (* Original unaltered value *)
+    (* WARNING WARNING - the following field is measured in *bytes* because Viridian VHDs 
+       do this. This is a deviation from the spec. When reading in this field, we multiply
+       by 512 if the value is less than 511 *)
+    platform_data_space : int32;
+    platform_data_space_original : int32; (* Original unaltered value *)
 
-  platform_data_length : int32;
-  mutable platform_data_offset : int64;
-  platform_data : string;
-}
+    platform_data_length : int32;
+    platform_data_offset : int64;
+    platform_data : string;
+  }
+
+
+  let null = {
+    platform_code=Platform_code.None;
+    platform_data_space=0l;
+    platform_data_space_original=0l;
+    platform_data_length=0l;
+    platform_data_offset=0L;
+    platform_data="";
+  }
+
+  let to_string t =
+    Printf.sprintf "(%s %lx %lx, %ld, 0x%Lx, %s)" (Platform_code.to_string t.platform_code)
+      t.platform_data_space t.platform_data_space_original
+      t.platform_data_length t.platform_data_offset t.platform_data
+end
 
 type vhd_header = {
   h_cookie : string;
@@ -190,7 +207,7 @@ type vhd_header = {
   h_parent_unique_id : string;
   h_parent_time_stamp : int32;
   h_parent_unicode_name : int array;
-  h_parent_locators : parent_locator array;
+  h_parent_locators : Parent_locator.t array;
 }
 
 type vhd = {
@@ -202,14 +219,6 @@ type vhd = {
   bat : int32 array;
 }
 
-let null_locator = {
-  platform_code=Platform_code.None;
-  platform_data_space=0l;
-  platform_data_space_original=0l;
-  platform_data_length=0l;
-  platform_data_offset=0L;
-  platform_data="";
-}
 
 let footer_cookie = "conectix"
 let header_cookie = "cxsparse"
@@ -532,10 +541,9 @@ let unmarshal_parent_locator mmap pos =
        really_read mmap platform_data_offset (Int64.of_int32 platform_data_length))
     else Lwt.return ""
  in
- Lwt.return ({platform_code; platform_data_space=platform_data_space;
-   platform_data_space_original=platform_data_space_original;
-   platform_data_length=platform_data_length;platform_data_offset=platform_data_offset;
-   platform_data=platform_data},pos)
+ Lwt.return ({Parent_locator.platform_code; platform_data_space;
+   platform_data_space_original; platform_data_length;platform_data_offset;platform_data
+   },pos)
 
 let unmarshal_n n pos f =
   let rec inner m pos cur =
@@ -638,6 +646,7 @@ let get_parent_filename header =
   let rec test n =
     if n>=Array.length header.h_parent_locators then (failwith "Failed to find parent!");
     let l = header.h_parent_locators.(n) in
+    let open Parent_locator in
     Printf.printf "locator %d\nplatform_code: %s\nplatform_data: %s\n" n (Platform_code.to_string l.platform_code) l.platform_data;
     match l.platform_code with
       | Platform_code.MacX ->
@@ -704,6 +713,7 @@ let marshal_uuid uuid =
   String.concat "" (List.map marshal_int8 (Array.to_list arr))
 
 let marshal_parent_locator_entry e =
+  let open Parent_locator in
   let output =
     [ marshal_int32 (Platform_code.to_int32 e.platform_code);
       marshal_int32 e.platform_data_space_original;
@@ -793,6 +803,7 @@ let marshal_header h =
 
 (* Only write those that actually have a platform_code *)
 let write_locator mmap entry =
+  let open Parent_locator in
   if entry.platform_code <> Platform_code.None then begin
     really_write mmap entry.platform_data_offset entry.platform_data
   end else Lwt.return ()
@@ -824,10 +835,6 @@ let dump_sector sector =
       else
 	Printf.printf "%02x " (Char.code sector.[i])
     done
-
-let parent_locator_to_string p =
-  Printf.sprintf "(%s %lx %lx, %ld, 0x%Lx, %s)" (Platform_code.to_string p.platform_code) p.platform_data_space p.platform_data_space_original
-    p.platform_data_length p.platform_data_offset p.platform_data
 
 let dump_footer f =
   let open Footer in
@@ -863,7 +870,7 @@ let dump_header f =
   Printf.printf "parent_time_stamp   : %lu\n" f.h_parent_time_stamp;
   Printf.printf "parent_unicode_name : '%s' (%d bytes)\n" (utf16_to_string f.h_parent_unicode_name) (Array.length f.h_parent_unicode_name);
   Printf.printf "parent_locators     : %s\n" 
-    (String.concat "\n                      " (List.map parent_locator_to_string (Array.to_list f.h_parent_locators)))
+    (String.concat "\n                      " (List.map Parent_locator.to_string (Array.to_list f.h_parent_locators)))
     
 let dump_bat b =
   Printf.printf "BAT\n";
@@ -1021,6 +1028,7 @@ let check_overlapping_blocks vhd =
       begin
 	let locators = Array.mapi (fun i l -> (i,l)) vhd.header.h_parent_locators in
 	let locators = Array.to_list locators in
+        let open Parent_locator in
 	let locators = List.filter (fun (_,l) -> l.platform_code <> Platform_code.None) locators in
 	let locations = List.map (fun (i,l) -> 
 	  let name = Printf.sprintf "locator block %d" i in
@@ -1100,7 +1108,7 @@ let create_new_dynamic filename requested_size uuid ?(sparse=true) ?(table_offse
       h_parent_unique_id = "";
       h_parent_time_stamp = 0l;
       h_parent_unicode_name = [| |];
-      h_parent_locators = Array.make 8 null_locator
+      h_parent_locators = Array.make 8 Parent_locator.null
     } 
   in
   let bat = Array.make (Int32.to_int header.h_max_table_entries) unusedl in
@@ -1138,7 +1146,7 @@ let create_new_difference filename backing_vhd uuid ?(features=[])
   let locator0 = 
     let uri = "file://./" ^ (Filename.basename backing_vhd) in
     {
-      platform_code = Platform_code.MacX;
+      Parent_locator.platform_code = Platform_code.MacX;
       platform_data_space = 1l;
       platform_data_space_original=1l;
       platform_data_length = Int32.of_int (String.length uri);
@@ -1158,8 +1166,8 @@ let create_new_difference filename backing_vhd uuid ?(features=[])
       h_parent_unique_id = parent.footer.Footer.uid;
       h_parent_time_stamp = get_parent_modification_time backing_vhd;
       h_parent_unicode_name = utf16_of_utf8 backing_vhd;
-      h_parent_locators = [| locator0; null_locator; null_locator; null_locator;
-			     null_locator; null_locator; null_locator; null_locator; |];
+      h_parent_locators = [| locator0; Parent_locator.null; Parent_locator.null; Parent_locator.null;
+			     Parent_locator.null; Parent_locator.null; Parent_locator.null; Parent_locator.null; |];
     }
   in
   let bat = Array.make (Int32.to_int header.h_max_table_entries) unusedl in
