@@ -119,8 +119,54 @@ module Footer = struct
   }
 end
 
+module Platform_code = struct
+  type t =
+    | None
+    | Wi2r
+    | Wi2k
+    | W2ru
+    | W2ku
+    | Mac
+    | MacX
+
+  let wi2r = 0x57693272l
+  let wi2k = 0x5769326Bl
+  let w2ru = 0x57327275l
+  let w2ku = 0x57326b75l
+  let mac = 0x4d616320l
+  let macx = 0x4d616358l
+
+  let of_int32 = function
+    | 0l -> None
+    | x when x = wi2r -> Wi2r
+    | x when x = wi2k -> Wi2k
+    | x when x = w2ru -> W2ru
+    | x when x = w2ku -> W2ku
+    | x when x = mac -> Mac
+    | x when x = macx -> MacX
+    | x -> failwith (Printf.sprintf "unknown platform_code: %lx" x)
+
+  let to_int32 = function
+    | None -> 0l
+    | Wi2r -> wi2r
+    | Wi2k -> wi2k
+    | W2ru -> w2ru
+    | W2ku -> w2ku
+    | Mac -> mac
+    | MacX -> macx
+
+  let to_string = function
+    | None -> "None"
+    | Wi2r -> "Wi2r [deprecated]"
+    | Wi2k -> "Wi2k [deprecated]"
+    | W2ru -> "W2ru"
+    | W2ku -> "W2ku"
+    | Mac  -> "Mac "
+    | MacX -> "MacX"
+end
+
 type parent_locator = {
-  platform_code : int32;
+  platform_code : Platform_code.t;
 
   (* WARNING WARNING - the following field is measured in *bytes* because Viridian VHDs 
      do this. This is a deviation from the spec. When reading in this field, we multiply
@@ -157,20 +203,13 @@ type vhd = {
 }
 
 let null_locator = {
-  platform_code=0l;
+  platform_code=Platform_code.None;
   platform_data_space=0l;
   platform_data_space_original=0l;
   platform_data_length=0l;
   platform_data_offset=0L;
   platform_data="";
 }
-
-let platform_code_wi2r = 0x57693272l
-let platform_code_wi2k = 0x5769326Bl
-let platform_code_w2ru = 0x57327275l
-let platform_code_w2ku = 0x57326b75l
-let platform_code_mac = 0x4d616320l
-let platform_code_macx = 0x4d616358l
 
 let footer_cookie = "conectix"
 let header_cookie = "cxsparse"
@@ -471,7 +510,9 @@ let unmarshal_geometry pos =
    heads; sectors}, pos
 
 let unmarshal_parent_locator mmap pos =
-  let platform_code,pos = unmarshal_uint32 pos in
+  let platform_code,pos =
+    let code, pos = unmarshal_uint32 pos in
+    Platform_code.of_int32 code, pos in
 
   (* WARNING WARNING - see comment on field at the beginning of this file *)
   let platform_data_space_original,platform_data_space,pos = 
@@ -491,7 +532,7 @@ let unmarshal_parent_locator mmap pos =
        really_read mmap platform_data_offset (Int64.of_int32 platform_data_length))
     else Lwt.return ""
  in
- Lwt.return ({platform_code=platform_code; platform_data_space=platform_data_space;
+ Lwt.return ({platform_code; platform_data_space=platform_data_space;
    platform_data_space_original=platform_data_space_original;
    platform_data_length=platform_data_length;platform_data_offset=platform_data_offset;
    platform_data=platform_data},pos)
@@ -597,9 +638,9 @@ let get_parent_filename header =
   let rec test n =
     if n>=Array.length header.h_parent_locators then (failwith "Failed to find parent!");
     let l = header.h_parent_locators.(n) in
-    Printf.printf "locator %d\nplatform_code: %lx\nplatform_data: %s\n" n l.platform_code l.platform_data;
+    Printf.printf "locator %d\nplatform_code: %s\nplatform_data: %s\n" n (Platform_code.to_string l.platform_code) l.platform_data;
     match l.platform_code with
-      | 0x4d616358l ->
+      | Platform_code.MacX ->
 	  begin
 	    try 
 	      let fname = try String.sub l.platform_data 0 (String.index l.platform_data '\000') with _ -> l.platform_data in
@@ -664,7 +705,7 @@ let marshal_uuid uuid =
 
 let marshal_parent_locator_entry e =
   let output =
-    [ marshal_int32 e.platform_code;
+    [ marshal_int32 (Platform_code.to_int32 e.platform_code);
       marshal_int32 e.platform_data_space_original;
       marshal_int32 e.platform_data_length;
       String.make 4 '\000';
@@ -752,7 +793,7 @@ let marshal_header h =
 
 (* Only write those that actually have a platform_code *)
 let write_locator mmap entry =
-  if entry.platform_code <> 0x0l then begin
+  if entry.platform_code <> Platform_code.None then begin
     really_write mmap entry.platform_data_offset entry.platform_data
   end else Lwt.return ()
 
@@ -785,17 +826,7 @@ let dump_sector sector =
     done
 
 let parent_locator_to_string p =
-  let pc2s x = match x with 
-    | 0x0l -> "None"
-    | 0x57693272l -> "Wi2r [deprecated]"
-    | 0x5769326Bl -> "Wi2k [deprecated]"
-    | 0x57327275l -> "W2ru"
-    | 0x57326b75l -> "W2ku"
-    | 0x4d616320l -> "Mac "
-    | 0x4d616358l -> "MacX"
-    | _ -> failwith (Printf.sprintf "Unknown parent_locator platform_code! (%ld)" x)
-  in
-  Printf.sprintf "(%lx (%s), %ld (stored as %ld), %ld, 0x%Lx, %s)" p.platform_code (pc2s p.platform_code) p.platform_data_space p.platform_data_space_original
+  Printf.sprintf "(%s %lx %lx, %ld, 0x%Lx, %s)" (Platform_code.to_string p.platform_code) p.platform_data_space p.platform_data_space_original
     p.platform_data_length p.platform_data_offset p.platform_data
 
 let dump_footer f =
@@ -990,7 +1021,7 @@ let check_overlapping_blocks vhd =
       begin
 	let locators = Array.mapi (fun i l -> (i,l)) vhd.header.h_parent_locators in
 	let locators = Array.to_list locators in
-	let locators = List.filter (fun (_,l) -> l.platform_code <> 0x0l) locators in
+	let locators = List.filter (fun (_,l) -> l.platform_code <> Platform_code.None) locators in
 	let locations = List.map (fun (i,l) -> 
 	  let name = Printf.sprintf "locator block %d" i in
 	  let start = l.platform_data_offset in
@@ -1107,7 +1138,7 @@ let create_new_difference filename backing_vhd uuid ?(features=[])
   let locator0 = 
     let uri = "file://./" ^ (Filename.basename backing_vhd) in
     {
-      platform_code = platform_code_macx;
+      platform_code = Platform_code.MacX;
       platform_data_space = 1l;
       platform_data_space_original=1l;
       platform_data_length = Int32.of_int (String.length uri);
