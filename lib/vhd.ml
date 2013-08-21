@@ -117,6 +117,26 @@ module Footer = struct
     uid : string;
     saved_state : bool
   }
+
+
+  let dump t =
+    Printf.printf "VHD FOOTER\n";
+    Printf.printf "-=-=-=-=-=\n\n";
+    Printf.printf "cookie              : %s\n" t.cookie;
+    Printf.printf "features            : %s\n" (String.concat "," (List.map Feature.to_string t.features));
+    Printf.printf "format_version      : 0x%lx\n" t.format_version;
+    Printf.printf "data_offset         : 0x%Lx\n" t.data_offset;
+    Printf.printf "time_stamp          : %lu\n" t.time_stamp;
+    Printf.printf "creator_application : %s\n" t.creator_application;
+    Printf.printf "creator_version     : 0x%lx\n" t.creator_version;
+    Printf.printf "creator_host_os     : %s\n" (Host_OS.to_string t.creator_host_os);
+    Printf.printf "original_size       : 0x%Lx\n" t.original_size;
+    Printf.printf "current_size        : 0x%Lx\n" t.current_size;
+    Printf.printf "geometry            : %s\n" (Geometry.to_string t.geometry);
+    Printf.printf "disk_type           : %s\n" (Disk_type.to_string t.disk_type);
+    Printf.printf "checksum            : %lu\n" t.checksum;
+    Printf.printf "uid                 : %s\n" t.uid;
+    Printf.printf "saved_state         : %b\n\n" t.saved_state
 end
 
 module Platform_code = struct
@@ -215,6 +235,53 @@ module Header = struct
   let magic = "cxsparse"
 
   let expected_data_offset = 0xFFFFFFFFFFFFFFFFL (* XXX: the spec says 8 bytes containing 0xFFFFFFFF *)
+
+  (** Turn an array of ints into a utf8 encoded string *)
+  let utf16_to_string s =
+    let utf8_chars_of_int i = 
+      if i < 0x80 then [char_of_int i] 
+      else if i < 0x800 then 
+        begin
+          let z = i land 0x3f
+          and y = (i lsr 6) land 0x1f in 
+          [char_of_int (0xc0 + y); char_of_int (0x80+z)]
+        end
+      else if i < 0x10000 then
+        begin
+          let z = i land 0x3f
+          and y = (i lsr 6) land 0x3f 
+          and x = (i lsr 12) land 0x0f in
+          [char_of_int (0xe0 + x); char_of_int (0x80+y); char_of_int (0x80+z)]
+        end
+      else if i < 0x110000 then
+        begin
+          let z = i land 0x3f
+          and y = (i lsr 6) land 0x3f
+          and x = (i lsr 12) land 0x3f
+          and w = (i lsr 18) land 0x07 in
+          [char_of_int (0xf0 + w); char_of_int (0x80+x); char_of_int (0x80+y); char_of_int (0x80+z)]
+        end
+      else
+        failwith "Bad unicode character!"
+  in
+  String.concat "" (List.map (fun c -> Printf.sprintf "%c" c) (List.flatten (List.map utf8_chars_of_int (Array.to_list s))))
+
+  let dump t =
+    Printf.printf "VHD HEADER\n";
+    Printf.printf "-=-=-=-=-=\n";
+    Printf.printf "cookie              : %s\n" magic;
+    Printf.printf "data_offset         : %Lx\n" expected_data_offset;
+    Printf.printf "table_offset        : %Lu\n" t.table_offset;
+    Printf.printf "header_version      : 0x%lx\n" t.header_version;
+    Printf.printf "max_table_entries   : 0x%lx\n" t.max_table_entries;
+    Printf.printf "block_size          : 0x%lx\n" t.block_size;
+    Printf.printf "checksum            : %lu\n" t.checksum;
+    Printf.printf "parent_unique_id    : %s\n" t.parent_unique_id;
+    Printf.printf "parent_time_stamp   : %lu\n" t.parent_time_stamp;
+    Printf.printf "parent_unicode_name : '%s' (%d bytes)\n" (utf16_to_string t.parent_unicode_name) (Array.length t.parent_unicode_name);
+    Printf.printf "parent_locators     : %s\n" 
+      (String.concat "\n                      " (List.map Parent_locator.to_string (Array.to_list t.parent_locators)))
+
 end
 
 type vhd = {
@@ -258,36 +325,6 @@ let really_read mmap pos n =
 (** Guarantee to write the string 'str' to a fd or raise an exception *)
 let really_write mmap pos str =
     Lwt.return (Lwt_bytes.blit_string_bytes str 0 mmap (Int64.to_int pos) (String.length str))
-
-(** Turn an array of ints into a utf8 encoded string *)
-let utf16_to_string s =
-  let utf8_chars_of_int i = 
-    if i < 0x80 then [char_of_int i] 
-    else if i < 0x800 then 
-      begin
-	let z = i land 0x3f
-	and y = (i lsr 6) land 0x1f in 
-	[char_of_int (0xc0 + y); char_of_int (0x80+z)]
-      end
-    else if i < 0x10000 then
-      begin
-	let z = i land 0x3f
-	and y = (i lsr 6) land 0x3f 
-	and x = (i lsr 12) land 0x0f in
-	[char_of_int (0xe0 + x); char_of_int (0x80+y); char_of_int (0x80+z)]
-      end
-    else if i < 0x110000 then
-      begin
-	let z = i land 0x3f
-	and y = (i lsr 6) land 0x3f
-	and x = (i lsr 12) land 0x3f
-	and w = (i lsr 18) land 0x07 in
-	[char_of_int (0xf0 + w); char_of_int (0x80+x); char_of_int (0x80+y); char_of_int (0x80+z)]
-      end
-    else
-      failwith "Bad unicode character!"
-  in
-  String.concat "" (List.map (fun c -> Printf.sprintf "%c" c) (List.flatten (List.map utf8_chars_of_int (Array.to_list s))))
 
 (** bizarre CHS calculation *)
 let get_chs sectors =
@@ -844,43 +881,7 @@ let dump_sector sector =
 	Printf.printf "%02x " (Char.code sector.[i])
     done
 
-let dump_footer f =
-  let open Footer in
-  Printf.printf "VHD FOOTER\n";
-  Printf.printf "-=-=-=-=-=\n\n";
-  Printf.printf "cookie              : %s\n" f.cookie;
-  Printf.printf "features            : %s\n" (String.concat "," (List.map Feature.to_string f.features));
-  Printf.printf "format_version      : 0x%lx\n" f.format_version;
-  Printf.printf "data_offset         : 0x%Lx\n" f.data_offset;
-  Printf.printf "time_stamp          : %lu\n" f.time_stamp;
-  Printf.printf "creator_application : %s\n" f.creator_application;
-  Printf.printf "creator_version     : 0x%lx\n" f.creator_version;
-  Printf.printf "creator_host_os     : %s\n" (Host_OS.to_string f.creator_host_os);
-  Printf.printf "original_size       : 0x%Lx\n" f.original_size;
-  Printf.printf "current_size        : 0x%Lx\n" f.current_size;
-  Printf.printf "geometry            : %s\n" (Geometry.to_string f.geometry);
-  Printf.printf "disk_type           : %s\n" (Disk_type.to_string f.disk_type);
-  Printf.printf "checksum            : %lu\n" f.checksum;
-  Printf.printf "uid                 : %s\n" f.uid;
-  Printf.printf "saved_state         : %b\n\n" f.saved_state
 
-let dump_header f =
-  let open Header in
-  Printf.printf "VHD HEADER\n";
-  Printf.printf "-=-=-=-=-=\n";
-  Printf.printf "cookie              : %s\n" magic;
-  Printf.printf "data_offset         : %Lx\n" expected_data_offset;
-  Printf.printf "table_offset        : %Lu\n" f.table_offset;
-  Printf.printf "header_version      : 0x%lx\n" f.header_version;
-  Printf.printf "max_table_entries   : 0x%lx\n" f.max_table_entries;
-  Printf.printf "block_size          : 0x%lx\n" f.block_size;
-  Printf.printf "checksum            : %lu\n" f.checksum;
-  Printf.printf "parent_unique_id    : %s\n" f.parent_unique_id;
-  Printf.printf "parent_time_stamp   : %lu\n" f.parent_time_stamp;
-  Printf.printf "parent_unicode_name : '%s' (%d bytes)\n" (utf16_to_string f.parent_unicode_name) (Array.length f.Header.parent_unicode_name);
-  Printf.printf "parent_locators     : %s\n" 
-    (String.concat "\n                      " (List.map Parent_locator.to_string (Array.to_list f.parent_locators)))
-    
 let dump_bat b =
   Printf.printf "BAT\n";
   Printf.printf "-=-\n";
@@ -888,8 +889,8 @@ let dump_bat b =
 
 let rec dump_vhd vhd =
   Printf.printf "VHD file: %s\n" vhd.filename;
-  dump_header vhd.header;
-  dump_footer vhd.footer;
+  Header.dump vhd.header;
+  Footer.dump vhd.footer;
   match vhd.parent with
       None -> ()
     | Some vhd2 -> dump_vhd vhd2
