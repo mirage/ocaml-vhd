@@ -680,6 +680,17 @@ let y2k = 946684800.0 (* seconds from the unix epoch to the vhd epoch *)
 (* A couple of helper functions                                               *)
 (******************************************************************************)
   
+(* FIXME: This function does not do what it says! *)
+let utf16_of_utf8 string =
+  Array.init (String.length string) 
+    (fun c -> int_of_char string.[c])
+
+let get_block_sizes vhd =
+  let block_size = vhd.header.Header.block_size in
+  let bitmap_size = Header.sizeof_bitmap vhd.header in
+  (block_size, bitmap_size, Int32.add block_size bitmap_size)
+
+
 (** Guarantee to read 'n' bytes from a file descriptor or raise End_of_file *)
 let really_read mmap pos n = 
 	let buffer = String.create (Int64.to_int n) in
@@ -696,6 +707,11 @@ let really_write mmap pos x =
     Lwt.return ()
 
 
+(******************************************************************************)
+(* Unix specifics                                                             *)
+(******************************************************************************)
+
+
 let get_vhd_time time =
   Int32.of_int (int_of_float (time -. y2k))
 
@@ -707,10 +723,19 @@ let get_parent_modification_time parent =
   let st = Unix.stat parent in
   get_vhd_time (st.Unix.st_mtime)
 
-(* FIXME: This function does not do what it says! *)
-let utf16_of_utf8 string =
-  Array.init (String.length string) 
-    (fun c -> int_of_char string.[c])
+(* Get the filename of the parent VHD if necessary *)
+let get_parent_filename header =
+  let rec test n =
+    if n>=Array.length header.Header.parent_locators then (failwith "Failed to find parent!");
+    let l = header.Header.parent_locators.(n) in
+    let open Parent_locator in
+    Printf.printf "locator %d\nplatform_code: %s\nplatform_data: %s\n" n (Platform_code.to_string l.platform_code) (Cstruct.to_string l.platform_data);
+    match to_filename l with
+    | Some path ->
+      let exists = try ignore(Unix.stat path); true with _ -> false in
+      if not exists then test (n + 1) else path
+    | None -> test (n + 1) in
+  test 0
 
 
 module type ASYNC = sig
@@ -735,10 +760,6 @@ end
 (* Specific VHD unmarshalling functions                                       *)
 (******************************************************************************)
 
-let get_block_sizes vhd =
-  let block_size = vhd.header.Header.block_size in
-  let bitmap_size = Header.sizeof_bitmap vhd.header in
-  (block_size, bitmap_size, Int32.add block_size bitmap_size)
 
 let read_footer mmap pos =
   let buf = Cstruct.sub (Cstruct.of_bigarray mmap) pos Header.sizeof in
@@ -761,20 +782,6 @@ let read_bitmap vhd block =
   let (block_size,bitmap_size,total_size) = get_block_sizes vhd in
   let bitmap = Cstruct.sub (Cstruct.of_bigarray vhd.mmap) (Int64.to_int offset) (Int32.to_int bitmap_size) in
   Lwt.return bitmap
-
-(* Get the filename of the parent VHD if necessary *)
-let get_parent_filename header =
-  let rec test n =
-    if n>=Array.length header.Header.parent_locators then (failwith "Failed to find parent!");
-    let l = header.Header.parent_locators.(n) in
-    let open Parent_locator in
-    Printf.printf "locator %d\nplatform_code: %s\nplatform_data: %s\n" n (Platform_code.to_string l.platform_code) (Cstruct.to_string l.platform_data);
-    match to_filename l with
-    | Some path ->
-      let exists = try ignore(Unix.stat path); true with _ -> false in
-      if not exists then test (n + 1) else path
-    | None -> test (n + 1) in
-  test 0
 
 let rec load_vhd filename =
   lwt fd = Lwt_unix.openfile filename [Unix.O_RDWR] 0o664 in
