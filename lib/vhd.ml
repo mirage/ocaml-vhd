@@ -582,6 +582,30 @@ module BAT = struct
     t
 end
 
+module Bitmap = struct
+  type t = Cstruct.t
+
+  let sector t sector_in_block = Cstruct.sub t (sector_in_block / 8) 1
+
+  let get t sector_in_block =
+    let bitmap_byte = Cstruct.get_uint8 t (sector_in_block / 8) in
+    let bitmap_bit = sector_in_block mod 8 in
+    let mask = 0x80 lsr bitmap_bit in
+    (bitmap_byte land mask) = mask
+
+  let set t sector_in_block =
+    let bitmap_byte = Cstruct.get_uint8 t (sector_in_block / 8) in
+    let bitmap_bit = sector_in_block mod 8 in
+    let mask = 0x80 lsr bitmap_bit in
+    Cstruct.set_uint8 t (sector_in_block / 8) (bitmap_byte lor mask)
+
+  let clear t sector_in_block =
+    let bitmap_byte = Cstruct.get_uint8 t (sector_in_block / 8) in
+    let bitmap_bit = sector_in_block mod 8 in
+    let mask = 0x80 lsr bitmap_bit in
+    Cstruct.set_uint8 t (sector_in_block / 8) (bitmap_byte land (lnot mask))
+end
+
 type vhd = {
   filename : string;
   mmap : Lwt_bytes.t;
@@ -766,10 +790,8 @@ let read_bat mmap footer header =
 let read_bitmap vhd block =
   let offset = Int64.mul 512L (Int64.of_int32 vhd.bat.(block)) in
   let (block_size,bitmap_size,total_size) = get_block_sizes vhd in
-  lwt str = really_read vhd.mmap offset (Int64.of_int32 bitmap_size) in
-  let pos = (str,0) in
-  lwt list,pos = unmarshal_n (Int32.to_int bitmap_size) pos (fun pos -> Lwt.return (unmarshal_uint8 pos)) in
-  Lwt.return (Array.of_list list)
+  let bitmap = Cstruct.sub (Cstruct.of_bigarray vhd.mmap) (Int64.to_int offset) (Int32.to_int bitmap_size) in
+  Lwt.return bitmap
 
 (* Get the filename of the parent VHD if necessary *)
 let get_parent_filename header =
@@ -892,7 +914,7 @@ let get_offset_info_of_sector vhd sector =
   let datapos = Int64.add bitmap_size blockpos in
   let sectorpos = Int64.add datapos (Int64.mul sec_in_block 512L) in
   let bitmap_byte_pos = Int64.add bitmap_byte blockpos in
-  (block_num,sec_in_block,Int64.to_int bitmap_size, Int64.to_int bitmap_byte,Int64.to_int bitmap_bit,mask,sectorpos,bitmap_byte_pos)
+  (block_num,Int64.to_int sec_in_block,Int64.to_int bitmap_size, Int64.to_int bitmap_byte,Int64.to_int bitmap_bit,mask,sectorpos,bitmap_byte_pos)
 
 let rec get_sector_pos vhd sector =
   if Int64.mul sector 512L > vhd.footer.Footer.current_size then
@@ -915,7 +937,7 @@ let rec get_sector_pos vhd sector =
     begin      
       lwt bitmap = read_bitmap vhd block_num in
       if vhd.footer.Footer.disk_type = Disk_type.Differencing_hard_disk &&
-	bitmap.(bitmap_byte) land mask <> mask
+        (not (Bitmap.get bitmap sec_in_block))
       then
 	maybe_get_from_parent ()
       else
@@ -990,9 +1012,9 @@ let write_sector vhd sector data =
   let (block_num,sec_in_block,bitmap_size,bitmap_byte,bitmap_bit,mask,sectorpos,bitmap_byte_pos) = 
     get_offset_info_of_sector vhd sector in
   lwt bitmap = read_bitmap vhd block_num in
-  bitmap.(bitmap_byte) <- bitmap.(bitmap_byte) lor mask;
+  Bitmap.set bitmap sec_in_block;
   lwt () = really_write vhd.mmap sectorpos data in
-  lwt () = really_write vhd.mmap bitmap_byte_pos (String.make 1 (char_of_int bitmap.(bitmap_byte))) in
+  lwt () = really_write vhd.mmap bitmap_byte_pos (Cstruct.to_string (Bitmap.sector bitmap sec_in_block)) in
   Lwt.return ()
 
 let rewrite_block vhd block_number new_block_number =
