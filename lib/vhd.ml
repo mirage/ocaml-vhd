@@ -667,67 +667,6 @@ let utf16_of_utf8 string =
   Array.init (String.length string) 
     (fun c -> int_of_char string.[c])
 
-(*****************************************************************************)
-(* Generic unmarshalling functions                                           *)
-(*****************************************************************************)
-
-(* bigendian parameter means the data is stored on disk in bigendian format *)
-
-let unmarshal_uint8 (s, offset) =
-  int_of_char s.[offset], (s, offset+1)
-
-let unmarshal_uint16 ?(bigendian=true) (s, offset) =
-  let offsets = if bigendian then [|1;0|] else [|0;1|] in
-  let ( <|< ) a b = a lsl b 
-  and ( || ) a b = a lor b in
-  let a = int_of_char (s.[offset + offsets.(0)]) 
-  and b = int_of_char (s.[offset + offsets.(1)]) in
-  (a <|< 0) || (b <|< 8), (s, offset + 2)
-
-let unmarshal_uint32 ?(bigendian=true) (s, offset) = 
-	let offsets = if bigendian then [|3;2;1;0|] else [|0;1;2;3|] in
-	let ( <|< ) a b = Int32.shift_left a b 
-	and ( || ) a b = Int32.logor a b in
-	let a = Int32.of_int (int_of_char (s.[offset + offsets.(0)])) 
-	and b = Int32.of_int (int_of_char (s.[offset + offsets.(1)])) 
-	and c = Int32.of_int (int_of_char (s.[offset + offsets.(2)])) 
-	and d = Int32.of_int (int_of_char (s.[offset + offsets.(3)])) in
-	(a <|< 0) || (b <|< 8) || (c <|< 16) || (d <|< 24), (s, offset + 4)
-		
-let unmarshal_uint64 ?(bigendian=true) (s, offset) = 
-  let offsets = if bigendian then [|7;6;5;4;3;2;1;0|] else [|0;1;2;3;4;5;6;7|] in
-  let ( <|< ) a b = Int64.shift_left a b 
-  and ( || ) a b = Int64.logor a b in
-  let a = Int64.of_int (int_of_char (s.[offset + offsets.(0)])) 
-  and b = Int64.of_int (int_of_char (s.[offset + offsets.(1)])) 
-  and c = Int64.of_int (int_of_char (s.[offset + offsets.(2)])) 
-  and d = Int64.of_int (int_of_char (s.[offset + offsets.(3)])) 
-  and e = Int64.of_int (int_of_char (s.[offset + offsets.(4)])) 
-  and f = Int64.of_int (int_of_char (s.[offset + offsets.(5)])) 
-  and g = Int64.of_int (int_of_char (s.[offset + offsets.(6)])) 
-  and h = Int64.of_int (int_of_char (s.[offset + offsets.(7)])) in
-  (a <|< 0) || (b <|< 8) || (c <|< 16) || (d <|< 24)
-  || (e <|< 32) || (f <|< 40) || (g <|< 48) || h <|< (56), (s, offset + 8)
-
-let unmarshal_string len (s,offset) =
-  String.sub s offset len, (s, offset + len)
-
-
-let marshal_int32 ?(bigendian=true) x = 
-  let offsets = if bigendian then [|3;2;1;0|] else [|0;1;2;3|] in
-  let (>|>) a b = Int32.shift_right_logical a b
-  and (&&) a b = Int32.logand a b in
-  let a = (x >|> 0) && 0xffl 
-  and b = (x >|> 8) && 0xffl
-  and c = (x >|> 16) && 0xffl
-  and d = (x >|> 24) && 0xffl in
-  let result = String.make 4 '\000' in
-  result.[offsets.(0)] <- char_of_int (Int32.to_int a);
-  result.[offsets.(1)] <- char_of_int (Int32.to_int b);
-  result.[offsets.(2)] <- char_of_int (Int32.to_int c);
-  result.[offsets.(3)] <- char_of_int (Int32.to_int d);
-  result
-
 (******************************************************************************)
 (* Specific VHD unmarshalling functions                                       *)
 (******************************************************************************)
@@ -736,45 +675,6 @@ let get_block_sizes vhd =
   let block_size = vhd.header.Header.block_size in
   let bitmap_size = Header.sizeof_bitmap vhd.header in
   (block_size, bitmap_size, Int32.add block_size bitmap_size)
-
-let unmarshal_geometry pos =
-  let cyl,pos = unmarshal_uint16 pos in
-  let heads,pos = unmarshal_uint8 pos in
-  let sectors, pos = unmarshal_uint8 pos in
-  {Geometry.cylinders = cyl;
-   heads; sectors}, pos
-
-let unmarshal_parent_locator mmap pos =
-  let open Parent_locator in
-  let header = Cstruct.sub (Cstruct.of_bigarray mmap) pos sizeof in
-  let p = unmarshal header in
-  lwt platform_data = 
-    if p.platform_data_length > 0l then
-      (Printf.printf "Platform_data_length: %ld\n" p.platform_data_length;
-       really_read mmap p.platform_data_offset (Int64.of_int32 p.platform_data_length))
-    else Lwt.return "" in
-  Lwt.return ({p with platform_data}, pos + sizeof)
-
-let unmarshal_n n pos f =
-  let rec inner m pos cur =
-    if m=n then Lwt.return ((List.rev cur),pos) else
-      begin
-	lwt x,newpos = f pos in
-	inner (m+1) newpos (x::cur)
-      end
-  in inner 0 pos []
-  
-let unmarshal_parent_locators mmap pos =
-  lwt list,pos = unmarshal_n 8 pos (unmarshal_parent_locator mmap) in
-  Lwt.return (Array.of_list list, pos)
-
-let parse_bitfield num =
-  let rec inner n mask cur =
-    if n=64 then cur else
-      if Int64.logand num mask = mask 
-      then inner (n+1) (Int64.shift_left mask 1) (n::cur)
-      else inner (n+1) (Int64.shift_left mask 1) cur
-  in inner 0 Int64.one []
 
 let read_footer mmap pos =
   let buf = Cstruct.sub (Cstruct.of_bigarray mmap) pos Header.sizeof in
