@@ -617,6 +617,22 @@ module Bitmap = struct
     Cstruct.set_uint8 t (sector_in_block / 8) (bitmap_byte land (lnot mask))
 end
 
+module Sector = struct
+  type t = Cstruct.t
+
+  let dump t =
+    if Cstruct.len t = 0
+    then Printf.printf "Empty sector\n"
+    else
+      for i=0 to Cstruct.len t - 1 do
+        if (i mod 16 = 15) then
+          Printf.printf "%02x\n" (Cstruct.get_uint8 t i)
+        else
+          Printf.printf "%02x " (Cstruct.get_uint8 t i)
+      done
+
+end
+
 type vhd = {
   filename : string;
   mmap : Lwt_bytes.t;
@@ -780,16 +796,7 @@ let write_bat mmap vhd =
 (* Debug dumping stuff - dump to screen                                       *)
 (******************************************************************************)
 
-let dump_sector sector =
-  if String.length sector=0 then
-    Printf.printf "Empty sector\n"
-  else
-    for i=0 to String.length sector - 1 do
-      if (i mod 16 = 15) then
-	Printf.printf "%02x\n" (Char.code sector.[i])
-      else
-	Printf.printf "%02x " (Char.code sector.[i])
-    done
+
 
 
 
