@@ -139,6 +139,39 @@ module Geometry = struct
 
 end
 
+(* TODO: use the optimised mirage version *)
+let ones_complement_checksum m =
+  let rec inner n cur =
+    if n=Cstruct.len m then cur else
+      inner (n+1) (Int32.add cur (Int32.of_int (Cstruct.get_uint8 m n)))
+  in 
+  Int32.lognot (inner 0 0l)
+
+module UTF16 = struct
+  type t = int array
+
+  let marshal (buf: Cstruct.t) t =
+    let rec inner ofs n =
+      if n = Array.length t
+      then Cstruct.sub buf 0 ofs
+      else begin
+        let char = t.(n) in
+        if char < 0x10000 then begin
+          Cstruct.BE.set_uint16 buf ofs char;
+          inner (ofs + 2) (n + 1)
+        end else begin
+          let char = char - 0x10000 in
+          let c1 = (char lsr 10) land 0x3ff in (* high bits *)
+          let c2 = char land 0x3ff in (* low bits *)
+          Cstruct.BE.set_uint16 buf (ofs + 0) (0xd800 + c1);
+          Cstruct.BE.set_uint16 buf (ofs + 2) (0xdc00 + c2);
+          inner (ofs + 4) (n + 1)
+        end
+      end in
+    inner 0 0
+
+end
+
 module Footer = struct
   type t = {
     (* "conectix" *)
@@ -201,6 +234,8 @@ module Footer = struct
     (* 427 zeroed *)
   } as big_endian
 
+  let sizeof = 512
+
   let marshal (buf: Cstruct.t) t =
     set_footer_magic magic 0 buf;
     set_footer_features buf (Feature.to_int32 t.features);
@@ -216,15 +251,14 @@ module Footer = struct
     set_footer_heads buf t.geometry.Geometry.heads;
     set_footer_sectors buf t.geometry.Geometry.sectors;
     set_footer_disk_type buf (Disk_type.to_int32 t.disk_type);
-    set_footer_checksum buf t.checksum;
+    set_footer_checksum buf 0l;
     set_footer_uid (Uuidm.to_string t.uid) 0 buf;
     set_footer_saved_state buf (if t.saved_state then 1 else 0);
     let remaining = Cstruct.shift buf sizeof_footer in
     for i = 0 to 426 do
       Cstruct.set_uint8 remaining i 0
-    done
-
-  let sizeof = 512
+    done;
+    set_footer_checksum buf (ones_complement_checksum (Cstruct.sub buf 0 sizeof))
 end
 
 module Platform_code = struct
@@ -302,6 +336,23 @@ module Parent_locator = struct
     Printf.sprintf "(%s %lx %lx, %ld, 0x%Lx, %s)" (Platform_code.to_string t.platform_code)
       t.platform_data_space t.platform_data_space_original
       t.platform_data_length t.platform_data_offset t.platform_data
+
+  cstruct header {
+    uint32_t platform_code;
+    uint32_t platform_data_space;
+    uint32_t platform_data_length;
+    uint32_t reserved;
+    uint64_t platform_data_offset
+  } as big_endian
+
+  let sizeof = sizeof_header
+
+  let marshal (buf: Cstruct.t) t =
+    set_header_platform_code buf (Platform_code.to_int32 t.platform_code);
+    set_header_platform_data_space buf t.platform_data_space;
+    set_header_platform_data_length buf t.platform_data_length;
+    set_header_reserved buf 0l;
+    set_header_platform_data_offset buf t.platform_data_offset
 end
 
 module Header = struct
@@ -372,6 +423,51 @@ module Header = struct
     Printf.printf "parent_locators     : %s\n" 
       (String.concat "\n                      " (List.map Parent_locator.to_string (Array.to_list t.parent_locators)))
 
+  cstruct header {
+    uint8_t magic[8];
+    uint64_t data_offset;
+    uint64_t table_offset;
+    uint32_t header_version;
+    uint32_t max_table_entries;
+    uint32_t block_size;
+    uint32_t checksum;
+    uint8_t parent_unique_id[16];
+    uint32_t parent_time_stamp;
+    uint32_t reserved;
+    uint8_t parent_unicode_name[512]
+    (* 8 parent locators *)
+    (* 256 reserved *)
+  } as big_endian
+
+  let sizeof = sizeof_header + (8 * Parent_locator.sizeof) + 256
+
+  let marshal (buf: Cstruct.t) t =
+    set_header_magic magic 0 buf;
+    set_header_data_offset buf expected_data_offset;
+    set_header_table_offset buf t.table_offset;
+    set_header_header_version buf expected_version;
+    set_header_max_table_entries buf t.max_table_entries;
+    set_header_block_size buf t.block_size;
+    set_header_checksum buf 0l;
+    set_header_parent_unique_id (Uuidm.to_bytes t.parent_unique_id) 0 buf;
+    set_header_parent_time_stamp buf t.parent_time_stamp;
+    set_header_reserved buf 0l;
+    let unicode_offset = 8 + 8 + 8 + 4 + 4 + 4 + 4 + 16 + 4 + 4 in
+    for i = 0 to 511 do
+      Cstruct.set_uint8 buf (unicode_offset + i) 0
+    done;
+    let (_: Cstruct.t) = UTF16.marshal (Cstruct.shift buf unicode_offset) t.parent_unicode_name in
+    let parent_locators = Cstruct.shift buf (unicode_offset + 512) in
+    for i = 0 to 7 do
+      let buf = Cstruct.shift parent_locators (Parent_locator.sizeof * i) in
+      let pl = if Array.length t.parent_locators <= i then Parent_locator.null else t.parent_locators.(i) in
+      Parent_locator.marshal buf pl
+    done;
+    let reserved = Cstruct.shift parent_locators (8 * Parent_locator.sizeof) in
+    for i = 0 to 255 do
+      Cstruct.set_uint8 reserved i 0
+    done;
+    set_header_checksum buf (ones_complement_checksum (Cstruct.sub buf 0 sizeof))
 end
 
 type vhd = {
@@ -566,25 +662,6 @@ let marshal_int64 ?(bigendian=true) x =
   result.[offsets.(6)] <- char_of_int (Int64.to_int g);
   result.[offsets.(7)] <- char_of_int (Int64.to_int h);
   result
-
-let marshal_utf16 x =
-  let rec inner n cur =
-    if n=Array.length x then (String.concat "" (List.rev cur))
-    else
-      let char = x.(n) in
-      if char < 0x10000
-      then inner (n+1) ((marshal_int16 char)::cur)
-      else
-	begin
-	  let char = char - 0x10000 in
-	  let c1 = (char lsr 10) land 0x3ff in (* high bits *)
-	  let c2 = char land 0x3ff in (* low bits *)
-	  let str1 = marshal_int16 (0xd800 + c1) 
-	  and str2 = marshal_int16 (0xdc00 + c2)
-	  in 
-	  inner (n+1) ((str1^str2)::cur)	      
-	end
-  in inner 0 []
 
 let pad_string_to str n =
   let newstr = String.make n '\000' in
@@ -785,76 +862,15 @@ let rec load_vhd filename =
 (* Specific VHD marshalling functions                                         *)
 (******************************************************************************)
 
-let marshal_parent_locator_entry e =
-  let open Parent_locator in
-  let output =
-    [ marshal_int32 (Platform_code.to_int32 e.platform_code);
-      marshal_int32 e.platform_data_space_original;
-      marshal_int32 e.platform_data_length;
-      String.make 4 '\000';
-      marshal_int64 e.platform_data_offset ]
-  in 
-  String.concat "" output
-
-let generic_calc_checksum m =
-  let rec inner n cur =
-    if n=String.length m then cur else
-      inner (n+1) (Int32.add cur (Int32.of_int (int_of_char m.[n])))
-  in 
-  Int32.lognot (inner 0 0l)
-
-let marshal_footer_no_checksum f =
+let marshal_footer f =
   let sector = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout Footer.sizeof)) in
   Footer.marshal sector f;
   Cstruct.to_string sector
 
-let calc_checksum_footer f =
-  let marshalled = marshal_footer_no_checksum f in
-  let checksum = generic_calc_checksum marshalled in
-  checksum,marshalled
-
-let marshal_footer f =
-  let checksum,marshalled = calc_checksum_footer f in
-  let checksum_m = marshal_int32 checksum in
-  String.blit checksum_m 0 marshalled 64 4;
-  marshalled
-
-let marshal_header_no_checksum h =
-  let open Header in
-  let output = 
-    [ magic;
-      marshal_int64 expected_data_offset;
-      marshal_int64 h.table_offset;
-      marshal_int32 expected_version;
-      marshal_int32 h.max_table_entries;
-      marshal_int32 h.block_size;
-      String.make 4 '\000';
-      Uuidm.to_bytes h.parent_unique_id;
-      marshal_int32 h.parent_time_stamp;
-      String.make 4 '\000';
-      pad_string_to (marshal_utf16 h.parent_unicode_name) 512;
-      marshal_parent_locator_entry h.parent_locators.(0);
-      marshal_parent_locator_entry h.parent_locators.(1);
-      marshal_parent_locator_entry h.parent_locators.(2);
-      marshal_parent_locator_entry h.parent_locators.(3);
-      marshal_parent_locator_entry h.parent_locators.(4);
-      marshal_parent_locator_entry h.parent_locators.(5);
-      marshal_parent_locator_entry h.parent_locators.(6);
-      marshal_parent_locator_entry h.parent_locators.(7);
-    ] 
-  in
-  pad_string_to (String.concat "" output) 1024
-
-let calc_checksum_header h =
-  let marshalled = marshal_header_no_checksum h in
-  let checksum = generic_calc_checksum marshalled in
-  checksum,marshalled
-
 let marshal_header h =
-  let checksum,marshalled = calc_checksum_header h in
-  let checksum_m = marshal_int32 checksum in
-  String.blit checksum_m 0 marshalled 36 4;
-  marshalled
+  let buf = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout Header.sizeof)) in
+  Header.marshal buf h;
+  Cstruct.to_string buf
 
 (* Now we do some actual seeking within the file - because this stuff involves *)
 (* absolute offsets *)
