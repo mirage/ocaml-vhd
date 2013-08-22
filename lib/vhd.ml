@@ -562,6 +562,7 @@ module Header = struct
     done;
     { table_offset; max_table_entries; block_size; checksum; parent_unique_id;
       parent_time_stamp; parent_unicode_name; parent_locators }
+
 end
 
 module BAT = struct
@@ -585,6 +586,11 @@ module BAT = struct
     for i = 0 to Array.length t - 1 do
       Cstruct.BE.set_uint32 buf (Int32.to_int t.(i))
     done
+
+  let dump t =
+    Printf.printf "BAT\n";
+    Printf.printf "-=-\n";
+    Array.iteri (fun i x -> Printf.printf "%d\t:0x%lx\n" i x) t
 end
 
 module Bitmap = struct
@@ -661,7 +667,7 @@ let get_now () =
 let get_parent_modification_time parent =
   let st = Unix.stat parent in
   get_vhd_time (st.Unix.st_mtime)
-    
+
 (* FIXME: This function does not do what it says! *)
 let utf16_of_utf8 string =
   Array.init (String.length string) 
@@ -786,10 +792,6 @@ let dump_sector sector =
     done
 
 
-let dump_bat b =
-  Printf.printf "BAT\n";
-  Printf.printf "-=-\n";
-  Array.iteri (fun i x -> Printf.printf "%d\t:0x%lx\n" i x) b
 
 let rec dump_vhd vhd =
   Printf.printf "VHD file: %s\n" vhd.filename;
