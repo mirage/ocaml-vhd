@@ -19,8 +19,8 @@ module Feature = struct
   type t = 
     | Temporary
 
-  let of_int x =
-    if x land 1 <> 0 then [ Temporary ] else []
+  let of_int32 x =
+    if Int32.logand x 1l <> 0l then [ Temporary ] else []
 
   let to_int32 ts =
     let one = function
@@ -70,28 +70,22 @@ module Host_OS = struct
   type t =
     | Windows
     | Macintosh
-    | Other of string
+    | Other of int32
 
-  let of_bytes = function
-    | "\x57\x69\x32\x6b" -> Windows
-    | "\x4d\x61\x63\x20" -> Macintosh
+  let of_int32 = function
+    | 0x5769326bl -> Windows
+    | 0x4d616320l -> Macintosh
     | x -> Other x
-
-  let to_bytes = function
-    | Windows -> "\x57\x69\x32\x6b"
-    | Macintosh -> "\x4d\x61\x63\x20"
-    | Other x -> x
 
   let to_int32 = function
     | Windows -> 0x5769326bl
     | Macintosh -> 0x4d616320l
-    | Other x -> assert false (* TODO: temporary hack *)
+    | Other x -> x
 
   let to_string = function
     | Windows -> "Windows"
     | Macintosh -> "Macintosh"
-    | Other x -> Printf.sprintf "Other [%02x %02x %02x %02x]"
-      (int_of_char x.[0]) (int_of_char x.[1]) (int_of_char x.[2]) (int_of_char x.[3])
+    | Other x -> Printf.sprintf "Other %lx" x
 end
 
 module Geometry = struct
@@ -313,6 +307,35 @@ module Footer = struct
       Cstruct.set_uint8 remaining i 0
     done;
     set_footer_checksum buf (ones_complement_checksum (Cstruct.sub buf 0 sizeof))
+
+  let unmarshal (buf: Cstruct.t) =
+    let magic' = copy_footer_magic buf in
+    if magic' <> magic
+    then failwith (Printf.sprintf "Unsupported footer cookie: expected %s, got %s" magic magic');
+    let features = Feature.of_int32 (get_footer_features buf) in
+    let format_version = get_footer_version buf in
+    if format_version <> expected_version
+    then failwith (Printf.sprintf "Unsupported footer version: expected %lx, got %lx" expected_version format_version);
+    let data_offset = get_footer_data_offset buf in
+    let time_stamp = get_footer_time_stamp buf in
+    let creator_application = copy_footer_creator_application buf in
+    let creator_version = get_footer_creator_version buf in
+    let creator_host_os = Host_OS.of_int32 (get_footer_creator_host_os buf) in
+    let original_size = get_footer_original_size buf in
+    let current_size = get_footer_current_size buf in
+    let cylinders = get_footer_cylinders buf in
+    let heads = get_footer_heads buf in
+    let sectors = get_footer_sectors buf in
+    let geometry = { Geometry.cylinders; heads; sectors } in
+    let disk_type = Disk_type.of_int32 (get_footer_disk_type buf) in
+    let checksum = get_footer_checksum buf in
+    let bytes = copy_footer_uid buf in
+    let uid = match Uuidm.of_bytes bytes with
+      | None -> failwith (Printf.sprintf "Failed to decode UUID: %s" (String.escaped bytes))
+      | Some uid -> uid in
+    let saved_state = get_footer_saved_state buf = 1 in
+    { features; data_offset; time_stamp; creator_version; creator_application;
+      creator_host_os; original_size; current_size; geometry; disk_type; checksum; uid; saved_state }
 end
 
 module Platform_code = struct
@@ -705,44 +728,10 @@ let parse_bitfield num =
       else inner (n+1) (Int64.shift_left mask 1) cur
   in inner 0 Int64.one []
 
-let read_footer mmap pos read_512 =
-  lwt footer = really_read mmap pos (if read_512 then 512L else 511L) in
-  let footer = (footer,0) in
-  let cookie,pos = unmarshal_string 8 footer in
-  if cookie <> Footer.magic
-  then failwith (Printf.sprintf "Unsupported footer cookie: expected %s, got %s" Footer.magic cookie);
-  let features,pos = 
-    let featuresnum,pos = unmarshal_uint32 pos in
-    Feature.of_int (Int32.to_int featuresnum), pos in
-  let format_version,pos = unmarshal_uint32 pos in
-  if format_version <> Footer.expected_version
-  then failwith (Printf.sprintf "Unsupported footer version: expected %lx, got %lx" Footer.expected_version format_version);
-  let data_offset,pos = unmarshal_uint64 pos in
-  let time_stamp,pos = unmarshal_uint32 pos in
-  let creator_application,pos = unmarshal_string 4 pos in
-  let creator_version,pos = unmarshal_uint32 pos in
-  let creator_host_os,pos =
-    let s,pos = unmarshal_string 4 pos in
-    Host_OS.of_bytes s, pos in
-  let original_size,pos = unmarshal_uint64 pos in
-  let current_size,pos = unmarshal_uint64 pos in
-  let geometry,pos = unmarshal_geometry pos in
-  let disk_type,pos = 
-    let num,pos = unmarshal_uint32 pos in
-    Disk_type.of_int32 num, pos in
-  let checksum,pos = unmarshal_uint32 pos in
-  let uid,pos =
-    let bytes,pos = unmarshal_string 16 pos in
-    let uid = match Uuidm.of_bytes bytes with
-    | None -> failwith (Printf.sprintf "Failed to decode UUID: %s" (String.escaped bytes))
-    | Some uid -> uid in
-    uid,pos in
-  let saved_state,pos = let n,pos = unmarshal_uint8 pos in n=1, pos in
-  let footer_buffer,_ = footer in
-  let open Footer in
-  Lwt.return {features; data_offset; time_stamp; creator_version;
-   creator_application; creator_host_os; original_size; current_size; geometry;
-   disk_type; checksum; uid; saved_state}
+let read_footer mmap pos =
+  let buf = Cstruct.sub (Cstruct.of_bigarray mmap) pos Header.sizeof in
+  let f = Footer.unmarshal buf in
+  Lwt.return f
 
 let read_header mmap pos =
   let buf = Cstruct.sub (Cstruct.of_bigarray mmap) pos Header.sizeof in
@@ -792,7 +781,7 @@ let get_parent_filename header =
 let rec load_vhd filename =
   lwt fd = Lwt_unix.openfile filename [Unix.O_RDWR] 0o664 in
   let mmap = Lwt_bytes.map_file ~fd:(Lwt_unix.unix_file_descr fd) ~shared:true () in
-  lwt footer = read_footer mmap 0L true in
+  lwt footer = read_footer mmap 0 in
   lwt header = read_header mmap 512 in
   lwt bat = read_bat mmap footer header in
   lwt parent = 
@@ -1067,7 +1056,7 @@ let create_new_dynamic filename requested_size uuid ?(sparse=true) ?(table_offse
       data_offset;
       time_stamp = 0l;
       creator_application; creator_version;
-      creator_host_os = Host_OS.Other "\000\000\000\000";
+      creator_host_os = Host_OS.Other 0l;
       original_size = size;
       current_size = size;
       geometry;
@@ -1109,7 +1098,7 @@ let create_new_difference filename backing_vhd uuid ?(features=[])
       data_offset;
       time_stamp = get_now ();
       creator_application; creator_version;
-      creator_host_os = Host_OS.Other "\000\000\000\000";
+      creator_host_os = Host_OS.Other 0l;
       original_size = parent.footer.Footer.current_size;
       current_size = parent.footer.Footer.current_size;
       geometry = parent.footer.Footer.geometry;

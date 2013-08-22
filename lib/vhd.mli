@@ -30,7 +30,7 @@ module Host_OS: sig
   type t =
     | Windows
     | Macintosh
-    | Other of string
+    | Other of int32
 end
 
 module Geometry: sig
