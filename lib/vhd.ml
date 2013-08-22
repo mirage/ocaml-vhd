@@ -561,6 +561,24 @@ module Header = struct
       parent_time_stamp; parent_unicode_name; parent_locators }
 end
 
+module BAT = struct
+  type t = int32 array
+
+  let unused = 0xffffffffl
+
+  let sizeof (header: Header.t) =
+    let size_needed = Int32.to_int header.Header.max_table_entries * 4 in
+    (* The BAT is always extended to a sector boundary *)
+    (size_needed + 511) / 512 * 512
+
+  let unmarshal (buf: Cstruct.t) (header: Header.t) =
+    let t = Array.create (Int32.to_int header.Header.max_table_entries) unused in
+    for i = 0 to Int32.to_int header.Header.max_table_entries - 1 do
+      t.(i) <- Cstruct.BE.get_uint32 buf (i * 4)
+    done;
+    t
+end
+
 type vhd = {
   filename : string;
   mmap : Lwt_bytes.t;
@@ -575,7 +593,6 @@ type vhd = {
 let sector_size = 512
 let sector_sizeL = 512L
 let block_size = 0x200000l
-let unusedl = 0xffffffffl
 
 
 let creator_application = "caml"
@@ -740,12 +757,9 @@ let read_header mmap pos =
   Lwt.return h
 
 let read_bat mmap footer header =
-  let bat_start = header.Header.table_offset in
-  let bat_size = Int32.to_int header.Header.max_table_entries in
-  lwt str = really_read mmap bat_start (Int64.of_int (bat_size * 4)) in
-  let pos = (str,0) in
-  lwt list,pos = unmarshal_n bat_size pos (fun pos -> Lwt.return (unmarshal_uint32 pos)) in
-  Lwt.return (Array.of_list list)
+  let buf = Cstruct.sub (Cstruct.of_bigarray mmap) (Int64.to_int header.Header.table_offset) (BAT.sizeof header) in
+  let bat = BAT.unmarshal buf header in
+  Lwt.return bat
 
 let read_bitmap vhd block =
   let offset = Int64.mul 512L (Int64.of_int32 vhd.bat.(block)) in
@@ -913,7 +927,7 @@ exception EmptyVHD
 let get_top_unused_offset vhd =
   try
     let max_entry_offset = 
-      let entries = List.filter (fun x -> x<>unusedl) (Array.to_list vhd.bat) in
+      let entries = List.filter (fun x -> x<>BAT.unused) (Array.to_list vhd.bat) in
       if List.length entries = 0 then raise EmptyVHD;
       let max_entry = List.hd (List.rev (List.sort Int32.compare entries)) in
       max_entry
@@ -957,7 +971,7 @@ let write_sector vhd sector data =
   let block_size_in_sectors = Int64.div (Int64.of_int32 vhd.header.Header.block_size) 512L in
   let block_num = Int64.to_int (Int64.div sector block_size_in_sectors) in
   lwt () = 
-  if (vhd.bat.(block_num) = unusedl)
+  if (vhd.bat.(block_num) = BAT.unused)
   then
     begin
       (* Allocate a new sector *)
@@ -1020,7 +1034,7 @@ let check_overlapping_blocks vhd =
   let bat = tomarkers "BAT" bat_start bat_size in
   let blocks = bat @ blocks in
   let bat_blocks = Array.to_list (Array.mapi (fun i b -> (i,b)) vhd.bat) in
-  let bat_blocks = List.filter (fun (_,b) -> b <> unusedl) bat_blocks in
+  let bat_blocks = List.filter (fun (_,b) -> b <> BAT.unused) bat_blocks in
   let bat_blocks = List.map (fun (i,b) ->
     let name = Printf.sprintf "block %d" i in
     let start = Int64.mul 512L (Int64.of_int32 vhd.bat.(i)) in
@@ -1078,7 +1092,7 @@ let create_new_dynamic filename requested_size uuid ?(sparse=true) ?(table_offse
       parent_locators = Array.make 8 Parent_locator.null
     } 
   in
-  let bat = Array.make (Int32.to_int header.Header.max_table_entries) unusedl in
+  let bat = Array.make (Int32.to_int header.Header.max_table_entries) (BAT.unused) in
   Printf.printf "max_table_entries: %ld (size=%Ld)\n" (header.Header.max_table_entries) size;
   lwt fd = Lwt_unix.openfile filename [Unix.O_RDWR; Unix.O_CREAT; Unix.O_EXCL] 0o640 in
   let mmap = Lwt_bytes.map_file ~fd:(Lwt_unix.unix_file_descr fd) ~shared:true ~size:(1024*1024*64) () in
@@ -1132,7 +1146,7 @@ let create_new_difference filename backing_vhd uuid ?(features=[])
 			     Parent_locator.null; Parent_locator.null; Parent_locator.null; Parent_locator.null; |];
     }
   in
-  let bat = Array.make (Int32.to_int header.Header.max_table_entries) unusedl in
+  let bat = Array.make (Int32.to_int header.Header.max_table_entries) (BAT.unused) in
   lwt fd = Lwt_unix.openfile filename [Unix.O_RDWR; Unix.O_CREAT; Unix.O_EXCL] 0o640 in
   let mmap = Lwt_bytes.map_file ~fd:(Lwt_unix.unix_file_descr fd) ~shared:true () ~size:(1024*1024*64) in
   Lwt.return {filename=filename;
