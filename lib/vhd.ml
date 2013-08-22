@@ -611,20 +611,6 @@ let unmarshal_utf16_string len (s, offset) =
   let pos = inner 0 pos in
   string, pos
 
-let marshal_int8 x =
-  String.make 1 (char_of_int x)
-
-let marshal_int16 ?(bigendian=true) x = 
-  let offsets = if bigendian then [|1;0|] else [|0;1|] in
-  let (>|>) a b = a lsr b
-  and (&&) a b = a land b in
-  let a = (x >|> 0) && 0xff 
-  and b = (x >|> 8) && 0xff in
-  let result = String.make 2 '\000' in
-  result.[offsets.(0)] <- char_of_int a;
-  result.[offsets.(1)] <- char_of_int b;
-  result
-
 let marshal_int32 ?(bigendian=true) x = 
   let offsets = if bigendian then [|3;2;1;0|] else [|0;1;2;3|] in
   let (>|>) a b = Int32.shift_right_logical a b
@@ -639,35 +625,6 @@ let marshal_int32 ?(bigendian=true) x =
   result.[offsets.(2)] <- char_of_int (Int32.to_int c);
   result.[offsets.(3)] <- char_of_int (Int32.to_int d);
   result
-
-let marshal_int64 ?(bigendian=true) x = 
-  let offsets = if bigendian then [|7;6;5;4;3;2;1;0|] else [|0;1;2;3;4;5;6;7|] in
-  let (>|>) a b = Int64.shift_right_logical a b
-  and (&&) a b = Int64.logand a b in
-  let a = (x >|> 0) && 0xffL
-  and b = (x >|> 8) && 0xffL
-  and c = (x >|> 16) && 0xffL
-  and d = (x >|> 24) && 0xffL 
-  and e = (x >|> 32) && 0xffL 
-  and f = (x >|> 40) && 0xffL
-  and g = (x >|> 48) && 0xffL
-  and h = (x >|> 56) && 0xffL in
-  let result = String.make 8 '\000' in
-  result.[offsets.(0)] <- char_of_int (Int64.to_int a);
-  result.[offsets.(1)] <- char_of_int (Int64.to_int b);
-  result.[offsets.(2)] <- char_of_int (Int64.to_int c);
-  result.[offsets.(3)] <- char_of_int (Int64.to_int d);
-  result.[offsets.(4)] <- char_of_int (Int64.to_int e);
-  result.[offsets.(5)] <- char_of_int (Int64.to_int f);
-  result.[offsets.(6)] <- char_of_int (Int64.to_int g);
-  result.[offsets.(7)] <- char_of_int (Int64.to_int h);
-  result
-
-let pad_string_to str n =
-  let newstr = String.make n '\000' in
-  let len = min (String.length str) n in
-  String.blit str 0 newstr 0 len;
-  newstr
 
 (******************************************************************************)
 (* Specific VHD unmarshalling functions                                       *)
