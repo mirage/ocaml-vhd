@@ -150,6 +150,34 @@ let ones_complement_checksum m =
 module UTF16 = struct
   type t = int array
 
+  let to_utf8 s =
+    let utf8_chars_of_int i = 
+      if i < 0x80 then [char_of_int i] 
+      else if i < 0x800 then 
+        begin
+          let z = i land 0x3f
+          and y = (i lsr 6) land 0x1f in 
+          [char_of_int (0xc0 + y); char_of_int (0x80+z)]
+        end
+      else if i < 0x10000 then
+        begin
+          let z = i land 0x3f
+          and y = (i lsr 6) land 0x3f 
+          and x = (i lsr 12) land 0x0f in
+          [char_of_int (0xe0 + x); char_of_int (0x80+y); char_of_int (0x80+z)]
+        end
+      else if i < 0x110000 then
+        begin
+          let z = i land 0x3f
+          and y = (i lsr 6) land 0x3f
+          and x = (i lsr 12) land 0x3f
+          and w = (i lsr 18) land 0x07 in
+          [char_of_int (0xf0 + w); char_of_int (0x80+x); char_of_int (0x80+y); char_of_int (0x80+z)]
+        end
+      else
+        failwith "Bad unicode character!" in
+    String.concat "" (List.map (fun c -> Printf.sprintf "%c" c) (List.flatten (List.map utf8_chars_of_int (Array.to_list s))))
+
   let marshal (buf: Cstruct.t) t =
     let rec inner ofs n =
       if n = Array.length t
@@ -170,6 +198,32 @@ module UTF16 = struct
       end in
     inner 0 0
 
+  let unmarshal (buf: Cstruct.t) len =
+    (* Check if there's a byte order marker *)
+    let bigendian, pos, max = match Cstruct.BE.get_uint16 buf 0 with
+      | 0xfeff -> true,  2, (len / 2 - 1)
+      | 0xfffe -> false, 2, (len / 2 - 1)
+      | _      -> true,  0, (len / 2) in
+
+    let string = Array.create max 0 in
+
+    let rec inner ofs n =
+      if n = max then string
+      else begin
+        let c = Cstruct.BE.get_uint16 buf ofs in
+        let code, ofs, n =
+          if c >= 0xd800 && c <= 0xdbff then begin
+            let c2 = Cstruct.BE.get_uint16 buf (ofs + 1) in
+            if c2 < 0xdc00 || c2 > 0xdfff then (failwith "Bad unicode value!");
+            let top10bits = c-0xd800 in
+            let bottom10bits = c2-0xdc00 in
+            let char = 0x10000 + (bottom10bits lor (top10bits lsl 10)) in
+            char, ofs + 2, n + 1
+          end else c, ofs + 1, n + 1 in
+        string.(n) <- code;
+        inner ofs n
+      end in
+    inner 0 0
 end
 
 module Footer = struct
@@ -353,6 +407,20 @@ module Parent_locator = struct
     set_header_platform_data_length buf t.platform_data_length;
     set_header_reserved buf 0l;
     set_header_platform_data_offset buf t.platform_data_offset
+
+  let unmarshal (buf: Cstruct.t) =
+    let platform_code = Platform_code.of_int32 (get_header_platform_code buf) in
+    let platform_data_space_original = get_header_platform_data_space buf in
+    (* WARNING WARNING - see comment on field at the beginning of this file *)
+    let platform_data_space =
+      if platform_data_space_original < 511l
+      then Int32.mul 512l platform_data_space_original
+      else platform_data_space_original in
+    let platform_data_length = get_header_platform_data_length buf in
+    let platform_data_offset = get_header_platform_data_offset buf in
+    { platform_code; platform_data_space_original; platform_data_space;
+      platform_data_length; platform_data_offset;
+      platform_data = "" }
 end
 
 module Header = struct
@@ -377,36 +445,6 @@ module Header = struct
 
   let expected_version = 0x00010000l
 
-  (** Turn an array of ints into a utf8 encoded string *)
-  let utf16_to_string s =
-    let utf8_chars_of_int i = 
-      if i < 0x80 then [char_of_int i] 
-      else if i < 0x800 then 
-        begin
-          let z = i land 0x3f
-          and y = (i lsr 6) land 0x1f in 
-          [char_of_int (0xc0 + y); char_of_int (0x80+z)]
-        end
-      else if i < 0x10000 then
-        begin
-          let z = i land 0x3f
-          and y = (i lsr 6) land 0x3f 
-          and x = (i lsr 12) land 0x0f in
-          [char_of_int (0xe0 + x); char_of_int (0x80+y); char_of_int (0x80+z)]
-        end
-      else if i < 0x110000 then
-        begin
-          let z = i land 0x3f
-          and y = (i lsr 6) land 0x3f
-          and x = (i lsr 12) land 0x3f
-          and w = (i lsr 18) land 0x07 in
-          [char_of_int (0xf0 + w); char_of_int (0x80+x); char_of_int (0x80+y); char_of_int (0x80+z)]
-        end
-      else
-        failwith "Bad unicode character!"
-  in
-  String.concat "" (List.map (fun c -> Printf.sprintf "%c" c) (List.flatten (List.map utf8_chars_of_int (Array.to_list s))))
-
   let dump t =
     Printf.printf "VHD HEADER\n";
     Printf.printf "-=-=-=-=-=\n";
@@ -419,7 +457,7 @@ module Header = struct
     Printf.printf "checksum            : %lu\n" t.checksum;
     Printf.printf "parent_unique_id    : %s\n" (Uuidm.to_string t.parent_unique_id);
     Printf.printf "parent_time_stamp   : %lu\n" t.parent_time_stamp;
-    Printf.printf "parent_unicode_name : '%s' (%d bytes)\n" (utf16_to_string t.parent_unicode_name) (Array.length t.parent_unicode_name);
+    Printf.printf "parent_unicode_name : '%s' (%d bytes)\n" (UTF16.to_utf8 t.parent_unicode_name) (Array.length t.parent_unicode_name);
     Printf.printf "parent_locators     : %s\n" 
       (String.concat "\n                      " (List.map Parent_locator.to_string (Array.to_list t.parent_locators)))
 
@@ -441,6 +479,8 @@ module Header = struct
 
   let sizeof = sizeof_header + (8 * Parent_locator.sizeof) + 256
 
+  let unicode_offset = 8 + 8 + 8 + 4 + 4 + 4 + 4 + 16 + 4 + 4
+
   let marshal (buf: Cstruct.t) t =
     set_header_magic magic 0 buf;
     set_header_data_offset buf expected_data_offset;
@@ -452,7 +492,6 @@ module Header = struct
     set_header_parent_unique_id (Uuidm.to_bytes t.parent_unique_id) 0 buf;
     set_header_parent_time_stamp buf t.parent_time_stamp;
     set_header_reserved buf 0l;
-    let unicode_offset = 8 + 8 + 8 + 4 + 4 + 4 + 4 + 16 + 4 + 4 in
     for i = 0 to 511 do
       Cstruct.set_uint8 buf (unicode_offset + i) 0
     done;
@@ -468,6 +507,35 @@ module Header = struct
       Cstruct.set_uint8 reserved i 0
     done;
     set_header_checksum buf (ones_complement_checksum (Cstruct.sub buf 0 sizeof))
+
+  let unmarshal (buf: Cstruct.t) =
+    let magic' = copy_header_magic buf in
+    if magic' <> magic
+    then failwith (Printf.sprintf "Expected cookie %s, got %s" magic magic');
+    let data_offset = get_header_data_offset buf in
+    if data_offset <> expected_data_offset
+    then failwith (Printf.sprintf "Expected header data_offset %Lx, got %Lx" expected_data_offset data_offset);
+    let table_offset = get_header_table_offset buf in
+    let header_version = get_header_header_version buf in
+    if header_version <> expected_version
+    then failwith (Printf.sprintf "Expected header_version %lx, got %lx" expected_version header_version);
+    let max_table_entries = get_header_max_table_entries buf in
+    let block_size = get_header_block_size buf in
+    let checksum = get_header_checksum buf in
+    let bytes = copy_header_parent_unique_id buf in
+    let parent_unique_id = match (Uuidm.of_bytes bytes) with
+      | None -> failwith (Printf.sprintf "Failed to decode UUID: %s" (String.escaped bytes))
+      | Some x -> x in
+    let parent_time_stamp = get_header_parent_time_stamp buf in
+    let parent_unicode_name = UTF16.unmarshal (Cstruct.sub buf unicode_offset 512) 512 in
+    let parent_locators_buf = Cstruct.shift buf (unicode_offset + 512) in
+    let parent_locators = Array.create 8 Parent_locator.null in
+    for i = 0 to 7 do
+      let buf = Cstruct.shift parent_locators_buf (Parent_locator.sizeof * i) in
+      parent_locators.(i) <- Parent_locator.unmarshal buf
+    done;
+    { table_offset; max_table_entries; block_size; checksum; parent_unique_id;
+      parent_time_stamp; parent_unicode_name; parent_locators }
 end
 
 type vhd = {
@@ -572,44 +640,6 @@ let unmarshal_uint64 ?(bigendian=true) (s, offset) =
 let unmarshal_string len (s,offset) =
   String.sub s offset len, (s, offset + len)
 
-(* Unmarshal a UTF-16 string. Result is an array containing ints representing the chars *)
-let unmarshal_utf16_string len (s, offset) =
-  (* Check the byte order *)
-  let bigendian,pos,max = 
-    begin
-      let num,pos2 = unmarshal_uint16 (s,offset) in
-      match num with 
-	| 0xfeff -> true,pos2,(len/2-1)
-	| 0xfffe -> false,pos2,(len/2-1)
-	| _ -> true,(s,offset),(len/2)
-    end
-  in
-
-  let string = Array.create max 0 in
-
-  let rec inner n pos =
-    if n=max then pos else
-      begin
-	let c,pos = unmarshal_uint16 ~bigendian pos in
-	let code,nextpos,newn = 
-	  if c >= 0xd800 && c <= 0xdbff then
-	    begin
-	      let c2,pos = unmarshal_uint16 ~bigendian pos in
-	      if c2 < 0xdc00 || c2 > 0xdfff then (failwith "Bad unicode value!");
-	      let top10bits = c-0xd800 in
-	      let bottom10bits = c2-0xdc00 in
-	      let char = 0x10000 + (bottom10bits lor (top10bits lsl 10)) in
-	      char,pos,(n+2)
-	    end
-	  else
-	    c,pos,(n+1)
-	in
-	string.(n) <- code;
-	inner newn nextpos
-      end
-  in
-  let pos = inner 0 pos in
-  string, pos
 
 let marshal_int32 ?(bigendian=true) x = 
   let offsets = if bigendian then [|3;2;1;0|] else [|0;1;2;3|] in
@@ -644,31 +674,15 @@ let unmarshal_geometry pos =
    heads; sectors}, pos
 
 let unmarshal_parent_locator mmap pos =
-  let platform_code,pos =
-    let code, pos = unmarshal_uint32 pos in
-    Platform_code.of_int32 code, pos in
-
-  (* WARNING WARNING - see comment on field at the beginning of this file *)
-  let platform_data_space_original,platform_data_space,pos = 
-    let space,pos = unmarshal_uint32 pos in
-      if space < 511l 
-      then 
-	space,Int32.mul 512l space, pos
-      else
-	(Printf.printf "WARNING: probable deviation from spec in platform_data_space (got %ld)\n" space; space,space,pos)
-  in
-  let platform_data_length,pos = unmarshal_uint32 pos in
-  let _,pos = unmarshal_uint32 pos in
-  let platform_data_offset,pos = unmarshal_uint64 pos in
+  let open Parent_locator in
+  let header = Cstruct.sub (Cstruct.of_bigarray mmap) pos sizeof in
+  let p = unmarshal header in
   lwt platform_data = 
-    if platform_data_length > 0l then
-      (Printf.printf "Platform_data_length: %ld\n" platform_data_length;
-       really_read mmap platform_data_offset (Int64.of_int32 platform_data_length))
-    else Lwt.return ""
- in
- Lwt.return ({Parent_locator.platform_code; platform_data_space;
-   platform_data_space_original; platform_data_length;platform_data_offset;platform_data
-   },pos)
+    if p.platform_data_length > 0l then
+      (Printf.printf "Platform_data_length: %ld\n" p.platform_data_length;
+       really_read mmap p.platform_data_offset (Int64.of_int32 p.platform_data_length))
+    else Lwt.return "" in
+  Lwt.return ({p with platform_data}, pos + sizeof)
 
 let unmarshal_n n pos f =
   let rec inner m pos cur =
@@ -731,34 +745,10 @@ let read_footer mmap pos read_512 =
    disk_type; checksum; uid; saved_state}
 
 let read_header mmap pos =
-  lwt str = really_read mmap pos 1024L in
-  let header = (str,0) in
-  let cookie,pos = unmarshal_string 8 header in
-  if cookie <> Header.magic
-  then failwith (Printf.sprintf "Expected cookie %s, got %s" Header.magic cookie);
-  let data_offset,pos = unmarshal_uint64 pos in
-  if data_offset <> Header.expected_data_offset
-  then failwith (Printf.sprintf "Expected header data_offset %Lx, got %Lx" Header.expected_data_offset data_offset);
-  let table_offset,pos = unmarshal_uint64 pos in
-  let header_version,pos = unmarshal_uint32 pos in
-  if header_version <> Header.expected_version
-  then failwith (Printf.sprintf "Expected header_version %lx, got %lx" Header.expected_version header_version);
-  let max_table_entries,pos = unmarshal_uint32 pos in
-  let block_size,pos = unmarshal_uint32 pos in
-  let checksum,pos = unmarshal_uint32 pos in
-  let parent_unique_id,pos =
-    let bytes,pos = unmarshal_string 16 pos in
-    let uid = match Uuidm.of_bytes bytes with
-    | None -> failwith (Printf.sprintf "Failed to decode UUID: %s" (String.escaped bytes))
-    | Some uid -> uid in
-    uid,pos in
-  let parent_time_stamp,pos = unmarshal_uint32 pos in
-  let _,pos = unmarshal_uint32 pos in
-  let parent_unicode_name,pos = unmarshal_utf16_string 512 pos in
-  lwt parent_locators,pos = unmarshal_parent_locators mmap pos in
-  Lwt.return {Header.table_offset; max_table_entries;
-   block_size; checksum; parent_unique_id; parent_time_stamp; parent_unicode_name;
-   parent_locators}
+  let buf = Cstruct.sub (Cstruct.of_bigarray mmap) pos Header.sizeof in
+  let h = Header.unmarshal buf in
+  (* XXX: parent locator data has not been read *)
+  Lwt.return h
 
 let read_bat mmap footer header =
   let bat_start = header.Header.table_offset in
@@ -803,7 +793,7 @@ let rec load_vhd filename =
   lwt fd = Lwt_unix.openfile filename [Unix.O_RDWR] 0o664 in
   let mmap = Lwt_bytes.map_file ~fd:(Lwt_unix.unix_file_descr fd) ~shared:true () in
   lwt footer = read_footer mmap 0L true in
-  lwt header = read_header mmap 512L in
+  lwt header = read_header mmap 512 in
   lwt bat = read_bat mmap footer header in
   lwt parent = 
     if footer.Footer.disk_type = Disk_type.Differencing_hard_disk then
