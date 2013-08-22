@@ -462,6 +462,9 @@ module Header = struct
     parent_locators : Parent_locator.t array;
   }
 
+  (* 1 bit per each 512 byte sector within the block *)
+  let sizeof_bitmap t = Int32.(div (div t.block_size 512l) 8l)
+
   let magic = "cxsparse"
 
   let expected_data_offset = 0xFFFFFFFFFFFFFFFFL (* XXX: the spec says 8 bytes containing 0xFFFFFFFF *)
@@ -702,8 +705,7 @@ let marshal_int32 ?(bigendian=true) x =
 
 let get_block_sizes vhd =
   let block_size = vhd.header.Header.block_size in
-  let nsectors = Int32.div block_size 512l in
-  let bitmap_size = Int32.div nsectors 8l in
+  let bitmap_size = Header.sizeof_bitmap vhd.header in
   (block_size, bitmap_size, Int32.add block_size bitmap_size)
 
 let unmarshal_geometry pos =
