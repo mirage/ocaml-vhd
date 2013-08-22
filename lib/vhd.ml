@@ -575,11 +575,16 @@ module BAT = struct
     (size_needed + 511) / 512 * 512
 
   let unmarshal (buf: Cstruct.t) (header: Header.t) =
-    let t = Array.create (Int32.to_int header.Header.max_table_entries) unused in
+    let t = Array.create (sizeof header) unused in
     for i = 0 to Int32.to_int header.Header.max_table_entries - 1 do
       t.(i) <- Cstruct.BE.get_uint32 buf (i * 4)
     done;
     t
+
+  let marshal (buf: Cstruct.t) (t: t) =
+    for i = 0 to Array.length t - 1 do
+      Cstruct.BE.set_uint32 buf (Int32.to_int t.(i))
+    done
 end
 
 module Bitmap = struct
@@ -860,15 +865,11 @@ let write_locators mmap header =
   Lwt_list.iter_p (fun entry -> write_locator mmap entry) (Array.to_list header.Header.parent_locators)
 
 let write_bat mmap vhd =
-  let bat_start = vhd.header.Header.table_offset in
-  let rec inner i =
-	  if i=Array.length vhd.bat then Lwt.return () else begin
-		  let entry = vhd.bat.(i) in
-		  lwt () = really_write mmap (Int64.add bat_start (Int64.mul (Int64.of_int i) 4L)) (marshal_int32 entry) in
-		  inner (i+1)
-      end
-  in inner 0														
-      
+  let bat_start = Int64.to_int vhd.header.Header.table_offset in
+  let buf = Cstruct.sub (Cstruct.of_bigarray mmap) bat_start (BAT.sizeof vhd.header) in
+  BAT.marshal buf vhd.bat;
+  Lwt.return ()
+ 
 (******************************************************************************)
 (* Debug dumping stuff - dump to screen                                       *)
 (******************************************************************************)
