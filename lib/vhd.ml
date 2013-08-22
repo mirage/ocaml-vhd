@@ -396,7 +396,7 @@ module Parent_locator = struct
 
     platform_data_length : int32;
     platform_data_offset : int64;
-    platform_data : string;
+    platform_data : Cstruct.t;
   }
 
 
@@ -406,13 +406,34 @@ module Parent_locator = struct
     platform_data_space_original=0l;
     platform_data_length=0l;
     platform_data_offset=0L;
-    platform_data="";
+    platform_data=Cstruct.create 0;
   }
 
   let to_string t =
     Printf.sprintf "(%s %lx %lx, %ld, 0x%Lx, %s)" (Platform_code.to_string t.platform_code)
       t.platform_data_space t.platform_data_space_original
-      t.platform_data_length t.platform_data_offset t.platform_data
+      t.platform_data_length t.platform_data_offset (Cstruct.to_string t.platform_data)
+
+  let to_filename t = match t.platform_code with
+    | Platform_code.MacX ->
+      (* Interpret as a NULL-terminated string *)
+      let rec find_string from =
+        if Cstruct.len t.platform_data <= from
+        then t.platform_data
+        else
+          if Cstruct.get_uint8 t.platform_data from = 0
+          then Cstruct.sub t.platform_data 0 from
+          else find_string (from + 1) in
+      let path = Cstruct.to_string (find_string 0) in
+      let expected_prefix = "file://" in
+      let expected_prefix' = String.length expected_prefix in
+      let startswith prefix x =
+        let prefix' = String.length prefix and x' = String.length x in
+        prefix' <= x' && (String.sub x 0 prefix' = prefix) in
+      if startswith expected_prefix path
+      then Some (String.sub path expected_prefix' (String.length path - expected_prefix'))
+      else None
+    | _ -> None
 
   cstruct header {
     uint32_t platform_code;
@@ -443,7 +464,7 @@ module Parent_locator = struct
     let platform_data_offset = get_header_platform_data_offset buf in
     { platform_code; platform_data_space_original; platform_data_space;
       platform_data_length; platform_data_offset;
-      platform_data = "" }
+      platform_data = Cstruct.create 0 }
 end
 
 module Header = struct
@@ -584,7 +605,7 @@ module BAT = struct
 
   let marshal (buf: Cstruct.t) (t: t) =
     for i = 0 to Array.length t - 1 do
-      Cstruct.BE.set_uint32 buf (Int32.to_int t.(i))
+      Cstruct.BE.set_uint32 buf i t.(i)
     done
 
   let dump t =
@@ -615,6 +636,7 @@ module Bitmap = struct
     let bitmap_bit = sector_in_block mod 8 in
     let mask = 0x80 lsr bitmap_bit in
     Cstruct.set_uint8 t (sector_in_block / 8) (bitmap_byte land (lnot mask))
+
 end
 
 module Sector = struct
@@ -664,13 +686,14 @@ let really_read mmap pos n =
 	let pos2 = Int64.mul (Int64.div n 4096L) 4096L in
 (*	Lwt_bytes.madvise mmap (Int64.to_int pos2) (Int64.to_int (Int64.sub (Int64.add n pos) pos2)) Lwt_bytes.MADV_WILLNEED;
 	lwt () = Lwt_bytes.wait_mincore mmap (Int64.to_int pos) in*)
-    Lwt_bytes.blit_bytes_string mmap (Int64.to_int pos) buffer 0 (Int64.to_int n);
-    Lwt.return buffer
+    let buf = Cstruct.sub (Cstruct.of_bigarray mmap) (Int64.to_int pos) (Int64.to_int n) in
+    Lwt.return buf
 
 (** Guarantee to write the string 'str' to a fd or raise an exception *)
-let really_write mmap pos str =
-    Lwt.return (Lwt_bytes.blit_string_bytes str 0 mmap (Int64.to_int pos) (String.length str))
-
+let really_write mmap pos x =
+    let buf = Cstruct.sub (Cstruct.of_bigarray mmap) (Int64.to_int pos) (Cstruct.len x) in
+    Cstruct.blit x 0 buf 0 (Cstruct.len x);
+    Lwt.return ()
 
 
 let get_vhd_time time =
@@ -688,6 +711,25 @@ let get_parent_modification_time parent =
 let utf16_of_utf8 string =
   Array.init (String.length string) 
     (fun c -> int_of_char string.[c])
+
+
+module type ASYNC = sig
+  type 'a t
+
+  val (>>=): 'a t -> ('a -> 'b t) -> 'b t
+  val return: 'a -> 'a t
+end
+
+module type CHANNEL = sig
+  include ASYNC
+
+  type fd
+
+  val really_read: fd -> int -> Cstruct.t -> Cstruct.t t
+  val really_write: fd -> Cstruct.t -> unit t
+end
+
+
 
 (******************************************************************************)
 (* Specific VHD unmarshalling functions                                       *)
@@ -726,21 +768,12 @@ let get_parent_filename header =
     if n>=Array.length header.Header.parent_locators then (failwith "Failed to find parent!");
     let l = header.Header.parent_locators.(n) in
     let open Parent_locator in
-    Printf.printf "locator %d\nplatform_code: %s\nplatform_data: %s\n" n (Platform_code.to_string l.platform_code) l.platform_data;
-    match l.platform_code with
-      | Platform_code.MacX ->
-	  begin
-	    try 
-	      let fname = try String.sub l.platform_data 0 (String.index l.platform_data '\000') with _ -> l.platform_data in
-	      let filehdr = String.length "file://" in
-	      let fname = String.sub fname filehdr (String.length fname - filehdr) in
-	      Printf.printf "Looking for parent: %s\n" fname;
-	      ignore(Unix.stat fname); (* Throws an exception if the file doesn't exist *)
-	      fname
-	    with _ -> test (n+1)
-	  end
-      | _ -> test (n+1)
-  in
+    Printf.printf "locator %d\nplatform_code: %s\nplatform_data: %s\n" n (Platform_code.to_string l.platform_code) (Cstruct.to_string l.platform_data);
+    match to_filename l with
+    | Some path ->
+      let exists = try ignore(Unix.stat path); true with _ -> false in
+      if not exists then test (n + 1) else path
+    | None -> test (n + 1) in
   test 0
 
 let rec load_vhd filename =
@@ -766,12 +799,12 @@ let rec load_vhd filename =
 let marshal_footer f =
   let sector = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout Footer.sizeof)) in
   Footer.marshal sector f;
-  Cstruct.to_string sector
+  sector
 
 let marshal_header h =
   let buf = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout Header.sizeof)) in
   Header.marshal buf h;
-  Cstruct.to_string buf
+  buf
 
 (* Now we do some actual seeking within the file - because this stuff involves *)
 (* absolute offsets *)
@@ -891,11 +924,18 @@ let write_vhd vhd =
     
 let write_clean_block vhd block_num =
   let (block_size, bitmap_size, total) = get_block_sizes vhd in
+  let bitmap_size = Int32.to_int bitmap_size in
   let offset = Int64.mul (Int64.of_int32 vhd.bat.(block_num)) 512L in
-  let bitmap=String.make (Int32.to_int bitmap_size) '\000' in
+  let bitmap = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout bitmap_size)) in
+  for i = 0 to bitmap_size - 1 do
+    Cstruct.set_uint8 bitmap i 0
+  done; 
   ignore(really_write vhd.mmap offset bitmap);
   let block_size_in_sectors = Int32.to_int (Int32.div vhd.header.Header.block_size 512l) in
-  let sector=String.make sector_size '\000' in
+  let sector = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout 512)) in
+  for i = 0 to 511 do
+    Cstruct.set_uint8 sector i 0
+  done;
   for_lwt i=0 to block_size_in_sectors do
 	  let pos = Int64.add offset (Int64.of_int (sector_size * i)) in
       really_write vhd.mmap pos sector
@@ -924,7 +964,7 @@ let write_sector vhd sector data =
   lwt bitmap = read_bitmap vhd block_num in
   Bitmap.set bitmap sec_in_block;
   lwt () = really_write vhd.mmap sectorpos data in
-  lwt () = really_write vhd.mmap bitmap_byte_pos (Cstruct.to_string (Bitmap.sector bitmap sec_in_block)) in
+  lwt () = really_write vhd.mmap bitmap_byte_pos (Bitmap.sector bitmap sec_in_block) in
   Lwt.return ()
 
 let rewrite_block vhd block_number new_block_number =
@@ -1058,13 +1098,15 @@ let create_new_difference filename backing_vhd uuid ?(features=[])
   in
   let locator0 = 
     let uri = "file://./" ^ (Filename.basename backing_vhd) in
+    let platform_data = Cstruct.create (String.length uri) in
+    Cstruct.blit_from_string uri 0 platform_data (String.length uri);
     {
       Parent_locator.platform_code = Platform_code.MacX;
       platform_data_space = 1l;
       platform_data_space_original=1l;
       platform_data_length = Int32.of_int (String.length uri);
       platform_data_offset = 1536L;
-      platform_data = uri;
+      platform_data;
     }
   in
   let header = 

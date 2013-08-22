@@ -14,13 +14,20 @@
 
 open Vhd
 
+let make_sector byte =
+  let sector = Cstruct.create 512 in
+  for i = 0 to 511 do
+    Cstruct.set_uint8 sector i byte
+  done;
+  sector
 
 let main () =
   match Sys.argv.(1) with
     | "create" ->
         lwt vhd = create_new_dynamic "test.vhd" 4194304L (Uuidm.create `V4) () in
         lwt () = write_vhd vhd in
-        write_sector vhd 0L (String.make 512 'A')
+        let sector = make_sector (int_of_char 'A') in
+        write_sector vhd 0L sector
     | "creatediff" ->
         lwt vhd = create_new_difference "test2.vhd" Sys.argv.(2) (Uuidm.create `V4) () in
 		write_vhd vhd
@@ -48,7 +55,7 @@ let main () =
         lwt () = write_vhd vhd in
 	    lwt fd = Lwt_unix.openfile file [Unix.O_RDWR] 0o644  in
         let mmap = Lwt_bytes.map_file ~fd:(Lwt_unix.unix_file_descr fd) ~shared:true () in
-		let allzeros = String.make 512 '\000' in
+        let allzeros = make_sector 0 in
 		let max = Int64.div filesize 512L in
 		let remainder = Int64.rem filesize 512L in
 		let allzero s n =

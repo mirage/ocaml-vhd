@@ -85,10 +85,10 @@ val load_vhd: string -> vhd Lwt.t
 
 val write_vhd: vhd -> unit Lwt.t
 
-val write_sector: vhd -> int64 -> string -> unit Lwt.t
+val write_sector: vhd -> int64 -> Cstruct.t -> unit Lwt.t
 
 val check_overlapping_blocks: vhd -> unit
 
 val round_up_to_2mb_block: int64 -> int64
 
-val really_read: Lwt_bytes.t -> int64 -> int64 -> string Lwt.t
+val really_read: Lwt_bytes.t -> int64 -> int64 -> Cstruct.t Lwt.t
