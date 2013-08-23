@@ -62,13 +62,15 @@ let get_parent_modification_time parent =
 
 (* Create a completely new sparse VHD file *)
 let create_new_dynamic filename requested_size uuid ?(sparse=true) ?(table_offset=2048L) 
-    ?(block_size=block_size) ?(data_offset=512L) ?(saved_state=false)
+    ?(block_size=Header.default_block_size) ?(data_offset=512L) ?(saved_state=false)
     ?(features=[Feature.Temporary]) () =
 
   (* Round up to the nearest 2-meg block *)
   let size = Int64.mul (Int64.div (Int64.add 2097151L requested_size) 2097152L) 2097152L in
 
-  let geometry = Geometry.of_sectors (Int64.to_int (Int64.div size sector_sizeL)) in
+  let geometry = Geometry.of_sectors (Int64.(to_int (div size (of_int sector_size)))) in
+  let creator_application = Footer.default_creator_application in
+  let creator_version = Footer.default_creator_version in
   let footer = 
     {
       Footer.features;
@@ -115,7 +117,9 @@ let utf16_of_utf8 string =
 
 let create_new_difference filename backing_vhd uuid ?(features=[])
     ?(data_offset=512L) ?(saved_state=false) ?(table_offset=2048L) () =
-  lwt parent = Vhd.openfile backing_vhd in
+  lwt parent = Vhd_IO.openfile backing_vhd in
+  let creator_application = Footer.default_creator_application in
+  let creator_version = Footer.default_creator_version in
   let footer = 
     {
       Footer.features;

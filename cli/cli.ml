@@ -22,18 +22,23 @@ let make_sector byte =
   done;
   sector
 
+let round_up_to_2mb_block size = 
+  let newsize = Int64.mul 2097152L 
+    (Int64.div (Int64.add 2097151L size) 2097152L) in
+  newsize 
+
 let main () =
   match Sys.argv.(1) with
     | "create" ->
         lwt vhd = create_new_dynamic "test.vhd" 4194304L (Uuidm.create `V4) () in
-        lwt () = Vhd.write vhd in
+        lwt () = Vhd_IO.write vhd in
         let sector = make_sector (int_of_char 'A') in
-        Vhd.write_sector vhd 0L sector
+        Vhd_IO.write_sector vhd 0L sector
     | "creatediff" ->
         lwt vhd = create_new_difference "test2.vhd" Sys.argv.(2) (Uuidm.create `V4) () in
-	Vhd.write vhd
+	Vhd_IO.write vhd
     | "check" ->
-        lwt vhd = Vhd.openfile Sys.argv.(2) in
+        lwt vhd = Vhd_IO.openfile Sys.argv.(2) in
         Vhd.check_overlapping_blocks vhd;
         Lwt.return ()
     | "makefromfile" ->
@@ -53,7 +58,7 @@ let main () =
 		Printf.printf "size=%Ld\n" size;
 		Printf.printf "filesize=%Ld\n" size;
 		lwt vhd = create_new_dynamic (file^".vhd") size  (Uuidm.create `V4) () in
-        lwt () = Vhd.write vhd in
+        lwt () = Vhd_IO.write vhd in
 	    lwt fd = Lwt_unix.openfile file [Unix.O_RDWR] 0o644  in
         let mmap = Cstruct.of_bigarray (Lwt_bytes.map_file ~fd:(Lwt_unix.unix_file_descr fd) ~shared:true ()) in
         let allzeros = make_sector 0 in
@@ -73,7 +78,7 @@ let main () =
 				lwt input = really_read mmap (Int64.(to_int (mul i 512L))) 512 in
 	            lwt () = 
                     if input<>allzeros then
-				        Vhd.write_sector vhd i input
+				        Vhd_IO.write_sector vhd i input
                     else Lwt.return () 
                 in
                 lwt () = doit (Int64.add 1L i) in

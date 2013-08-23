@@ -15,6 +15,8 @@
 
 (* VHD manipulation *)
 
+let sector_size = 512
+
 module Feature = struct
   type t = 
     | Temporary
@@ -241,6 +243,9 @@ module Footer = struct
   let magic = "conectix"
 
   let expected_version = 0x00010000l
+
+  let default_creator_application = "caml"
+  let default_creator_version = 0x00000001l
 
   let dump t =
     Printf.printf "VHD FOOTER\n";
@@ -491,6 +496,8 @@ module Header = struct
   let expected_data_offset = 0xFFFFFFFFFFFFFFFFL (* XXX: the spec says 8 bytes containing 0xFFFFFFFF *)
 
   let expected_version = 0x00010000l
+
+  let default_block_size = 0x200000l
 
   let dump t =
     Printf.printf "VHD HEADER\n";
@@ -752,25 +759,11 @@ module Vhd = struct
         pos
 end
 
-
-let sector_size = 512
-let sector_sizeL = 512L
-let block_size = 0x200000l
-
-
-let creator_application = "caml"
-let creator_version = 0x00000001l
-
-let round_up_to_2mb_block size = 
-  let newsize = Int64.mul 2097152L 
-    (Int64.div (Int64.add 2097151L size) 2097152L) in
-  newsize 
-
-module Make = functor(File: S.File) -> struct
+module Make = functor(File: S.IO) -> struct
   open File
 
-  module Footer = struct
-    include Footer
+  module Footer_IO = struct
+    open Footer
 
     let read fd pos =
       really_read fd pos Footer.sizeof >>= fun buf ->
@@ -782,8 +775,8 @@ module Make = functor(File: S.File) -> struct
       really_write fd pos sector
   end
 
-  module Parent_locator = struct
-    include Parent_locator
+  module Parent_locator_IO = struct
+    open Parent_locator
 
     let read fd t =
       really_read fd (Int64.to_int t.platform_data_offset) (Int32.to_int t.platform_data_length) >>= fun platform_data ->
@@ -796,8 +789,8 @@ module Make = functor(File: S.File) -> struct
       else return ()
   end
 
-  module Header = struct
-    include Header
+  module Header_IO = struct
+    open Header
 
     let get_parent_filename t =
       let rec test n =
@@ -823,7 +816,7 @@ module Make = functor(File: S.File) -> struct
         | n ->
           let p = t.parent_locators.(n) in
           let open Parent_locator in
-          Parent_locator.read fd p >>= fun p ->
+          Parent_locator_IO.read fd p >>= fun p ->
           t.parent_locators.(n) <- p;
           read_parent_locator (n + 1) in
       read_parent_locator 0 >>= fun () ->
@@ -838,13 +831,13 @@ module Make = functor(File: S.File) -> struct
         | n ->
           let p = t.parent_locators.(n) in
           let open Parent_locator in
-          Parent_locator.write fd p >>= fun () ->
+          Parent_locator_IO.write fd p >>= fun () ->
           write_parent_locator (n + 1) in
       write_parent_locator 0
   end
 
-  module BAT = struct
-    include BAT
+  module BAT_IO = struct
+    open BAT
 
     let read fd (header: Header.t) =
       really_read fd (Int64.to_int header.Header.table_offset) (sizeof header) >>= fun buf ->
@@ -856,25 +849,25 @@ module Make = functor(File: S.File) -> struct
       really_write fd (Int64.to_int header.Header.table_offset) buf
   end
 
-  module Bitmap = struct
-    include Bitmap
+  module Bitmap_IO = struct
+    open Bitmap
 
     let read fd (header: Header.t) (bat: BAT.t) (block: int) =
       let pos = Int64.(to_int (mul 512L (of_int32 bat.(block)))) in
       really_read fd pos (Int32.to_int (Header.sizeof_bitmap header))
   end
 
-  module Vhd = struct
-    include Vhd
+  module Vhd_IO = struct
+    open Vhd
 
     let rec openfile filename =
       File.openfile filename >>= fun fd ->
-      Footer.read fd 0 >>= fun footer ->
-      Header.read fd 512 >>= fun header ->
-      BAT.read fd header >>= fun bat ->
+      Footer_IO.read fd 0 >>= fun footer ->
+      Header_IO.read fd 512 >>= fun header ->
+      BAT_IO.read fd header >>= fun bat ->
       (match footer.Footer.disk_type with
         | Disk_type.Differencing_hard_disk ->
-          Header.get_parent_filename header >>= fun parent_filename ->
+          Header_IO.get_parent_filename header >>= fun parent_filename ->
           openfile parent_filename >>= fun p ->
           return (Some p)
         | _ ->
@@ -896,7 +889,7 @@ module Make = functor(File: S.File) -> struct
       if t.Vhd.bat.(block_num) = BAT.unused
       then maybe_get_from_parent ()
       else begin
-        Bitmap.read t.Vhd.handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
+        Bitmap_IO.read t.Vhd.handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
         if t.Vhd.footer.Footer.disk_type = Disk_type.Differencing_hard_disk && (not (Bitmap.get bitmap sec_in_block))
         then maybe_get_from_parent ()
         else begin
@@ -907,12 +900,12 @@ module Make = functor(File: S.File) -> struct
 
     let write_trailing_footer t =
       let pos = Vhd.get_top_unused_offset t.Vhd.header t.Vhd.bat in
-      Footer.write t.Vhd.handle (Int64.to_int pos) t.Vhd.footer
+      Footer_IO.write t.Vhd.handle (Int64.to_int pos) t.Vhd.footer
     
     let write t =
-      Footer.write t.Vhd.handle 0 t.Vhd.footer >>= fun () ->
-      Header.write t.Vhd.handle (Int64.to_int t.Vhd.footer.Footer.data_offset) t.Vhd.header >>= fun () ->
-      BAT.write t.Vhd.handle t.Vhd.header t.Vhd.bat >>= fun () ->
+      Footer_IO.write t.Vhd.handle 0 t.Vhd.footer >>= fun () ->
+      Header_IO.write t.Vhd.handle (Int64.to_int t.Vhd.footer.Footer.data_offset) t.Vhd.header >>= fun () ->
+      BAT_IO.write t.Vhd.handle t.Vhd.header t.Vhd.bat >>= fun () ->
       (* Assume the data is there, or will be written later *)
       write_trailing_footer t
 
@@ -946,7 +939,7 @@ module Make = functor(File: S.File) -> struct
       let update_sector () =
         let (block_num,sec_in_block,bitmap_size,bitmap_byte,bitmap_bit,mask,sectorpos,bitmap_byte_pos) = 
           Vhd.get_offset_info_of_sector t sector in
-        Bitmap.read t.Vhd.handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
+        Bitmap_IO.read t.Vhd.handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
         Bitmap.set bitmap sec_in_block;
         really_write t.Vhd.handle (Int64.to_int sectorpos) data >>= fun () ->
         really_write t.Vhd.handle (Int64.to_int bitmap_byte_pos) (Bitmap.sector bitmap sec_in_block) in
@@ -957,7 +950,7 @@ module Make = functor(File: S.File) -> struct
         let sec = Int64.div (Int64.add pos 511L) 512L in 
         t.Vhd.bat.(block_num) <- Int64.to_int32 sec;
         write_zero_block t block_num >>= fun () ->
-        BAT.write t.Vhd.handle t.Vhd.header t.Vhd.bat >>= fun () ->
+        BAT_IO.write t.Vhd.handle t.Vhd.header t.Vhd.bat >>= fun () ->
         write_trailing_footer t >>= fun () ->
         update_sector ()
       end else update_sector ()
