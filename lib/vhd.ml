@@ -315,12 +315,14 @@ module Footer = struct
   let unmarshal (buf: Cstruct.t) =
     let open Result in
     let magic' = copy_footer_magic buf in
-    if magic' <> magic
-    then failwith (Printf.sprintf "Unsupported footer cookie: expected %s, got %s" magic magic');
+    ( if magic' <> magic
+      then fail (Failure (Printf.sprintf "Unsupported footer cookie: expected %s, got %s" magic magic'))
+      else return () ) >>= fun () ->
     let features = Feature.of_int32 (get_footer_features buf) in
     let format_version = get_footer_version buf in
-    if format_version <> expected_version
-    then failwith (Printf.sprintf "Unsupported footer version: expected %lx, got %lx" expected_version format_version);
+    ( if format_version <> expected_version
+      then fail (Failure (Printf.sprintf "Unsupported footer version: expected %lx, got %lx" expected_version format_version))
+      else return () ) >>= fun () ->
     let data_offset = get_footer_data_offset buf in
     let time_stamp = get_footer_time_stamp buf in
     let creator_application = copy_footer_creator_application buf in
@@ -335,9 +337,9 @@ module Footer = struct
     Disk_type.of_int32 (get_footer_disk_type buf) >>= fun disk_type ->
     let checksum = get_footer_checksum buf in
     let bytes = copy_footer_uid buf in
-    let uid = match Uuidm.of_bytes bytes with
-      | None -> failwith (Printf.sprintf "Failed to decode UUID: %s" (String.escaped bytes))
-      | Some uid -> uid in
+    ( match Uuidm.of_bytes bytes with
+      | None -> fail (Failure (Printf.sprintf "Failed to decode UUID: %s" (String.escaped bytes)))
+      | Some uid -> return uid ) >>= fun uid ->
     let saved_state = get_footer_saved_state buf = 1 in
     return { features; data_offset; time_stamp; creator_version; creator_application;
       creator_host_os; original_size; current_size; geometry; disk_type; checksum; uid; saved_state }
