@@ -898,28 +898,28 @@ module Make = functor(File: S.IO) -> struct
       return { filename; handle = fd; header; footer; bat; parent }
 
     let rec get_sector_pos t sector =
-      if Int64.mul sector 512L > t.Vhd.footer.Footer.current_size then
-        failwith "Sector out of bounds";
+      if Int64.mul sector 512L > t.Vhd.footer.Footer.current_size
+      then fail (Failure (Printf.sprintf "Sector out of bounds: %Ld (current_size = %Ld bytes)" sector t.Vhd.footer.Footer.current_size))
+      else
+        let (block_num,sec_in_block,bitmap_size,bitmap_byte,bitmap_bit,mask,sectorpos,bitmap_byte_pos) = 
+          Vhd.get_offset_info_of_sector t sector in
 
-      let (block_num,sec_in_block,bitmap_size,bitmap_byte,bitmap_bit,mask,sectorpos,bitmap_byte_pos) = 
-        Vhd.get_offset_info_of_sector t sector in
+        let maybe_get_from_parent () = match t.Vhd.footer.Footer.disk_type,t.Vhd.parent with
+          | Disk_type.Differencing_hard_disk,Some vhd2 -> get_sector_pos vhd2 sector
+          | Disk_type.Differencing_hard_disk,None -> fail (Failure "Sector in parent but no parent found!")
+          | Disk_type.Dynamic_hard_disk,_ -> return None in
 
-      let maybe_get_from_parent () = match t.Vhd.footer.Footer.disk_type,t.Vhd.parent with
-        | Disk_type.Differencing_hard_disk,Some vhd2 -> get_sector_pos vhd2 sector
-        | Disk_type.Differencing_hard_disk,None -> failwith "Sector in parent but no parent found!"
-        | Disk_type.Dynamic_hard_disk,_ -> return None in
-
-      if t.Vhd.bat.(block_num) = BAT.unused
-      then maybe_get_from_parent ()
-      else begin
-        Bitmap_IO.read t.Vhd.handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
-        if t.Vhd.footer.Footer.disk_type = Disk_type.Differencing_hard_disk && (not (Bitmap.get bitmap sec_in_block))
+        if t.Vhd.bat.(block_num) = BAT.unused
         then maybe_get_from_parent ()
         else begin
-          really_read t.Vhd.handle (Int64.to_int sectorpos) 512 >>= fun data ->
-          return (Some data)
-        end
-      end  
+          Bitmap_IO.read t.Vhd.handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
+          if t.Vhd.footer.Footer.disk_type = Disk_type.Differencing_hard_disk && (not (Bitmap.get bitmap sec_in_block))
+          then maybe_get_from_parent ()
+          else begin
+            really_read t.Vhd.handle (Int64.to_int sectorpos) 512 >>= fun data ->
+            return (Some data)
+          end
+        end  
 
     let write_trailing_footer t =
       let pos = Vhd.get_top_unused_offset t.Vhd.header t.Vhd.bat in
