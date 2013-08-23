@@ -204,7 +204,7 @@ module UTF16 = struct
     let string = Array.create max 0 in
 
     let rec inner ofs n =
-      if n = max then string
+      if n <= max then string
       else begin
         let c = Cstruct.BE.get_uint16 buf ofs in
         let code, ofs, n =
