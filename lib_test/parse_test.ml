@@ -14,11 +14,11 @@
 open OUnit
 
 let create () =
-  let d = Create_vhd.disk in
+  let _ = Create_vhd.disk in
   ()
 
 let diff () =
-  let d = Diff_vhd.disk in
+  let _ = Diff_vhd.disk in
   ()
 
 let _ =

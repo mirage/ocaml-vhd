@@ -63,14 +63,6 @@ let main () =
         let mmap = Cstruct.of_bigarray (Lwt_bytes.map_file ~fd:(Lwt_unix.unix_file_descr fd) ~shared:true ()) in
         let allzeros = make_sector 0 in
 		let max = Int64.div filesize 512L in
-		let remainder = Int64.rem filesize 512L in
-		let allzero s n =
-			let res = ref true in
-			for i=0 to n-1 do
-				if s.[i] <> '\000' then res := false
-			done;
-			!res
-		in
 		let rec doit i =
 			if i=max 
             then Lwt.return () 
