@@ -621,7 +621,7 @@ end
 module Bitmap = struct
   type t = Cstruct.t
 
-  let sector t sector_in_block = Cstruct.sub t (sector_in_block / 8) 1
+  let byte t sector_in_block = Cstruct.sub t (sector_in_block / 8) 1
 
   let get t sector_in_block =
     let bitmap_byte = Cstruct.get_uint8 t (sector_in_block / 8) in
@@ -942,7 +942,7 @@ module Make = functor(File: S.IO) -> struct
         Bitmap_IO.read t.Vhd.handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
         Bitmap.set bitmap sec_in_block;
         really_write t.Vhd.handle (Int64.to_int sectorpos) data >>= fun () ->
-        really_write t.Vhd.handle (Int64.to_int bitmap_byte_pos) (Bitmap.sector bitmap sec_in_block) in
+        really_write t.Vhd.handle (Int64.to_int bitmap_byte_pos) (Bitmap.byte bitmap sec_in_block) in
 
       if t.Vhd.bat.(block_num) = BAT.unused then begin
         (* Allocate a new sector *)
