@@ -11,7 +11,7 @@ Library vhd
   CompiledObject:     best
   Path:               lib
   Findlibname:        vhd-format
-  Modules:            Vhd, Vhd_lwt, S
+  Modules:            Vhd, Vhd_lwt, S, Result
   BuildDepends:       lwt, lwt.unix, uuidm, cstruct
 
 Executable vhdtool

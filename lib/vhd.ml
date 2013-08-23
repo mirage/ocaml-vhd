@@ -40,11 +40,14 @@ module Disk_type = struct
     | Dynamic_hard_disk
     | Differencing_hard_disk
 
-  let of_int32 = function
-    | 2l -> Fixed_hard_disk 
-    | 3l -> Dynamic_hard_disk
-    | 4l -> Differencing_hard_disk
-    | _ -> failwith "Unhandled disk type!"
+  exception Unknown of int32
+
+  let of_int32 =
+    let open Result in function
+    | 2l -> return Fixed_hard_disk 
+    | 3l -> return Dynamic_hard_disk
+    | 4l -> return Differencing_hard_disk
+    | x -> fail (Unknown x)
 
   let to_int32 = function
     | Fixed_hard_disk -> 2l
@@ -304,6 +307,7 @@ module Footer = struct
     set_footer_checksum buf (ones_complement_checksum (Cstruct.sub buf 0 sizeof))
 
   let unmarshal (buf: Cstruct.t) =
+    let open Result in
     let magic' = copy_footer_magic buf in
     if magic' <> magic
     then failwith (Printf.sprintf "Unsupported footer cookie: expected %s, got %s" magic magic');
@@ -322,14 +326,14 @@ module Footer = struct
     let heads = get_footer_heads buf in
     let sectors = get_footer_sectors buf in
     let geometry = { Geometry.cylinders; heads; sectors } in
-    let disk_type = Disk_type.of_int32 (get_footer_disk_type buf) in
+    Disk_type.of_int32 (get_footer_disk_type buf) >>= fun disk_type ->
     let checksum = get_footer_checksum buf in
     let bytes = copy_footer_uid buf in
     let uid = match Uuidm.of_bytes bytes with
       | None -> failwith (Printf.sprintf "Failed to decode UUID: %s" (String.escaped bytes))
       | Some uid -> uid in
     let saved_state = get_footer_saved_state buf = 1 in
-    { features; data_offset; time_stamp; creator_version; creator_application;
+    return { features; data_offset; time_stamp; creator_version; creator_application;
       creator_host_os; original_size; current_size; geometry; disk_type; checksum; uid; saved_state }
 end
 
@@ -752,12 +756,18 @@ end
 module Make = functor(File: S.IO) -> struct
   open File
 
+  (* Convert Result.Error values into failed threads *)
+  let (>>|=) m f = match m with
+    | Result.Error e -> fail e
+    | Result.Ok x -> f x
+
   module Footer_IO = struct
     open Footer
 
     let read fd pos =
       really_read fd pos Footer.sizeof >>= fun buf ->
-      return (Footer.unmarshal buf)
+      Footer.unmarshal buf >>|= fun x ->
+      return x
 
     let write fd pos t =
       let sector = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout Footer.sizeof)) in

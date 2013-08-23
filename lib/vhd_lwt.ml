@@ -17,6 +17,7 @@ module MMAP = struct
 
   let (>>=) = Lwt.(>>=)
   let return = Lwt.return
+  let fail = Lwt.fail
 
   type fd = Cstruct.t
 
