@@ -165,7 +165,10 @@ module UTF16 = struct
         end
       else
         failwith "Bad unicode character!" in
-    String.concat "" (List.map (fun c -> Printf.sprintf "%c" c) (List.flatten (List.map utf8_chars_of_int (Array.to_list s))))
+    try
+      Result.Ok (String.concat "" (List.map (fun c -> Printf.sprintf "%c" c) (List.flatten (List.map utf8_chars_of_int (Array.to_list s)))))
+    with e ->
+      Result.Error e
 
   let marshal (buf: Cstruct.t) t =
     let rec inner ofs n =
@@ -505,7 +508,10 @@ module Header = struct
     Printf.printf "checksum            : %lu\n" t.checksum;
     Printf.printf "parent_unique_id    : %s\n" (Uuidm.to_string t.parent_unique_id);
     Printf.printf "parent_time_stamp   : %lu\n" t.parent_time_stamp;
-    Printf.printf "parent_unicode_name : '%s' (%d bytes)\n" (UTF16.to_utf8 t.parent_unicode_name) (Array.length t.parent_unicode_name);
+    let s = match UTF16.to_utf8 t.parent_unicode_name with
+      | Result.Ok s -> s
+      | Result.Error e -> Printf.sprintf "<Unable to decode UTF-16: %s>" (String.concat " " (List.map (fun x -> Printf.sprintf "%02x" x) (Array.to_list t.parent_unicode_name))) in
+    Printf.printf "parent_unicode_name : '%s' (%d bytes)\n" s (Array.length t.parent_unicode_name);
     Printf.printf "parent_locators     : %s\n" 
       (String.concat "\n                      " (List.map Parent_locator.to_string (Array.to_list t.parent_locators)))
 
