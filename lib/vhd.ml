@@ -206,7 +206,7 @@ module UTF16 = struct
         let code, ofs, n =
           if c >= 0xd800 && c <= 0xdbff then begin
             let c2 = Cstruct.BE.get_uint16 buf (ofs + 1) in
-            if c2 < 0xdc00 || c2 > 0xdfff then (failwith "Bad unicode value!");
+            if c2 < 0xdc00 || c2 > 0xdfff then (failwith (Printf.sprintf "Bad unicode char: %04x %04x" c c2));
             let top10bits = c-0xd800 in
             let bottom10bits = c2-0xdc00 in
             let char = 0x10000 + (bottom10bits lor (top10bits lsl 10)) in
@@ -215,7 +215,10 @@ module UTF16 = struct
         string.(n) <- code;
         inner ofs n
       end in
-    inner 0 0
+    try
+      Result.Ok (inner 0 0)
+    with e ->
+      Result.Error e
 end
 
 module Footer = struct
@@ -563,6 +566,7 @@ module Header = struct
     set_header_checksum buf (ones_complement_checksum (Cstruct.sub buf 0 sizeof))
 
   let unmarshal (buf: Cstruct.t) =
+    let open Result in
     let magic' = copy_header_magic buf in
     if magic' <> magic
     then failwith (Printf.sprintf "Expected cookie %s, got %s" magic magic');
@@ -581,14 +585,14 @@ module Header = struct
       | None -> failwith (Printf.sprintf "Failed to decode UUID: %s" (String.escaped bytes))
       | Some x -> x in
     let parent_time_stamp = get_header_parent_time_stamp buf in
-    let parent_unicode_name = UTF16.unmarshal (Cstruct.sub buf unicode_offset 512) 512 in
+    UTF16.unmarshal (Cstruct.sub buf unicode_offset 512) 512 >>= fun parent_unicode_name ->
     let parent_locators_buf = Cstruct.shift buf (unicode_offset + 512) in
     let parent_locators = Array.create 8 Parent_locator.null in
     for i = 0 to 7 do
       let buf = Cstruct.shift parent_locators_buf (Parent_locator.sizeof * i) in
       parent_locators.(i) <- Parent_locator.unmarshal buf
     done;
-    { table_offset; max_table_entries; block_size; checksum; parent_unique_id;
+    return { table_offset; max_table_entries; block_size; checksum; parent_unique_id;
       parent_time_stamp; parent_unicode_name; parent_locators }
 
   let get_block_sizes t =
@@ -815,7 +819,7 @@ module Make = functor(File: S.IO) -> struct
 
     let read fd pos =
       really_read fd pos sizeof >>= fun buf ->
-      let t = unmarshal buf in
+      unmarshal buf >>|= fun t -> 
       (* Read the parent_locator data *)
       let rec read_parent_locator = function
         | 8 -> return ()
