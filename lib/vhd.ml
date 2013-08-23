@@ -584,6 +584,9 @@ module Header = struct
     { table_offset; max_table_entries; block_size; checksum; parent_unique_id;
       parent_time_stamp; parent_unicode_name; parent_locators }
 
+  let get_block_sizes t =
+    let bitmap_size = sizeof_bitmap t in
+    (t.block_size, bitmap_size, Int32.add t.block_size bitmap_size)
 end
 
 module BAT = struct
@@ -655,15 +658,99 @@ module Sector = struct
 
 end
 
-type vhd = {
-  filename : string;
-  mmap : Cstruct.t;
-  header : Header.t;
-  footer : Footer.t;
-  parent : vhd option;
-  bat : int32 array;
-}
+module Vhd = struct
+  type 'a t = {
+    filename: string;
+    handle: 'a;
+    header: Header.t;
+    footer: Footer.t;
+    parent: 'a t option;
+    bat: BAT.t;
+  }
 
+  let get_offset_info_of_sector t sector =
+    let block_size_in_sectors = Int64.div (Int64.of_int32 t.header.Header.block_size) 512L in
+    let block_num = Int64.to_int (Int64.div sector block_size_in_sectors) in
+    let sec_in_block = Int64.rem sector block_size_in_sectors in
+    let bitmap_byte = Int64.div sec_in_block 8L in
+    let bitmap_bit = Int64.rem sec_in_block 8L in
+    let mask = 0x80 lsr (Int64.to_int bitmap_bit) in
+    let bitmap_size = Int64.div block_size_in_sectors 8L in
+    let blockpos = Int64.mul 512L (Int64.of_int32 t.bat.(block_num)) in
+    let datapos = Int64.add bitmap_size blockpos in
+    let sectorpos = Int64.add datapos (Int64.mul sec_in_block 512L) in
+    let bitmap_byte_pos = Int64.add bitmap_byte blockpos in
+    (block_num,Int64.to_int sec_in_block,Int64.to_int bitmap_size, Int64.to_int bitmap_byte,Int64.to_int bitmap_bit,mask,sectorpos,bitmap_byte_pos)
+
+  let rec dump t =
+    Printf.printf "VHD file: %s\n" t.filename;
+    Header.dump t.header;
+    Footer.dump t.footer;
+    match t.parent with
+    | None -> ()
+    | Some parent -> dump parent
+
+  type block_marker = 
+    | Start of (string * int64)
+    | End of (string * int64)
+
+  (* Nb this only copes with dynamic or differencing disks *)
+  let check_overlapping_blocks t = 
+    let tomarkers name start length =
+      [Start (name,start); End (name,Int64.sub (Int64.add start length) 1L)] in
+    let blocks = tomarkers "footer_at_top" 0L 512L in
+    let blocks = (tomarkers "header" t.footer.Footer.data_offset 1024L) @ blocks in
+    let blocks =
+      if t.footer.Footer.disk_type = Disk_type.Differencing_hard_disk then begin
+        let locators = Array.mapi (fun i l -> (i,l)) t.header.Header.parent_locators in
+        let locators = Array.to_list locators in
+        let open Parent_locator in
+        let locators = List.filter (fun (_,l) -> l.platform_code <> Platform_code.None) locators in
+        let locations = List.map (fun (i,l) -> 
+          let name = Printf.sprintf "locator block %d" i in
+          let start = l.platform_data_offset in
+          let length = Int64.of_int32 l.platform_data_space in
+          tomarkers name start length) locators in
+        (List.flatten locations) @ blocks
+      end else blocks in
+    let bat_start = t.header.Header.table_offset in
+    let bat_size = Int64.of_int32 t.header.Header.max_table_entries in
+    let bat = tomarkers "BAT" bat_start bat_size in
+    let blocks = bat @ blocks in
+    let bat_blocks = Array.to_list (Array.mapi (fun i b -> (i,b)) t.bat) in
+    let bat_blocks = List.filter (fun (_,b) -> b <> BAT.unused) bat_blocks in
+    let bat_blocks = List.map (fun (i,b) ->
+      let name = Printf.sprintf "block %d" i in
+      let start = Int64.mul 512L (Int64.of_int32 t.bat.(i)) in
+      let size = Int64.of_int32 t.header.Header.block_size in
+      tomarkers name start size) bat_blocks in
+    let blocks = (List.flatten bat_blocks) @ blocks in
+    let get_pos = function | Start (_,a) -> a | End (_,a) -> a in
+    let to_string = function
+    | Start (name,pos) -> Printf.sprintf "%Lx START of section '%s'" pos name
+    | End (name,pos) -> Printf.sprintf "%Lx END of section '%s'" pos name in
+    let l = List.sort (fun a b -> compare (get_pos a) (get_pos b)) blocks in
+    List.iter (fun marker -> Printf.printf "%s\n" (to_string marker)) l
+
+  exception EmptyVHD
+
+  let get_top_unused_offset header bat =
+    try
+      let max_entry_offset = 
+        let entries = List.filter (fun x -> x<>BAT.unused) (Array.to_list bat) in
+        if List.length entries = 0 then raise EmptyVHD;
+        let max_entry = List.hd (List.rev (List.sort Int32.compare entries)) in
+        max_entry in
+      let byte_offset = Int64.mul 512L (Int64.of_int32 max_entry_offset) in
+      let (block_size,bitmap_size,total_size) = Header.get_block_sizes header in
+      let total_offset = Int64.add byte_offset (Int64.of_int32 total_size) in
+      total_offset
+    with 
+      | EmptyVHD ->
+        let pos = Int64.add header.Header.table_offset 
+          (Int64.mul 4L (Int64.of_int32 header.Header.max_table_entries)) in
+        pos
+end
 
 
 let sector_size = 512
@@ -674,472 +761,207 @@ let block_size = 0x200000l
 let creator_application = "caml"
 let creator_version = 0x00000001l
 
-let y2k = 946684800.0 (* seconds from the unix epoch to the vhd epoch *)
-
-(******************************************************************************)
-(* A couple of helper functions                                               *)
-(******************************************************************************)
-  
-(* FIXME: This function does not do what it says! *)
-let utf16_of_utf8 string =
-  Array.init (String.length string) 
-    (fun c -> int_of_char string.[c])
-
-let get_block_sizes vhd =
-  let block_size = vhd.header.Header.block_size in
-  let bitmap_size = Header.sizeof_bitmap vhd.header in
-  (block_size, bitmap_size, Int32.add block_size bitmap_size)
-
-
-(** Guarantee to read 'n' bytes from a file descriptor or raise End_of_file *)
-let really_read mmap pos n = 
-	let buffer = String.create (Int64.to_int n) in
-	let pos2 = Int64.mul (Int64.div n 4096L) 4096L in
-(*	Lwt_bytes.madvise mmap (Int64.to_int pos2) (Int64.to_int (Int64.sub (Int64.add n pos) pos2)) Lwt_bytes.MADV_WILLNEED;
-	lwt () = Lwt_bytes.wait_mincore mmap (Int64.to_int pos) in*)
-    let buf = Cstruct.sub mmap (Int64.to_int pos) (Int64.to_int n) in
-    Lwt.return buf
-
-(** Guarantee to write the string 'str' to a fd or raise an exception *)
-let really_write mmap pos x =
-    let buf = Cstruct.sub mmap (Int64.to_int pos) (Cstruct.len x) in
-    Cstruct.blit x 0 buf 0 (Cstruct.len x);
-    Lwt.return ()
-
-
-(******************************************************************************)
-(* Unix specifics                                                             *)
-(******************************************************************************)
-
-
-let get_vhd_time time =
-  Int32.of_int (int_of_float (time -. y2k))
-
-let get_now () =
-  let time = Unix.time() in
-  get_vhd_time time
-
-let get_parent_modification_time parent =
-  let st = Unix.stat parent in
-  get_vhd_time (st.Unix.st_mtime)
-
-(* Get the filename of the parent VHD if necessary *)
-let get_parent_filename header =
-  let rec test n =
-    if n>=Array.length header.Header.parent_locators then (failwith "Failed to find parent!");
-    let l = header.Header.parent_locators.(n) in
-    let open Parent_locator in
-    Printf.printf "locator %d\nplatform_code: %s\nplatform_data: %s\n" n (Platform_code.to_string l.platform_code) (Cstruct.to_string l.platform_data);
-    match to_filename l with
-    | Some path ->
-      let exists = try ignore(Unix.stat path); true with _ -> false in
-      if not exists then test (n + 1) else path
-    | None -> test (n + 1) in
-  test 0
-
-
-module type ASYNC = sig
-  type 'a t
-
-  val (>>=): 'a t -> ('a -> 'b t) -> 'b t
-  val return: 'a -> 'a t
-end
-
-module type CHANNEL = sig
-  include ASYNC
-
-  type fd
-
-  val really_read: fd -> int -> Cstruct.t -> Cstruct.t t
-  val really_write: fd -> Cstruct.t -> unit t
-end
-
-
-
-(******************************************************************************)
-(* Specific VHD unmarshalling functions                                       *)
-(******************************************************************************)
-
-
-let read_footer mmap pos =
-  let buf = Cstruct.sub mmap pos Header.sizeof in
-  let f = Footer.unmarshal buf in
-  Lwt.return f
-
-let read_header mmap pos =
-  let buf = Cstruct.sub mmap pos Header.sizeof in
-  let h = Header.unmarshal buf in
-  (* XXX: parent locator data has not been read *)
-  Lwt.return h
-
-let read_bat mmap footer header =
-  let buf = Cstruct.sub mmap (Int64.to_int header.Header.table_offset) (BAT.sizeof header) in
-  let bat = BAT.unmarshal buf header in
-  Lwt.return bat
-
-let read_bitmap vhd block =
-  let offset = Int64.mul 512L (Int64.of_int32 vhd.bat.(block)) in
-  let (block_size,bitmap_size,total_size) = get_block_sizes vhd in
-  let bitmap = Cstruct.sub vhd.mmap (Int64.to_int offset) (Int32.to_int bitmap_size) in
-  Lwt.return bitmap
-
-let rec load_vhd filename =
-  lwt fd = Lwt_unix.openfile filename [Unix.O_RDWR] 0o664 in
-  let mmap = Cstruct.of_bigarray (Lwt_bytes.map_file ~fd:(Lwt_unix.unix_file_descr fd) ~shared:true ()) in
-  lwt footer = read_footer mmap 0 in
-  lwt header = read_header mmap 512 in
-  lwt bat = read_bat mmap footer header in
-  lwt parent = 
-    if footer.Footer.disk_type = Disk_type.Differencing_hard_disk then
-      let parent_filename = get_parent_filename header in
-      lwt parent = load_vhd parent_filename in
-      Lwt.return (Some parent)
-    else
-      Lwt.return None
-  in
-  Lwt.return {filename; mmap; header; footer; parent; bat}
-
-(******************************************************************************)
-(* Specific VHD marshalling functions                                         *)
-(******************************************************************************)
-
-let marshal_footer f =
-  let sector = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout Footer.sizeof)) in
-  Footer.marshal sector f;
-  sector
-
-let marshal_header h =
-  let buf = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout Header.sizeof)) in
-  Header.marshal buf h;
-  buf
-
-(* Now we do some actual seeking within the file - because this stuff involves *)
-(* absolute offsets *)
-
-(* Only write those that actually have a platform_code *)
-let write_locator mmap entry =
-  let open Parent_locator in
-  if entry.platform_code <> Platform_code.None then begin
-    really_write mmap entry.platform_data_offset entry.platform_data
-  end else Lwt.return ()
-
-let write_locators mmap header =
-  Lwt_list.iter_p (fun entry -> write_locator mmap entry) (Array.to_list header.Header.parent_locators)
-
-let write_bat mmap vhd =
-  let bat_start = Int64.to_int vhd.header.Header.table_offset in
-  let buf = Cstruct.sub mmap bat_start (BAT.sizeof vhd.header) in
-  BAT.marshal buf vhd.bat;
-  Lwt.return ()
- 
-(******************************************************************************)
-(* Debug dumping stuff - dump to screen                                       *)
-(******************************************************************************)
-
-
-
-
-
-let rec dump_vhd vhd =
-  Printf.printf "VHD file: %s\n" vhd.filename;
-  Header.dump vhd.header;
-  Footer.dump vhd.footer;
-  match vhd.parent with
-      None -> ()
-    | Some vhd2 -> dump_vhd vhd2
-
-(******************************************************************************)
-(* Sector access                                                              *)
-(******************************************************************************)
-
-let get_offset_info_of_sector vhd sector =
-  let block_size_in_sectors = Int64.div (Int64.of_int32 vhd.header.Header.block_size) 512L in
-  let block_num = Int64.to_int (Int64.div sector block_size_in_sectors) in
-  let sec_in_block = Int64.rem sector block_size_in_sectors in
-  let bitmap_byte = Int64.div sec_in_block 8L in
-  let bitmap_bit = Int64.rem sec_in_block 8L in
-  let mask = 0x80 lsr (Int64.to_int bitmap_bit) in
-  let bitmap_size = Int64.div block_size_in_sectors 8L in
-  let blockpos = Int64.mul 512L (Int64.of_int32 vhd.bat.(block_num)) in
-  let datapos = Int64.add bitmap_size blockpos in
-  let sectorpos = Int64.add datapos (Int64.mul sec_in_block 512L) in
-  let bitmap_byte_pos = Int64.add bitmap_byte blockpos in
-  (block_num,Int64.to_int sec_in_block,Int64.to_int bitmap_size, Int64.to_int bitmap_byte,Int64.to_int bitmap_bit,mask,sectorpos,bitmap_byte_pos)
-
-let rec get_sector_pos vhd sector =
-  if Int64.mul sector 512L > vhd.footer.Footer.current_size then
-    failwith "Sector out of bounds";
-
-  let (block_num,sec_in_block,bitmap_size,bitmap_byte,bitmap_bit,mask,sectorpos,bitmap_byte_pos) = 
-    get_offset_info_of_sector vhd sector in
-
-  let maybe_get_from_parent () =
-    match vhd.footer.Footer.disk_type,vhd.parent with
-      | Disk_type.Differencing_hard_disk,Some vhd2 -> get_sector_pos vhd2 sector
-      | Disk_type.Differencing_hard_disk,None -> failwith "Sector in parent but no parent found!"
-      | Disk_type.Dynamic_hard_disk,_ -> Lwt.return None
-  in
-
-  if (vhd.bat.(block_num) = 0xffffffffl)
-  then
-    maybe_get_from_parent ()
-  else 
-    begin      
-      lwt bitmap = read_bitmap vhd block_num in
-      if vhd.footer.Footer.disk_type = Disk_type.Differencing_hard_disk &&
-        (not (Bitmap.get bitmap sec_in_block))
-      then
-	maybe_get_from_parent ()
-      else
-	begin
-	  lwt str = really_read vhd.mmap sectorpos 512L in
-	  Lwt.return (Some (vhd.mmap, sectorpos))
-	end
-    end    
-
-exception EmptyVHD
-let get_top_unused_offset vhd =
-  try
-    let max_entry_offset = 
-      let entries = List.filter (fun x -> x<>BAT.unused) (Array.to_list vhd.bat) in
-      if List.length entries = 0 then raise EmptyVHD;
-      let max_entry = List.hd (List.rev (List.sort Int32.compare entries)) in
-      max_entry
-    in
-    let byte_offset = Int64.mul 512L (Int64.of_int32 max_entry_offset) in
-    let (block_size,bitmap_size,total_size) = get_block_sizes vhd in
-    let total_offset = Int64.add byte_offset (Int64.of_int32 total_size) in
-    total_offset
-  with 
-    | EmptyVHD ->
-	let pos = Int64.add vhd.header.Header.table_offset 
-	  (Int64.mul 4L (Int64.of_int32 vhd.header.Header.max_table_entries)) in
-	pos
-     
-let write_trailing_footer vhd =
-  let pos = get_top_unused_offset vhd in
-  really_write vhd.mmap pos (marshal_footer vhd.footer)
-    
-let write_vhd vhd =
-  lwt () = really_write vhd.mmap 0L (marshal_footer vhd.footer) in
-  lwt () = really_write vhd.mmap (vhd.footer.Footer.data_offset) (marshal_header vhd.header) in
-  lwt () = write_locators vhd.mmap vhd.header in
-  lwt () = write_bat vhd.mmap vhd in
-  (* Assume the data is there, or will be written later *)
-  lwt () = write_trailing_footer vhd in
-  Lwt.return ()
-    
-let write_clean_block vhd block_num =
-  let (block_size, bitmap_size, total) = get_block_sizes vhd in
-  let bitmap_size = Int32.to_int bitmap_size in
-  let offset = Int64.mul (Int64.of_int32 vhd.bat.(block_num)) 512L in
-  let bitmap = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout bitmap_size)) in
-  for i = 0 to bitmap_size - 1 do
-    Cstruct.set_uint8 bitmap i 0
-  done; 
-  ignore(really_write vhd.mmap offset bitmap);
-  let block_size_in_sectors = Int32.to_int (Int32.div vhd.header.Header.block_size 512l) in
-  let sector = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout 512)) in
-  for i = 0 to 511 do
-    Cstruct.set_uint8 sector i 0
-  done;
-  for_lwt i=0 to block_size_in_sectors do
-	  let pos = Int64.add offset (Int64.of_int (sector_size * i)) in
-      really_write vhd.mmap pos sector
-  done
-
-let write_sector vhd sector data =
-  let block_size_in_sectors = Int64.div (Int64.of_int32 vhd.header.Header.block_size) 512L in
-  let block_num = Int64.to_int (Int64.div sector block_size_in_sectors) in
-  lwt () = 
-  if (vhd.bat.(block_num) = BAT.unused)
-  then
-    begin
-      (* Allocate a new sector *)
-      let pos = get_top_unused_offset vhd in (* in bytes *)
-      let sec = Int64.div (Int64.add pos 511L) 512L in 
-      vhd.bat.(block_num) <- Int64.to_int32 sec;
-      lwt () = write_clean_block vhd block_num in
-      lwt () = write_bat vhd.mmap vhd in
-      lwt () = write_trailing_footer vhd in
-      Lwt.return ()
-    end
-  else 
-	Lwt.return () in
-  let (block_num,sec_in_block,bitmap_size,bitmap_byte,bitmap_bit,mask,sectorpos,bitmap_byte_pos) = 
-    get_offset_info_of_sector vhd sector in
-  lwt bitmap = read_bitmap vhd block_num in
-  Bitmap.set bitmap sec_in_block;
-  lwt () = really_write vhd.mmap sectorpos data in
-  lwt () = really_write vhd.mmap bitmap_byte_pos (Bitmap.sector bitmap sec_in_block) in
-  Lwt.return ()
-
-let rewrite_block vhd block_number new_block_number =
-  ()
-
-(******************************************************************************)
-(* Sanity checks                                                              *)
-(******************************************************************************)
-
-type block_marker = 
-    | Start of (string * int64)
-    | End of (string * int64)
-
-(* Nb this only copes with dynamic or differencing disks *)
-let check_overlapping_blocks vhd = 
-  let tomarkers name start length =
-    [Start (name,start); End (name,Int64.sub (Int64.add start length) 1L)] 
-  in
-  let blocks = tomarkers "footer_at_top" 0L 512L in
-  let blocks = (tomarkers "header" vhd.footer.Footer.data_offset 1024L) @ blocks in
-  let blocks =
-    if vhd.footer.Footer.disk_type = Disk_type.Differencing_hard_disk 
-    then
-      begin
-	let locators = Array.mapi (fun i l -> (i,l)) vhd.header.Header.parent_locators in
-	let locators = Array.to_list locators in
-        let open Parent_locator in
-	let locators = List.filter (fun (_,l) -> l.platform_code <> Platform_code.None) locators in
-	let locations = List.map (fun (i,l) -> 
-	  let name = Printf.sprintf "locator block %d" i in
-	  let start = l.platform_data_offset in
-	  let length = Int64.of_int32 l.platform_data_space in
-	  tomarkers name start length) locators in
-	(List.flatten locations) @ blocks
-      end
-    else
-      blocks
-  in
-  let bat_start = vhd.header.Header.table_offset in
-  let bat_size = Int64.of_int32 vhd.header.Header.max_table_entries in
-  let bat = tomarkers "BAT" bat_start bat_size in
-  let blocks = bat @ blocks in
-  let bat_blocks = Array.to_list (Array.mapi (fun i b -> (i,b)) vhd.bat) in
-  let bat_blocks = List.filter (fun (_,b) -> b <> BAT.unused) bat_blocks in
-  let bat_blocks = List.map (fun (i,b) ->
-    let name = Printf.sprintf "block %d" i in
-    let start = Int64.mul 512L (Int64.of_int32 vhd.bat.(i)) in
-    let size = Int64.of_int32 vhd.header.Header.block_size in
-    tomarkers name start size) bat_blocks in
-  let blocks = (List.flatten bat_blocks) @ blocks in
-  let get_pos = function | Start (_,a) -> a | End (_,a) -> a in
-  let to_string = function
-    | Start (name,pos) -> Printf.sprintf "%Lx START of section '%s'" pos name
-    | End (name,pos) -> Printf.sprintf "%Lx END of section '%s'" pos name
-  in
-  let l = List.sort (fun a b -> compare (get_pos a) (get_pos b)) blocks in
-  List.iter (fun marker -> Printf.printf "%s\n" (to_string marker)) l
-
-(* Constructors *)
-
-let blank_uuid = match Uuidm.of_bytes (String.make 16 '\000') with
-  | Some x -> x
-  | None -> assert false (* never happens *)
-
-(* Create a completely new sparse VHD file *)
-let create_new_dynamic filename requested_size uuid ?(sparse=true) ?(table_offset=2048L) 
-    ?(block_size=block_size) ?(data_offset=512L) ?(saved_state=false)
-    ?(features=[Feature.Temporary]) () =
-
-  (* Round up to the nearest 2-meg block *)
-  let size = Int64.mul (Int64.div (Int64.add 2097151L requested_size) 2097152L) 2097152L in
-
-  let geometry = Geometry.of_sectors (Int64.to_int (Int64.div size sector_sizeL)) in
-  let footer = 
-    {
-      Footer.features;
-      data_offset;
-      time_stamp = 0l;
-      creator_application; creator_version;
-      creator_host_os = Host_OS.Other 0l;
-      original_size = size;
-      current_size = size;
-      geometry;
-      disk_type = Disk_type.Dynamic_hard_disk;
-      checksum = 0l; (* Filled in later *)
-      uid = uuid;
-      saved_state;
-    }
-  in
-  let header = 
-    {
-      Header.table_offset; (* Stick the BAT at this offset *)
-      max_table_entries = Int64.to_int32 (Int64.div size (Int64.of_int32 block_size));
-      block_size;
-      checksum = 0l;
-      parent_unique_id = blank_uuid;
-      parent_time_stamp = 0l;
-      parent_unicode_name = [| |];
-      parent_locators = Array.make 8 Parent_locator.null
-    } 
-  in
-  let bat = Array.make (Int32.to_int header.Header.max_table_entries) (BAT.unused) in
-  Printf.printf "max_table_entries: %ld (size=%Ld)\n" (header.Header.max_table_entries) size;
-  lwt fd = Lwt_unix.openfile filename [Unix.O_RDWR; Unix.O_CREAT; Unix.O_EXCL] 0o640 in
-  let mmap = Cstruct.of_bigarray (Lwt_bytes.map_file ~fd:(Lwt_unix.unix_file_descr fd) ~shared:true ~size:(1024*1024*64) ()) in
-  Lwt.return {filename=filename;
-   mmap=mmap;
-   header=header;
-   footer=footer;
-   parent=None;
-   bat=bat}
-
-let create_new_difference filename backing_vhd uuid ?(features=[])
-    ?(data_offset=512L) ?(saved_state=false) ?(table_offset=2048L) () =
-  lwt parent = load_vhd backing_vhd in
-  let footer = 
-    {
-      Footer.features;
-      data_offset;
-      time_stamp = get_now ();
-      creator_application; creator_version;
-      creator_host_os = Host_OS.Other 0l;
-      original_size = parent.footer.Footer.current_size;
-      current_size = parent.footer.Footer.current_size;
-      geometry = parent.footer.Footer.geometry;
-      disk_type = Disk_type.Differencing_hard_disk;
-      checksum = 0l;
-      uid = uuid;
-      saved_state = saved_state;
-    }
-  in
-  let locator0 = 
-    let uri = "file://./" ^ (Filename.basename backing_vhd) in
-    let platform_data = Cstruct.create (String.length uri) in
-    Cstruct.blit_from_string uri 0 platform_data (String.length uri);
-    {
-      Parent_locator.platform_code = Platform_code.MacX;
-      platform_data_space = 1l;
-      platform_data_space_original=1l;
-      platform_data_length = Int32.of_int (String.length uri);
-      platform_data_offset = 1536L;
-      platform_data;
-    }
-  in
-  let header = 
-    {
-      Header.table_offset;
-      max_table_entries = parent.header.Header.max_table_entries;
-      block_size = parent.header.Header.block_size;
-      checksum = 0l;
-      parent_unique_id = parent.footer.Footer.uid;
-      parent_time_stamp = get_parent_modification_time backing_vhd;
-      parent_unicode_name = utf16_of_utf8 backing_vhd;
-      parent_locators = [| locator0; Parent_locator.null; Parent_locator.null; Parent_locator.null;
-			     Parent_locator.null; Parent_locator.null; Parent_locator.null; Parent_locator.null; |];
-    }
-  in
-  let bat = Array.make (Int32.to_int header.Header.max_table_entries) (BAT.unused) in
-  lwt fd = Lwt_unix.openfile filename [Unix.O_RDWR; Unix.O_CREAT; Unix.O_EXCL] 0o640 in
-  let mmap = Cstruct.of_bigarray (Lwt_bytes.map_file ~fd:(Lwt_unix.unix_file_descr fd) ~shared:true () ~size:(1024*1024*64)) in
-  Lwt.return {filename=filename;
-   mmap=mmap;
-   header=header;
-   footer=footer;
-   parent=Some parent;
-   bat=bat}
-
 let round_up_to_2mb_block size = 
   let newsize = Int64.mul 2097152L 
     (Int64.div (Int64.add 2097151L size) 2097152L) in
   newsize 
+
+module Make = functor(File: S.File) -> struct
+  open File
+
+  module Footer = struct
+    include Footer
+
+    let read fd pos =
+      really_read fd pos Footer.sizeof >>= fun buf ->
+      return (Footer.unmarshal buf)
+
+    let write fd pos t =
+      let sector = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout Footer.sizeof)) in
+      Footer.marshal sector t;
+      really_write fd pos sector
+  end
+
+  module Parent_locator = struct
+    include Parent_locator
+
+    let read fd t =
+      really_read fd (Int64.to_int t.platform_data_offset) (Int32.to_int t.platform_data_length) >>= fun platform_data ->
+      return { t with platform_data }
+
+    let write fd t =
+      (* Only write those that actually have a platform_code *)
+      if t.platform_code <> Platform_code.None
+      then really_write fd (Int64.to_int t.platform_data_offset) t.platform_data
+      else return ()
+  end
+
+  module Header = struct
+    include Header
+
+    let get_parent_filename t =
+      let rec test n =
+        if n >= Array.length t.parent_locators then (failwith "Failed to find parent!");
+        let l = t.parent_locators.(n) in
+        let open Parent_locator in
+        Printf.printf "locator %d\nplatform_code: %s\nplatform_data: %s\n" n (Platform_code.to_string l.platform_code) (Cstruct.to_string l.platform_data);
+        match to_filename l with
+        | Some path ->
+          exists path >>= fun x ->
+          if not x
+          then test (n + 1)
+          else return path
+        | None -> test (n + 1) in
+      test 0
+
+    let read fd pos =
+      really_read fd pos sizeof >>= fun buf ->
+      let t = unmarshal buf in
+      (* Read the parent_locator data *)
+      let rec read_parent_locator = function
+        | 8 -> return ()
+        | n ->
+          let p = t.parent_locators.(n) in
+          let open Parent_locator in
+          Parent_locator.read fd p >>= fun p ->
+          t.parent_locators.(n) <- p;
+          read_parent_locator (n + 1) in
+      read_parent_locator 0 >>= fun () ->
+      return t  
+
+    let write fd pos t =
+      let buf = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout Header.sizeof)) in
+      marshal buf t;
+      (* Write the parent_locator data *)
+      let rec write_parent_locator = function
+        | 8 -> return ()
+        | n ->
+          let p = t.parent_locators.(n) in
+          let open Parent_locator in
+          Parent_locator.write fd p >>= fun () ->
+          write_parent_locator (n + 1) in
+      write_parent_locator 0
+  end
+
+  module BAT = struct
+    include BAT
+
+    let read fd (header: Header.t) =
+      really_read fd (Int64.to_int header.Header.table_offset) (sizeof header) >>= fun buf ->
+      return (unmarshal buf header)
+
+    let write fd (header: Header.t) t =
+      let buf = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout (sizeof header))) in
+      marshal buf t;
+      really_write fd (Int64.to_int header.Header.table_offset) buf
+  end
+
+  module Bitmap = struct
+    include Bitmap
+
+    let read fd (header: Header.t) (bat: BAT.t) (block: int) =
+      let pos = Int64.(to_int (mul 512L (of_int32 bat.(block)))) in
+      really_read fd pos (Int32.to_int (Header.sizeof_bitmap header))
+  end
+
+  module Vhd = struct
+    include Vhd
+
+    let rec openfile filename =
+      File.openfile filename >>= fun fd ->
+      Footer.read fd 0 >>= fun footer ->
+      Header.read fd 512 >>= fun header ->
+      BAT.read fd header >>= fun bat ->
+      (match footer.Footer.disk_type with
+        | Disk_type.Differencing_hard_disk ->
+          Header.get_parent_filename header >>= fun parent_filename ->
+          openfile parent_filename >>= fun p ->
+          return (Some p)
+        | _ ->
+          return None) >>= fun parent ->
+      return { filename; handle = fd; header; footer; bat; parent }
+
+    let rec get_sector_pos t sector =
+      if Int64.mul sector 512L > t.Vhd.footer.Footer.current_size then
+        failwith "Sector out of bounds";
+
+      let (block_num,sec_in_block,bitmap_size,bitmap_byte,bitmap_bit,mask,sectorpos,bitmap_byte_pos) = 
+        Vhd.get_offset_info_of_sector t sector in
+
+      let maybe_get_from_parent () = match t.Vhd.footer.Footer.disk_type,t.Vhd.parent with
+        | Disk_type.Differencing_hard_disk,Some vhd2 -> get_sector_pos vhd2 sector
+        | Disk_type.Differencing_hard_disk,None -> failwith "Sector in parent but no parent found!"
+        | Disk_type.Dynamic_hard_disk,_ -> return None in
+
+      if t.Vhd.bat.(block_num) = BAT.unused
+      then maybe_get_from_parent ()
+      else begin
+        Bitmap.read t.Vhd.handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
+        if t.Vhd.footer.Footer.disk_type = Disk_type.Differencing_hard_disk && (not (Bitmap.get bitmap sec_in_block))
+        then maybe_get_from_parent ()
+        else begin
+          really_read t.Vhd.handle (Int64.to_int sectorpos) 512 >>= fun data ->
+          return (Some data)
+        end
+      end  
+
+    let write_trailing_footer t =
+      let pos = Vhd.get_top_unused_offset t.Vhd.header t.Vhd.bat in
+      Footer.write t.Vhd.handle (Int64.to_int pos) t.Vhd.footer
+    
+    let write t =
+      Footer.write t.Vhd.handle 0 t.Vhd.footer >>= fun () ->
+      Header.write t.Vhd.handle (Int64.to_int t.Vhd.footer.Footer.data_offset) t.Vhd.header >>= fun () ->
+      BAT.write t.Vhd.handle t.Vhd.header t.Vhd.bat >>= fun () ->
+      (* Assume the data is there, or will be written later *)
+      write_trailing_footer t
+
+    let write_zero_block t block_num =
+      let (block_size, bitmap_size, total) = Header.get_block_sizes t.Vhd.header in
+      let bitmap_size = Int32.to_int bitmap_size in
+      let offset = Int64.mul (Int64.of_int32 t.Vhd.bat.(block_num)) 512L in
+      let bitmap = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout bitmap_size)) in
+      for i = 0 to bitmap_size - 1 do
+        Cstruct.set_uint8 bitmap i 0
+      done;
+      really_write t.Vhd.handle (Int64.to_int offset) bitmap >>= fun () ->
+      let block_size_in_sectors = Int32.to_int (Int32.div t.Vhd.header.Header.block_size 512l) in
+      let sector = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout 512)) in
+      for i = 0 to 511 do
+        Cstruct.set_uint8 sector i 0
+      done;
+      let rec loop n =
+        if n >= block_size_in_sectors
+        then return ()
+        else
+          let pos = Int64.(add offset (of_int (sector_size * n))) in
+          really_write t.Vhd.handle (Int64.to_int pos) sector >>= fun () ->
+          loop (n + 1) in
+      loop 0
+
+    let write_sector t sector data =
+      let block_size_in_sectors = Int64.div (Int64.of_int32 t.Vhd.header.Header.block_size) 512L in
+      let block_num = Int64.to_int (Int64.div sector block_size_in_sectors) in
+
+      let update_sector () =
+        let (block_num,sec_in_block,bitmap_size,bitmap_byte,bitmap_bit,mask,sectorpos,bitmap_byte_pos) = 
+          Vhd.get_offset_info_of_sector t sector in
+        Bitmap.read t.Vhd.handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
+        Bitmap.set bitmap sec_in_block;
+        really_write t.Vhd.handle (Int64.to_int sectorpos) data >>= fun () ->
+        really_write t.Vhd.handle (Int64.to_int bitmap_byte_pos) (Bitmap.sector bitmap sec_in_block) in
+
+      if t.Vhd.bat.(block_num) = BAT.unused then begin
+        (* Allocate a new sector *)
+        let pos = Vhd.get_top_unused_offset t.Vhd.header t.Vhd.bat in (* in bytes *)
+        let sec = Int64.div (Int64.add pos 511L) 512L in 
+        t.Vhd.bat.(block_num) <- Int64.to_int32 sec;
+        write_zero_block t block_num >>= fun () ->
+        BAT.write t.Vhd.handle t.Vhd.header t.Vhd.bat >>= fun () ->
+        write_trailing_footer t >>= fun () ->
+        update_sector ()
+      end else update_sector ()
+
+  end
+
+end
