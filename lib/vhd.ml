@@ -815,17 +815,19 @@ module Make = functor(File: S.IO) -> struct
 
     let get_parent_filename t =
       let rec test n =
-        if n >= Array.length t.parent_locators then (failwith "Failed to find parent!");
-        let l = t.parent_locators.(n) in
-        let open Parent_locator in
-        Printf.printf "locator %d\nplatform_code: %s\nplatform_data: %s\n" n (Platform_code.to_string l.platform_code) (Cstruct.to_string l.platform_data);
-        match to_filename l with
-        | Some path ->
-          exists path >>= fun x ->
-          if not x
-          then test (n + 1)
-          else return path
-        | None -> test (n + 1) in
+        if n >= Array.length t.parent_locators
+        then fail (Failure "Failed to find parent!")
+        else
+          let l = t.parent_locators.(n) in
+          let open Parent_locator in
+          Printf.printf "locator %d\nplatform_code: %s\nplatform_data: %s\n" n (Platform_code.to_string l.platform_code) (Cstruct.to_string l.platform_data);
+          match to_filename l with
+          | Some path ->
+            exists path >>= fun x ->
+            if not x
+            then test (n + 1)
+            else return path
+          | None -> test (n + 1) in
       test 0
 
     let read fd pos =
