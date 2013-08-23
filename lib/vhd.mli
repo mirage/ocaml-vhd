@@ -91,4 +91,4 @@ val check_overlapping_blocks: vhd -> unit
 
 val round_up_to_2mb_block: int64 -> int64
 
-val really_read: Lwt_bytes.t -> int64 -> int64 -> Cstruct.t Lwt.t
+val really_read: Cstruct.t -> int64 -> int64 -> Cstruct.t Lwt.t

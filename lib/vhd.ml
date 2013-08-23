@@ -657,7 +657,7 @@ end
 
 type vhd = {
   filename : string;
-  mmap : Lwt_bytes.t;
+  mmap : Cstruct.t;
   header : Header.t;
   footer : Footer.t;
   parent : vhd option;
@@ -697,12 +697,12 @@ let really_read mmap pos n =
 	let pos2 = Int64.mul (Int64.div n 4096L) 4096L in
 (*	Lwt_bytes.madvise mmap (Int64.to_int pos2) (Int64.to_int (Int64.sub (Int64.add n pos) pos2)) Lwt_bytes.MADV_WILLNEED;
 	lwt () = Lwt_bytes.wait_mincore mmap (Int64.to_int pos) in*)
-    let buf = Cstruct.sub (Cstruct.of_bigarray mmap) (Int64.to_int pos) (Int64.to_int n) in
+    let buf = Cstruct.sub mmap (Int64.to_int pos) (Int64.to_int n) in
     Lwt.return buf
 
 (** Guarantee to write the string 'str' to a fd or raise an exception *)
 let really_write mmap pos x =
-    let buf = Cstruct.sub (Cstruct.of_bigarray mmap) (Int64.to_int pos) (Cstruct.len x) in
+    let buf = Cstruct.sub mmap (Int64.to_int pos) (Cstruct.len x) in
     Cstruct.blit x 0 buf 0 (Cstruct.len x);
     Lwt.return ()
 
@@ -762,30 +762,30 @@ end
 
 
 let read_footer mmap pos =
-  let buf = Cstruct.sub (Cstruct.of_bigarray mmap) pos Header.sizeof in
+  let buf = Cstruct.sub mmap pos Header.sizeof in
   let f = Footer.unmarshal buf in
   Lwt.return f
 
 let read_header mmap pos =
-  let buf = Cstruct.sub (Cstruct.of_bigarray mmap) pos Header.sizeof in
+  let buf = Cstruct.sub mmap pos Header.sizeof in
   let h = Header.unmarshal buf in
   (* XXX: parent locator data has not been read *)
   Lwt.return h
 
 let read_bat mmap footer header =
-  let buf = Cstruct.sub (Cstruct.of_bigarray mmap) (Int64.to_int header.Header.table_offset) (BAT.sizeof header) in
+  let buf = Cstruct.sub mmap (Int64.to_int header.Header.table_offset) (BAT.sizeof header) in
   let bat = BAT.unmarshal buf header in
   Lwt.return bat
 
 let read_bitmap vhd block =
   let offset = Int64.mul 512L (Int64.of_int32 vhd.bat.(block)) in
   let (block_size,bitmap_size,total_size) = get_block_sizes vhd in
-  let bitmap = Cstruct.sub (Cstruct.of_bigarray vhd.mmap) (Int64.to_int offset) (Int32.to_int bitmap_size) in
+  let bitmap = Cstruct.sub vhd.mmap (Int64.to_int offset) (Int32.to_int bitmap_size) in
   Lwt.return bitmap
 
 let rec load_vhd filename =
   lwt fd = Lwt_unix.openfile filename [Unix.O_RDWR] 0o664 in
-  let mmap = Lwt_bytes.map_file ~fd:(Lwt_unix.unix_file_descr fd) ~shared:true () in
+  let mmap = Cstruct.of_bigarray (Lwt_bytes.map_file ~fd:(Lwt_unix.unix_file_descr fd) ~shared:true ()) in
   lwt footer = read_footer mmap 0 in
   lwt header = read_header mmap 512 in
   lwt bat = read_bat mmap footer header in
@@ -828,7 +828,7 @@ let write_locators mmap header =
 
 let write_bat mmap vhd =
   let bat_start = Int64.to_int vhd.header.Header.table_offset in
-  let buf = Cstruct.sub (Cstruct.of_bigarray mmap) bat_start (BAT.sizeof vhd.header) in
+  let buf = Cstruct.sub mmap bat_start (BAT.sizeof vhd.header) in
   BAT.marshal buf vhd.bat;
   Lwt.return ()
  
@@ -1076,7 +1076,7 @@ let create_new_dynamic filename requested_size uuid ?(sparse=true) ?(table_offse
   let bat = Array.make (Int32.to_int header.Header.max_table_entries) (BAT.unused) in
   Printf.printf "max_table_entries: %ld (size=%Ld)\n" (header.Header.max_table_entries) size;
   lwt fd = Lwt_unix.openfile filename [Unix.O_RDWR; Unix.O_CREAT; Unix.O_EXCL] 0o640 in
-  let mmap = Lwt_bytes.map_file ~fd:(Lwt_unix.unix_file_descr fd) ~shared:true ~size:(1024*1024*64) () in
+  let mmap = Cstruct.of_bigarray (Lwt_bytes.map_file ~fd:(Lwt_unix.unix_file_descr fd) ~shared:true ~size:(1024*1024*64) ()) in
   Lwt.return {filename=filename;
    mmap=mmap;
    header=header;
@@ -1131,7 +1131,7 @@ let create_new_difference filename backing_vhd uuid ?(features=[])
   in
   let bat = Array.make (Int32.to_int header.Header.max_table_entries) (BAT.unused) in
   lwt fd = Lwt_unix.openfile filename [Unix.O_RDWR; Unix.O_CREAT; Unix.O_EXCL] 0o640 in
-  let mmap = Lwt_bytes.map_file ~fd:(Lwt_unix.unix_file_descr fd) ~shared:true () ~size:(1024*1024*64) in
+  let mmap = Cstruct.of_bigarray (Lwt_bytes.map_file ~fd:(Lwt_unix.unix_file_descr fd) ~shared:true () ~size:(1024*1024*64)) in
   Lwt.return {filename=filename;
    mmap=mmap;
    header=header;
