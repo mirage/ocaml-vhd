@@ -23,11 +23,12 @@ end
 
 module Disk_type: sig
   type t = 
-    | None
-    | Reserved of int
     | Fixed_hard_disk
+    (** A flat constant-space image *)
     | Dynamic_hard_disk
+    (** An image which can grow and shrink as data is added and removed *)
     | Differencing_hard_disk
+    (** An image which stores only differences from a base "parent" disk *)
 
   val to_string : t -> string
 end

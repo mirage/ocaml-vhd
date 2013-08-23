@@ -36,32 +36,22 @@ end
 
 module Disk_type = struct
   type t = 
-    | None
-    | Reserved of int
     | Fixed_hard_disk
     | Dynamic_hard_disk
     | Differencing_hard_disk
 
   let of_int32 = function
-    | 0l -> None
-    | 1l -> Reserved 1
     | 2l -> Fixed_hard_disk 
     | 3l -> Dynamic_hard_disk
     | 4l -> Differencing_hard_disk
-    | 5l -> Reserved 5
-    | 6l -> Reserved 6
     | _ -> failwith "Unhandled disk type!"
 
   let to_int32 = function
-    | None -> 0l
-    | Reserved i -> Int32.of_int i
     | Fixed_hard_disk -> 2l
     | Dynamic_hard_disk -> 3l
     | Differencing_hard_disk -> 4l
 
   let to_string = function
-    | None -> "None"
-    | Reserved x -> Printf.sprintf "Reserved %d" x
     | Fixed_hard_disk -> "Fixed_hard_disk"
     | Dynamic_hard_disk -> "Dynamic_hard_disk"
     | Differencing_hard_disk -> "Differencing_hard_disk"
