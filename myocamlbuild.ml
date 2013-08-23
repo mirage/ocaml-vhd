@@ -1,5 +1,5 @@
 (* OASIS_START *)
-(* DO NOT EDIT (digest: 7531b329e517ad20f67b0dfe4434af9b) *)
+(* DO NOT EDIT (digest: 770965b5ac08659b7644102392ead29c) *)
 module OASISGettext = struct
 (* # 21 "/home/djs/.opam/4.00.1/build/oasis.0.3.0/src/oasis/OASISGettext.ml" *)
 
@@ -477,7 +477,7 @@ end
 open Ocamlbuild_plugin;;
 let package_default =
   {
-     MyOCamlbuildBase.lib_ocaml = [("vhd", ["lib"])];
+     MyOCamlbuildBase.lib_ocaml = [("vhd", ["lib"]); ("vhd_lwt", ["lib"])];
      lib_c = [];
      flags = [];
      includes = [("lib_test", ["lib"]); ("cli", ["lib"])];
