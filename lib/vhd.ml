@@ -362,15 +362,16 @@ module Platform_code = struct
   let mac = 0x4d616320l
   let macx = 0x4d616358l
 
-  let of_int32 = function
-    | 0l -> None
-    | x when x = wi2r -> Wi2r
-    | x when x = wi2k -> Wi2k
-    | x when x = w2ru -> W2ru
-    | x when x = w2ku -> W2ku
-    | x when x = mac -> Mac
-    | x when x = macx -> MacX
-    | x -> failwith (Printf.sprintf "unknown platform_code: %lx" x)
+  let of_int32 =
+    let open Result in function
+    | 0l -> Ok None
+    | x when x = wi2r -> Ok Wi2r
+    | x when x = wi2k -> Ok Wi2k
+    | x when x = w2ru -> Ok W2ru
+    | x when x = w2ku -> Ok W2ku
+    | x when x = mac -> Ok Mac
+    | x when x = macx -> Ok MacX
+    | x -> Error (Failure (Printf.sprintf "unknown platform_code: %lx" x))
 
   let to_int32 = function
     | None -> 0l
@@ -460,7 +461,8 @@ module Parent_locator = struct
     set_header_platform_data_offset buf t.platform_data_offset
 
   let unmarshal (buf: Cstruct.t) =
-    let platform_code = Platform_code.of_int32 (get_header_platform_code buf) in
+    let open Result in
+    Platform_code.of_int32 (get_header_platform_code buf) >>= fun platform_code ->
     let platform_data_space_original = get_header_platform_data_space buf in
     (* WARNING WARNING - see comment on field at the beginning of this file *)
     let platform_data_space =
@@ -469,7 +471,7 @@ module Parent_locator = struct
       else platform_data_space_original in
     let platform_data_length = get_header_platform_data_length buf in
     let platform_data_offset = get_header_platform_data_offset buf in
-    { platform_code; platform_data_space_original; platform_data_space;
+    return { platform_code; platform_data_space_original; platform_data_space;
       platform_data_length; platform_data_offset;
       platform_data = Cstruct.create 0 }
 end
@@ -590,10 +592,14 @@ module Header = struct
     UTF16.unmarshal (Cstruct.sub buf unicode_offset 512) 512 >>= fun parent_unicode_name ->
     let parent_locators_buf = Cstruct.shift buf (unicode_offset + 512) in
     let parent_locators = Array.create 8 Parent_locator.null in
-    for i = 0 to 7 do
-      let buf = Cstruct.shift parent_locators_buf (Parent_locator.sizeof * i) in
-      parent_locators.(i) <- Parent_locator.unmarshal buf
-    done;
+    let rec loop = function
+      | 8 -> return ()
+      | i ->
+        let buf = Cstruct.shift parent_locators_buf (Parent_locator.sizeof * i) in
+        Parent_locator.unmarshal buf >>= fun p ->
+        parent_locators.(i) <- p;
+        loop (i + 1) in
+    loop 0 >>= fun () ->
     return { table_offset; max_table_entries; block_size; checksum; parent_unique_id;
       parent_time_stamp; parent_unicode_name; parent_locators }
 

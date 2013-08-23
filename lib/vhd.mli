@@ -126,7 +126,7 @@ module Parent_locator : sig
 
   val sizeof : int
   val marshal : Cstruct.t -> t -> unit
-  val unmarshal : Cstruct.t -> t
+  val unmarshal : Cstruct.t -> (t, exn) Result.t
 end
 
 module Header : sig
