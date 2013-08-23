@@ -572,22 +572,25 @@ module Header = struct
   let unmarshal (buf: Cstruct.t) =
     let open Result in
     let magic' = copy_header_magic buf in
-    if magic' <> magic
-    then failwith (Printf.sprintf "Expected cookie %s, got %s" magic magic');
+    ( if magic' <> magic
+      then fail (Failure (Printf.sprintf "Expected cookie %s, got %s" magic magic'))
+      else return () ) >>= fun () ->
     let data_offset = get_header_data_offset buf in
-    if data_offset <> expected_data_offset
-    then failwith (Printf.sprintf "Expected header data_offset %Lx, got %Lx" expected_data_offset data_offset);
+    ( if data_offset <> expected_data_offset
+      then fail (Failure (Printf.sprintf "Expected header data_offset %Lx, got %Lx" expected_data_offset data_offset))
+      else return () ) >>= fun () ->
     let table_offset = get_header_table_offset buf in
     let header_version = get_header_header_version buf in
-    if header_version <> expected_version
-    then failwith (Printf.sprintf "Expected header_version %lx, got %lx" expected_version header_version);
+    ( if header_version <> expected_version
+      then fail (Failure (Printf.sprintf "Expected header_version %lx, got %lx" expected_version header_version))
+      else return () ) >>= fun () ->
     let max_table_entries = get_header_max_table_entries buf in
     let block_size = get_header_block_size buf in
     let checksum = get_header_checksum buf in
     let bytes = copy_header_parent_unique_id buf in
-    let parent_unique_id = match (Uuidm.of_bytes bytes) with
-      | None -> failwith (Printf.sprintf "Failed to decode UUID: %s" (String.escaped bytes))
-      | Some x -> x in
+    ( match (Uuidm.of_bytes bytes) with
+      | None -> fail (Failure (Printf.sprintf "Failed to decode UUID: %s" (String.escaped bytes)))
+      | Some x -> return x ) >>= fun parent_unique_id ->
     let parent_time_stamp = get_header_parent_time_stamp buf in
     UTF16.unmarshal (Cstruct.sub buf unicode_offset 512) 512 >>= fun parent_unicode_name ->
     let parent_locators_buf = Cstruct.shift buf (unicode_offset + 512) in
