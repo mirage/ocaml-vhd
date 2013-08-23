@@ -11,8 +11,16 @@ Library vhd
   CompiledObject:     best
   Path:               lib
   Findlibname:        vhd-format
-  Modules:            Vhd, Vhd_lwt, S, Result
+  Modules:            Vhd, S, Result
   BuildDepends:       lwt, lwt.unix, uuidm, cstruct
+
+Library vhd_lwt
+  CompiledObject:     best
+  Path:               lib
+  Findlibname:        lwt
+  Findlibparent:      vhd
+  Modules:            Vhd_lwt
+  BuildDepends:       lwt, lwt.unix
 
 Executable vhdtool
   CompiledObject:     best
@@ -20,7 +28,7 @@ Executable vhdtool
   MainIs:             cli.ml
   Custom:             true
   Install:            false
-  BuildDepends:       lwt, lwt.unix, vhd-format
+  BuildDepends:       lwt, lwt.unix, vhd-format, vhd-format.lwt
 
 Executable disk_to_ocaml
   CompiledObject:     best
@@ -28,7 +36,7 @@ Executable disk_to_ocaml
   MainIs:             disk_to_ocaml.ml
   Custom:             true
   Install:            false
-  BuildDepends:       lwt, lwt.unix, vhd-format, cstruct
+  BuildDepends:       lwt, lwt.unix, vhd-format, vhd-format.lwt, cstruct
 
 Executable parse_test
   CompiledObject:     best
@@ -36,4 +44,4 @@ Executable parse_test
   MainIs:             parse_test.ml
   Custom:             true
   Install:            false
-  BuildDepends:       lwt, lwt.unix, vhd-format, cstruct, oUnit
+  BuildDepends:       lwt, lwt.unix, vhd-format, vhd-format.lwt, cstruct, oUnit
