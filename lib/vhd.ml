@@ -907,7 +907,8 @@ module Make = functor(File: S.IO) -> struct
         let maybe_get_from_parent () = match t.Vhd.footer.Footer.disk_type,t.Vhd.parent with
           | Disk_type.Differencing_hard_disk,Some vhd2 -> get_sector_pos vhd2 sector
           | Disk_type.Differencing_hard_disk,None -> fail (Failure "Sector in parent but no parent found!")
-          | Disk_type.Dynamic_hard_disk,_ -> return None in
+          | Disk_type.Dynamic_hard_disk,_ -> return None
+          | Disk_type.Fixed_hard_disk,_ -> fail (Failure "Fixed disks are not supported") in
 
         if t.Vhd.bat.(block_num) = BAT.unused
         then maybe_get_from_parent ()
