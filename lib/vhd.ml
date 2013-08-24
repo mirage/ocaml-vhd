@@ -343,6 +343,11 @@ module Footer = struct
     let saved_state = get_footer_saved_state buf = 1 in
     return { features; data_offset; time_stamp; creator_version; creator_application;
       creator_host_os; original_size; current_size; geometry; disk_type; checksum; uid; saved_state }
+
+  let compute_checksum t =
+    let buf = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout sizeof)) in
+    marshal buf t;
+    get_footer_checksum buf
 end
 
 module Platform_code = struct
@@ -605,6 +610,11 @@ module Header = struct
     loop 0 >>= fun () ->
     return { table_offset; max_table_entries; block_size; checksum; parent_unique_id;
       parent_time_stamp; parent_unicode_name; parent_locators }
+
+  let compute_checksum t =
+    let buf = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout sizeof)) in
+    marshal buf t;
+    get_header_checksum buf
 
   let get_block_sizes t =
     let bitmap_size = sizeof_bitmap t in

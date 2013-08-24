@@ -82,6 +82,9 @@ module Footer: sig
     (** true if the virtual machine is in a saved (suspended) state *)
   }
 
+  val compute_checksum: t -> int32
+  (** compute the expected checksum value *)
+
   val default_creator_application: string
   val default_creator_version: int32
 
@@ -148,6 +151,10 @@ module Header : sig
     parent_locators : Parent_locator.t array;
     (** up to 8 different pointers to the parent disk image *)
   }
+
+  val compute_checksum: t -> int32
+  (** compute the expected checksum value *)
+
   val sizeof_bitmap : t -> int32
   val default_block_size: int32
 
