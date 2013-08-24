@@ -128,13 +128,27 @@ module Geometry = struct
 
 end
 
-(* TODO: use the optimised mirage version *)
-let ones_complement_checksum m =
-  let rec inner n cur =
-    if n=Cstruct.len m then cur else
-      inner (n+1) (Int32.add cur (Int32.of_int (Cstruct.get_uint8 m n)))
-  in 
-  Int32.lognot (inner 0 0l)
+module Checksum = struct
+  type t = int32
+
+  (* TODO: use the optimised mirage version *)
+  let of_cstruct m =
+    let rec inner n cur =
+      if n=Cstruct.len m then cur else
+        inner (n+1) (Int32.add cur (Int32.of_int (Cstruct.get_uint8 m n)))
+    in 
+    Int32.lognot (inner 0 0l)
+
+  let sub_int32 t x =
+    (* Adjust the checksum [t] by removing the contribution of [x] *)
+    let open Int32 in
+    let t' = lognot t in
+    let a = logand (shift_right_logical x 0) (of_int 0xff) in
+    let b = logand (shift_right_logical x 8) (of_int 0xff) in
+    let c = logand (shift_right_logical x 16) (of_int 0xff) in
+    let d = logand (shift_right_logical x 24) (of_int 0xff) in
+    Int32.lognot (sub (sub (sub (sub t' a) b) c) d)
+end
 
 module UTF16 = struct
   type t = int array
@@ -310,7 +324,7 @@ module Footer = struct
     for i = 0 to 426 do
       Cstruct.set_uint8 remaining i 0
     done;
-    set_footer_checksum buf (ones_complement_checksum (Cstruct.sub buf 0 sizeof))
+    set_footer_checksum buf (Checksum.of_cstruct (Cstruct.sub buf 0 sizeof))
 
   let unmarshal (buf: Cstruct.t) =
     let open Result in
@@ -341,6 +355,10 @@ module Footer = struct
       | None -> fail (Failure (Printf.sprintf "Failed to decode UUID: %s" (String.escaped bytes)))
       | Some uid -> return uid ) >>= fun uid ->
     let saved_state = get_footer_saved_state buf = 1 in
+    let expected_checksum = Checksum.(sub_int32 (of_cstruct (Cstruct.sub buf 0 sizeof)) checksum) in
+    ( if checksum <> expected_checksum
+      then fail (Failure (Printf.sprintf "Invalid checksum. Expected %08lx got %08lx" expected_checksum checksum))
+      else return () ) >>= fun () ->
     return { features; data_offset; time_stamp; creator_version; creator_application;
       creator_host_os; original_size; current_size; geometry; disk_type; checksum; uid; saved_state }
 
@@ -572,7 +590,7 @@ module Header = struct
     for i = 0 to 255 do
       Cstruct.set_uint8 reserved i 0
     done;
-    set_header_checksum buf (ones_complement_checksum (Cstruct.sub buf 0 sizeof))
+    set_header_checksum buf (Checksum.of_cstruct (Cstruct.sub buf 0 sizeof))
 
   let unmarshal (buf: Cstruct.t) =
     let open Result in
@@ -608,6 +626,10 @@ module Header = struct
         parent_locators.(i) <- p;
         loop (i + 1) in
     loop 0 >>= fun () ->
+    let expected_checksum = Checksum.(sub_int32 (of_cstruct (Cstruct.sub buf 0 sizeof)) checksum) in
+    ( if checksum <> expected_checksum
+      then fail (Failure (Printf.sprintf "Invalid checksum. Expected %08lx got %08lx" expected_checksum checksum))
+      else return () ) >>= fun () ->
     return { table_offset; max_table_entries; block_size; checksum; parent_unique_id;
       parent_time_stamp; parent_unicode_name; parent_locators }
 
