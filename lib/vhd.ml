@@ -16,6 +16,17 @@
 (* VHD manipulation *)
 
 let sector_size = 512
+let sector_shift = 9
+
+module Int64 = struct
+  include Int64
+  let ( ++ ) = add
+  let ( -- ) = sub
+  let ( // ) = div
+  let ( ** ) = mul
+  let ( lsl ) = shift_left
+  let ( lsr ) = shift_right_logical
+end
 
 module Feature = struct
   type t = 
@@ -507,7 +518,7 @@ module Header = struct
     table_offset : int64;
     (* 0x00010000l *)
     max_table_entries : int32;
-    block_size : int32;
+    block_size_sectors_shift : int;
     checksum : int32;
     parent_unique_id : Uuidm.t;
     parent_time_stamp : int32;
@@ -516,7 +527,7 @@ module Header = struct
   }
 
   (* 1 bit per each 512 byte sector within the block *)
-  let sizeof_bitmap t = Int32.(div (div t.block_size 512l) 8l)
+  let sizeof_bitmap t = 1 lsl t.block_size_sectors_shift
 
   let magic = "cxsparse"
 
@@ -524,7 +535,8 @@ module Header = struct
 
   let expected_version = 0x00010000l
 
-  let default_block_size = 0x200000l
+  let default_block_size_sectors_shift = 12 (* 1 lsl 12 = 4096 sectors = 2 MiB *)
+  let default_block_size = 1 lsl (default_block_size_sectors_shift + sector_shift)
 
   let dump t =
     Printf.printf "VHD HEADER\n";
@@ -534,7 +546,7 @@ module Header = struct
     Printf.printf "table_offset        : %Lu\n" t.table_offset;
     Printf.printf "header_version      : 0x%lx\n" expected_version;
     Printf.printf "max_table_entries   : 0x%lx\n" t.max_table_entries;
-    Printf.printf "block_size          : 0x%lx\n" t.block_size;
+    Printf.printf "block_size          : 0x%x\n" ((1 lsl t.block_size_sectors_shift) * sector_size);
     Printf.printf "checksum            : %lu\n" t.checksum;
     Printf.printf "parent_unique_id    : %s\n" (Uuidm.to_string t.parent_unique_id);
     Printf.printf "parent_time_stamp   : %lu\n" t.parent_time_stamp;
@@ -571,7 +583,7 @@ module Header = struct
     set_header_table_offset buf t.table_offset;
     set_header_header_version buf expected_version;
     set_header_max_table_entries buf t.max_table_entries;
-    set_header_block_size buf t.block_size;
+    set_header_block_size buf (Int32.of_int (1 lsl (t.block_size_sectors_shift + sector_shift)));
     set_header_checksum buf 0l;
     set_header_parent_unique_id (Uuidm.to_bytes t.parent_unique_id) 0 buf;
     set_header_parent_time_stamp buf t.parent_time_stamp;
@@ -609,6 +621,13 @@ module Header = struct
       else return () ) >>= fun () ->
     let max_table_entries = get_header_max_table_entries buf in
     let block_size = get_header_block_size buf in
+    let rec to_shift acc = function
+      | 0 -> fail (Failure "block size is zero")
+      | 1 -> return acc
+      | n when n mod 2 = 1 -> fail (Failure (Printf.sprintf "block_size is not a power of 2: %lx" block_size))
+      | n -> to_shift (acc + 1) (n / 2) in
+    to_shift 0 (Int32.to_int block_size) >>= fun block_size_shift ->
+    let block_size_sectors_shift = block_size_shift - sector_shift in
     let checksum = get_header_checksum buf in
     let bytes = copy_header_parent_unique_id buf in
     ( match (Uuidm.of_bytes bytes) with
@@ -630,17 +649,13 @@ module Header = struct
     ( if checksum <> expected_checksum
       then fail (Failure (Printf.sprintf "Invalid checksum. Expected %08lx got %08lx" expected_checksum checksum))
       else return () ) >>= fun () ->
-    return { table_offset; max_table_entries; block_size; checksum; parent_unique_id;
+    return { table_offset; max_table_entries; block_size_sectors_shift; checksum; parent_unique_id;
       parent_time_stamp; parent_unicode_name; parent_locators }
 
   let compute_checksum t =
     let buf = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout sizeof)) in
     marshal buf t;
     get_header_checksum buf
-
-  let get_block_sizes t =
-    let bitmap_size = sizeof_bitmap t in
-    (t.block_size, bitmap_size, Int32.add t.block_size bitmap_size)
 end
 
 module BAT = struct
@@ -651,7 +666,7 @@ module BAT = struct
   let sizeof (header: Header.t) =
     let size_needed = Int32.to_int header.Header.max_table_entries * 4 in
     (* The BAT is always extended to a sector boundary *)
-    (size_needed + 511) / 512 * 512
+    ((size_needed + sector_size - 1) lsr sector_shift) lsl sector_shift
 
   let unmarshal (buf: Cstruct.t) (header: Header.t) =
     let t = Array.create (sizeof header) unused in
@@ -664,7 +679,7 @@ module BAT = struct
     for i = 0 to Array.length t - 1 do
       Cstruct.BE.set_uint32 buf i t.(i)
     done
-
+  
   let dump t =
     Printf.printf "BAT\n";
     Printf.printf "-=-\n";
@@ -672,28 +687,33 @@ module BAT = struct
 end
 
 module Bitmap = struct
-  type t = Cstruct.t
+  type t =
+    | Full
+    | Partial of Cstruct.t
 
-  let byte t sector_in_block = Cstruct.sub t (sector_in_block / 8) 1
+  let get t sector_in_block = match t with
+    | Full -> true
+    | Partial buf ->
+      let sector_in_block = Int64.to_int sector_in_block in
+      let bitmap_byte = Cstruct.get_uint8 buf (sector_in_block / 8) in
+      let bitmap_bit = sector_in_block mod 8 in
+      let mask = 0x80 lsr bitmap_bit in
+      (bitmap_byte land mask) = mask
 
-  let get t sector_in_block =
-    let bitmap_byte = Cstruct.get_uint8 t (sector_in_block / 8) in
-    let bitmap_bit = sector_in_block mod 8 in
-    let mask = 0x80 lsr bitmap_bit in
-    (bitmap_byte land mask) = mask
-
-  let set t sector_in_block =
-    let bitmap_byte = Cstruct.get_uint8 t (sector_in_block / 8) in
-    let bitmap_bit = sector_in_block mod 8 in
-    let mask = 0x80 lsr bitmap_bit in
-    Cstruct.set_uint8 t (sector_in_block / 8) (bitmap_byte lor mask)
-
-  let clear t sector_in_block =
-    let bitmap_byte = Cstruct.get_uint8 t (sector_in_block / 8) in
-    let bitmap_bit = sector_in_block mod 8 in
-    let mask = 0x80 lsr bitmap_bit in
-    Cstruct.set_uint8 t (sector_in_block / 8) (bitmap_byte land (lnot mask))
-
+  let set t sector_in_block = match t with
+    | Full -> None (* already set, no on-disk update required *)
+    | Partial buf ->
+      let sector_in_block = Int64.to_int sector_in_block in
+      let bitmap_byte = Cstruct.get_uint8 buf (sector_in_block / 8) in
+      let bitmap_bit = sector_in_block mod 8 in
+      let mask = 0x80 lsr bitmap_bit in
+      if (bitmap_byte land mask) = mask
+      then None (* already set, no on-disk update required *)
+      else begin
+        (* not set, we must update the disk *)
+        Cstruct.set_uint8 buf (sector_in_block / 8) (bitmap_byte lor mask);
+        Some (Int64.of_int (sector_in_block / 8), Cstruct.sub buf (sector_in_block / 8) 1)
+      end
 end
 
 module Sector = struct
@@ -721,20 +741,6 @@ module Vhd = struct
     parent: 'a t option;
     bat: BAT.t;
   }
-
-  let get_offset_info_of_sector t sector =
-    let block_size_in_sectors = Int64.div (Int64.of_int32 t.header.Header.block_size) 512L in
-    let block_num = Int64.to_int (Int64.div sector block_size_in_sectors) in
-    let sec_in_block = Int64.rem sector block_size_in_sectors in
-    let bitmap_byte = Int64.div sec_in_block 8L in
-    let bitmap_bit = Int64.rem sec_in_block 8L in
-    let mask = 0x80 lsr (Int64.to_int bitmap_bit) in
-    let bitmap_size = Int64.div block_size_in_sectors 8L in
-    let blockpos = Int64.mul 512L (Int64.of_int32 t.bat.(block_num)) in
-    let datapos = Int64.add bitmap_size blockpos in
-    let sectorpos = Int64.add datapos (Int64.mul sec_in_block 512L) in
-    let bitmap_byte_pos = Int64.add bitmap_byte blockpos in
-    (block_num,Int64.to_int sec_in_block,Int64.to_int bitmap_size, Int64.to_int bitmap_byte,Int64.to_int bitmap_bit,mask,sectorpos,bitmap_byte_pos)
 
   let rec dump t =
     Printf.printf "VHD file: %s\n" t.filename;
@@ -776,7 +782,7 @@ module Vhd = struct
     let bat_blocks = List.map (fun (i,b) ->
       let name = Printf.sprintf "block %d" i in
       let start = Int64.mul 512L (Int64.of_int32 t.bat.(i)) in
-      let size = Int64.of_int32 t.header.Header.block_size in
+      let size = Int64.shift_left 1L (t.header.Header.block_size_sectors_shift + sector_shift) in
       tomarkers name start size) bat_blocks in
     let blocks = (List.flatten bat_blocks) @ blocks in
     let get_pos = function | Start (_,a) -> a | End (_,a) -> a in
@@ -789,21 +795,25 @@ module Vhd = struct
   exception EmptyVHD
 
   let get_top_unused_offset header bat =
+    let open Int64 in
     try
-      let max_entry_offset = 
+      let last_block_start = 
         let entries = List.filter (fun x -> x<>BAT.unused) (Array.to_list bat) in
         if List.length entries = 0 then raise EmptyVHD;
         let max_entry = List.hd (List.rev (List.sort Int32.compare entries)) in
-        max_entry in
-      let byte_offset = Int64.mul 512L (Int64.of_int32 max_entry_offset) in
-      let (block_size,bitmap_size,total_size) = Header.get_block_sizes header in
-      let total_offset = Int64.add byte_offset (Int64.of_int32 total_size) in
-      total_offset
+        512L ** (of_int32 max_entry) in
+      last_block_start ++ (of_int (Header.sizeof_bitmap header)) ++ (1L lsl (header.Header.block_size_sectors_shift + sector_shift))
     with 
       | EmptyVHD ->
-        let pos = Int64.add header.Header.table_offset 
-          (Int64.mul 4L (Int64.of_int32 header.Header.max_table_entries)) in
+        let pos = add header.Header.table_offset 
+          (mul 4L (of_int32 header.Header.max_table_entries)) in
         pos
+
+  (* TODO: need a quicker block allocator *)
+  let get_free_sector header bat =
+    let open Int64 in
+    let next_free_byte = get_top_unused_offset header bat in
+    to_int32 ((next_free_byte ++ 511L) lsr sector_shift)
 end
 
 module Make = functor(File: S.IO) -> struct
@@ -832,13 +842,13 @@ module Make = functor(File: S.IO) -> struct
     open Parent_locator
 
     let read fd t =
-      really_read fd (Int64.to_int t.platform_data_offset) (Int32.to_int t.platform_data_length) >>= fun platform_data ->
+      really_read fd t.platform_data_offset (Int32.to_int t.platform_data_length) >>= fun platform_data ->
       return { t with platform_data }
 
     let write fd t =
       (* Only write those that actually have a platform_code *)
       if t.platform_code <> Platform_code.None
-      then really_write fd (Int64.to_int t.platform_data_offset) t.platform_data
+      then really_write fd t.platform_data_offset t.platform_data
       else return ()
   end
 
@@ -895,21 +905,23 @@ module Make = functor(File: S.IO) -> struct
     open BAT
 
     let read fd (header: Header.t) =
-      really_read fd (Int64.to_int header.Header.table_offset) (sizeof header) >>= fun buf ->
+      really_read fd header.Header.table_offset (sizeof header) >>= fun buf ->
       return (unmarshal buf header)
 
     let write fd (header: Header.t) t =
       let buf = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout (sizeof header))) in
       marshal buf t;
-      really_write fd (Int64.to_int header.Header.table_offset) buf
+      really_write fd header.Header.table_offset buf
   end
 
   module Bitmap_IO = struct
     open Bitmap
 
     let read fd (header: Header.t) (bat: BAT.t) (block: int) =
-      let pos = Int64.(to_int (mul 512L (of_int32 bat.(block)))) in
-      really_read fd pos (Int32.to_int (Header.sizeof_bitmap header))
+      let open Int64 in
+      let pos = (of_int32 bat.(block)) lsl sector_shift in
+      really_read fd pos (Header.sizeof_bitmap header) >>= fun bitmap ->
+      return (Partial bitmap)
   end
 
   module Vhd_IO = struct
@@ -917,8 +929,8 @@ module Make = functor(File: S.IO) -> struct
 
     let rec openfile filename =
       File.openfile filename >>= fun fd ->
-      Footer_IO.read fd 0 >>= fun footer ->
-      Header_IO.read fd 512 >>= fun header ->
+      Footer_IO.read fd 0L >>= fun footer ->
+      Header_IO.read fd (Int64.of_int Footer.sizeof) >>= fun header ->
       BAT_IO.read fd header >>= fun bat ->
       (match footer.Footer.disk_type with
         | Disk_type.Differencing_hard_disk ->
@@ -929,52 +941,56 @@ module Make = functor(File: S.IO) -> struct
           return None) >>= fun parent ->
       return { filename; handle = fd; header; footer; bat; parent }
 
-    let rec get_sector_pos t sector =
-      if Int64.mul sector 512L > t.Vhd.footer.Footer.current_size
+    let rec read_sector t sector =
+      let open Int64 in
+      if sector lsl sector_shift > t.Vhd.footer.Footer.current_size
       then fail (Failure (Printf.sprintf "Sector out of bounds: %Ld (current_size = %Ld bytes)" sector t.Vhd.footer.Footer.current_size))
       else
-        let (block_num,sec_in_block,bitmap_size,bitmap_byte,bitmap_bit,mask,sectorpos,bitmap_byte_pos) = 
-          Vhd.get_offset_info_of_sector t sector in
-
         let maybe_get_from_parent () = match t.Vhd.footer.Footer.disk_type,t.Vhd.parent with
-          | Disk_type.Differencing_hard_disk,Some vhd2 -> get_sector_pos vhd2 sector
+          | Disk_type.Differencing_hard_disk,Some vhd2 -> read_sector vhd2 sector
           | Disk_type.Differencing_hard_disk,None -> fail (Failure "Sector in parent but no parent found!")
           | Disk_type.Dynamic_hard_disk,_ -> return None
           | Disk_type.Fixed_hard_disk,_ -> fail (Failure "Fixed disks are not supported") in
 
+        let block_num = to_int (sector lsr t.Vhd.header.Header.block_size_sectors_shift) in
+        let sector_in_block = rem sector (1L lsl t.Vhd.header.Header.block_size_sectors_shift) in
+ 
         if t.Vhd.bat.(block_num) = BAT.unused
         then maybe_get_from_parent ()
         else begin
           Bitmap_IO.read t.Vhd.handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
-          if t.Vhd.footer.Footer.disk_type = Disk_type.Differencing_hard_disk && (not (Bitmap.get bitmap sec_in_block))
+          if t.Vhd.footer.Footer.disk_type = Disk_type.Differencing_hard_disk && (not (Bitmap.get bitmap sector_in_block))
           then maybe_get_from_parent ()
           else begin
-            really_read t.Vhd.handle (Int64.to_int sectorpos) 512 >>= fun data ->
+            let data_sector = (of_int32 t.Vhd.bat.(block_num)) ++ (of_int (Header.sizeof_bitmap t.Vhd.header) lsr sector_shift) ++ sector_in_block in
+            really_read t.Vhd.handle (data_sector lsl sector_shift) sector_size >>= fun data ->
             return (Some data)
           end
         end  
 
     let write_trailing_footer t =
       let pos = Vhd.get_top_unused_offset t.Vhd.header t.Vhd.bat in
-      Footer_IO.write t.Vhd.handle (Int64.to_int pos) t.Vhd.footer
+      Footer_IO.write t.Vhd.handle pos t.Vhd.footer
     
     let write t =
-      Footer_IO.write t.Vhd.handle 0 t.Vhd.footer >>= fun () ->
-      Header_IO.write t.Vhd.handle (Int64.to_int t.Vhd.footer.Footer.data_offset) t.Vhd.header >>= fun () ->
+      Footer_IO.write t.Vhd.handle 0L t.Vhd.footer >>= fun () ->
+      Header_IO.write t.Vhd.handle t.Vhd.footer.Footer.data_offset t.Vhd.header >>= fun () ->
       BAT_IO.write t.Vhd.handle t.Vhd.header t.Vhd.bat >>= fun () ->
       (* Assume the data is there, or will be written later *)
       write_trailing_footer t
 
     let write_zero_block t block_num =
-      let (block_size, bitmap_size, total) = Header.get_block_sizes t.Vhd.header in
-      let bitmap_size = Int32.to_int bitmap_size in
-      let offset = Int64.mul (Int64.of_int32 t.Vhd.bat.(block_num)) 512L in
+      let block_size_in_sectors = 1 lsl t.Vhd.header.Header.block_size_sectors_shift in
+      let open Int64 in
+      let bitmap_size = Header.sizeof_bitmap t.Vhd.header in
+      let bitmap_sector = of_int32 t.Vhd.bat.(block_num) in
+
       let bitmap = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout bitmap_size)) in
       for i = 0 to bitmap_size - 1 do
         Cstruct.set_uint8 bitmap i 0
       done;
-      really_write t.Vhd.handle (Int64.to_int offset) bitmap >>= fun () ->
-      let block_size_in_sectors = Int32.to_int (Int32.div t.Vhd.header.Header.block_size 512l) in
+      really_write t.Vhd.handle (bitmap_sector lsl sector_shift) bitmap >>= fun () ->
+
       let sector = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout 512)) in
       for i = 0 to 511 do
         Cstruct.set_uint8 sector i 0
@@ -983,34 +999,36 @@ module Make = functor(File: S.IO) -> struct
         if n >= block_size_in_sectors
         then return ()
         else
-          let pos = Int64.(add offset (of_int (sector_size * n))) in
-          really_write t.Vhd.handle (Int64.to_int pos) sector >>= fun () ->
+          let pos = (bitmap_sector lsl sector_shift) ++ (of_int bitmap_size) ++ (of_int (sector_size * n)) in
+          really_write t.Vhd.handle pos sector >>= fun () ->
           loop (n + 1) in
       loop 0
 
     let write_sector t sector data =
-      let block_size_in_sectors = Int64.div (Int64.of_int32 t.Vhd.header.Header.block_size) 512L in
-      let block_num = Int64.to_int (Int64.div sector block_size_in_sectors) in
+      let block_size_in_sectors = 1 lsl t.Vhd.header.Header.block_size_sectors_shift in
+      let open Int64 in
 
-      let update_sector () =
-        let (block_num,sec_in_block,bitmap_size,bitmap_byte,bitmap_bit,mask,sectorpos,bitmap_byte_pos) = 
-          Vhd.get_offset_info_of_sector t sector in
+      let block_num = to_int (sector lsr t.Vhd.header.Header.block_size_sectors_shift) in
+      let sector_in_block = rem sector (of_int block_size_in_sectors) in
+
+      let update_sector bitmap_sector =
+        let bitmap_sector = of_int32 bitmap_sector in
+        let data_sector = bitmap_sector ++ (of_int (Header.sizeof_bitmap t.Vhd.header)) ++ sector_in_block in
         Bitmap_IO.read t.Vhd.handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
-        Bitmap.set bitmap sec_in_block;
-        really_write t.Vhd.handle (Int64.to_int sectorpos) data >>= fun () ->
-        really_write t.Vhd.handle (Int64.to_int bitmap_byte_pos) (Bitmap.byte bitmap sec_in_block) in
+        really_write t.Vhd.handle (data_sector lsl sector_shift) data >>= fun () ->
+        match Bitmap.set bitmap sector_in_block with
+        | None -> return ()
+        | Some (offset, buf) -> really_write t.Vhd.handle ((bitmap_sector lsl sector_shift) ++ offset) buf in
 
       if t.Vhd.bat.(block_num) = BAT.unused then begin
-        (* Allocate a new sector *)
-        let pos = Vhd.get_top_unused_offset t.Vhd.header t.Vhd.bat in (* in bytes *)
-        let sec = Int64.div (Int64.add pos 511L) 512L in 
-        t.Vhd.bat.(block_num) <- Int64.to_int32 sec;
+        t.Vhd.bat.(block_num) <- Vhd.get_free_sector t.Vhd.header t.Vhd.bat;
         write_zero_block t block_num >>= fun () ->
         BAT_IO.write t.Vhd.handle t.Vhd.header t.Vhd.bat >>= fun () ->
         write_trailing_footer t >>= fun () ->
-        update_sector ()
-      end else update_sector ()
-
+        update_sector t.Vhd.bat.(block_num)
+      end else begin
+        update_sector t.Vhd.bat.(block_num)
+      end
   end
 
 end

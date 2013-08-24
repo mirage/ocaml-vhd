@@ -13,6 +13,7 @@
  *)
 
 val sector_size: int
+val sector_shift: int
 
 module Feature: sig
   type t = 
@@ -138,8 +139,8 @@ module Header : sig
     (** absolute byte offset of the BAT *)
     max_table_entries : int32;
     (** the maximum number of blocks *)
-    block_size : int32;
-    (** size in bytes of each disk block *)
+    block_size_sectors_shift : int;
+    (** each block is 2 ** block_size_sectors_shift sectors in size *)
     checksum : int32;
     (** ones-complement checksum of the header *)
     parent_unique_id : Uuidm.t;
@@ -155,14 +156,14 @@ module Header : sig
   val compute_checksum: t -> int32
   (** compute the expected checksum value *)
 
-  val sizeof_bitmap : t -> int32
-  val default_block_size: int32
+  val sizeof_bitmap : t -> int
+  val default_block_size: int
+  val default_block_size_sectors_shift: int
 
   val sizeof : int
 
   val marshal : Cstruct.t -> t -> unit
   val unmarshal : Cstruct.t -> (t, exn) Result.t
-  val get_block_sizes : t -> int32 * int32 * int32
 end
 
 module BAT : sig
@@ -181,17 +182,13 @@ end
 module Bitmap : sig
   type t 
 
-  val byte : t -> int -> Cstruct.t
-  (** [byte t sector] is the byte containing the bit for [sector] *)
-
-  val get : t -> int -> bool
+  val get : t -> int64 -> bool
   (** [get t sector] is true if [sector] is present in the block *)
 
-  val set : t -> int -> unit
-  (** [set t sector] asserts the bit for [sector] *)
+  val set : t -> int64 -> (int64 * Cstruct.t) option
+  (** [set t sector] asserts the bit for [sector], returning a
+      (relative offset, data to be written to disk) pair. *)
 
-  val clear : t -> int -> unit
-  (** [clear t sector] clears the bit for [sector] *)
 end
 
 module Sector : sig
@@ -216,8 +213,8 @@ end
 
 module Make : functor (File : S.IO) -> sig
   module Footer_IO : sig
-    val read : File.fd -> int -> Footer.t File.t
-    val write : File.fd -> int -> Footer.t -> unit File.t
+    val read : File.fd -> int64 -> Footer.t File.t
+    val write : File.fd -> int64 -> Footer.t -> unit File.t
   end
   module Parent_locator_IO : sig
     val read : File.fd -> Parent_locator.t -> Parent_locator.t File.t
@@ -225,7 +222,7 @@ module Make : functor (File : S.IO) -> sig
   end
   module Header_IO : sig
     val get_parent_filename : Header.t -> string File.t
-    val read : File.fd -> int -> Header.t File.t
+    val read : File.fd -> int64 -> Header.t File.t
     val write : File.fd -> 'a -> Header.t -> unit File.t
   end
   module BAT_IO : sig
@@ -233,15 +230,13 @@ module Make : functor (File : S.IO) -> sig
     val write : File.fd -> Header.t -> BAT.t -> unit File.t
   end
   module Bitmap_IO : sig
-    val read : File.fd -> Header.t -> BAT.t -> int -> Cstruct.t File.t
+    val read : File.fd -> Header.t -> BAT.t -> int -> Bitmap.t File.t
   end
   module Vhd_IO : sig
     val openfile : string -> File.fd Vhd.t File.t
-    val get_sector_pos :
-      File.fd Vhd.t -> int64 -> Cstruct.t option File.t
-    val write_trailing_footer : File.fd Vhd.t -> unit File.t
     val write : File.fd Vhd.t -> unit File.t
-    val write_zero_block : File.fd Vhd.t -> int -> unit File.t
+    val read_sector :
+      File.fd Vhd.t -> int64 -> Cstruct.t option File.t
     val write_sector :
       File.fd Vhd.t -> int64 -> Cstruct.t -> unit File.t
   end

@@ -67,7 +67,7 @@ let main () =
 			if i=max 
             then Lwt.return () 
             else 
-				lwt input = really_read mmap (Int64.(to_int (mul i 512L))) 512 in
+				lwt input = really_read mmap (Int64.mul i 512L) 512 in
 	            lwt () = 
                     if input<>allzeros then
 				        Vhd_IO.write_sector vhd i input

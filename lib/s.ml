@@ -264,8 +264,8 @@ module type IO = sig
 
   val exists: string -> bool t
   val openfile: string -> fd t
-  val really_read: fd -> int -> int -> Cstruct.t t
-  val really_write: fd -> int -> Cstruct.t -> unit t
+  val really_read: fd -> int64 -> int -> Cstruct.t t
+  val really_write: fd -> int64 -> Cstruct.t -> unit t
 end
 
 

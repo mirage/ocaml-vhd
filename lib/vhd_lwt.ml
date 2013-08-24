@@ -29,11 +29,11 @@ module MMAP = struct
     return mmap
 
   let really_read mmap pos n = 
-    let buf = Cstruct.sub mmap pos n in
+    let buf = Cstruct.sub mmap (Int64.to_int pos) n in
     return buf
 
   let really_write mmap pos x =
-    let buf = Cstruct.sub mmap pos (Cstruct.len x) in
+    let buf = Cstruct.sub mmap (Int64.to_int pos) (Cstruct.len x) in
     Cstruct.blit x 0 buf 0 (Cstruct.len x);
     return ()
 end
@@ -63,7 +63,7 @@ let get_parent_modification_time parent =
 
 (* Create a completely new sparse VHD file *)
 let create_new_dynamic filename requested_size uuid ?(sparse=true) ?(table_offset=2048L) 
-    ?(block_size=Header.default_block_size) ?(data_offset=512L) ?(saved_state=false)
+    ?(block_size_sectors_shift=Header.default_block_size_sectors_shift) ?(data_offset=512L) ?(saved_state=false)
     ?(features=[Feature.Temporary]) () =
 
   (* Round up to the nearest 2-meg block *)
@@ -91,8 +91,8 @@ let create_new_dynamic filename requested_size uuid ?(sparse=true) ?(table_offse
   let header = 
     {
       Header.table_offset; (* Stick the BAT at this offset *)
-      max_table_entries = Int64.to_int32 (Int64.div size (Int64.of_int32 block_size));
-      block_size;
+      max_table_entries = Int64.to_int32 (Int64.shift_right_logical size (block_size_sectors_shift + sector_shift));
+      block_size_sectors_shift;
       checksum = 0l;
       parent_unique_id = blank_uuid;
       parent_time_stamp = 0l;
@@ -154,7 +154,7 @@ let create_new_difference filename backing_vhd uuid ?(features=[])
     {
       Header.table_offset;
       max_table_entries = parent.Vhd.header.Header.max_table_entries;
-      block_size = parent.Vhd.header.Header.block_size;
+      block_size_sectors_shift = parent.Vhd.header.Header.block_size_sectors_shift;
       checksum = 0l;
       parent_unique_id = parent.Vhd.footer.Footer.uid;
       parent_time_stamp = get_parent_modification_time backing_vhd;
