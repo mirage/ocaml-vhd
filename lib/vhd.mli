@@ -211,6 +211,18 @@ module Vhd : sig
   val get_top_unused_offset : Header.t -> Int32.t array -> int64
 end
 
+module Element : sig
+  type 'a t =
+    | Copy of ('a Vhd.t * int64 * int)
+    (** copy a physical block from an underlying file *)
+    | Block of Cstruct.t
+    (** a new data block (e.g. for metadata) *)
+    | Empty of int64
+    (** empty space *)
+
+  val to_string: 'a t -> string
+end
+
 module Make : functor (File : S.IO) -> sig
   module Footer_IO : sig
     val read : File.fd -> int64 -> Footer.t File.t
@@ -235,9 +247,19 @@ module Make : functor (File : S.IO) -> sig
   module Vhd_IO : sig
     val openfile : string -> File.fd Vhd.t File.t
     val write : File.fd Vhd.t -> unit File.t
+    val get_sector_location : File.fd Vhd.t -> int64 -> (File.fd Vhd.t * int64) option File.t
     val read_sector :
       File.fd Vhd.t -> int64 -> Cstruct.t option File.t
     val write_sector :
       File.fd Vhd.t -> int64 -> Cstruct.t -> unit File.t
   end
+
+  type 'a stream =
+    | Cons of 'a * (unit -> 'a stream File.t)
+    | End
+
+  val iter: ('a -> unit File.t) -> 'a stream -> unit File.t
+
+  val raw: File.fd Vhd.t -> File.fd Element.t stream File.t
+
 end

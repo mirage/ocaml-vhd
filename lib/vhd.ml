@@ -816,6 +816,21 @@ module Vhd = struct
     to_int32 ((next_free_byte ++ 511L) lsr sector_shift)
 end
 
+module Element = struct
+  type 'a t =
+    | Copy of ('a Vhd.t * int64 * int)
+    | Block of Cstruct.t
+    | Empty of int64
+
+  let to_string = function
+    | Copy(vhd, offset, len) ->
+      Printf.sprintf "Copy %s offset = %Ld len = %d" vhd.Vhd.filename offset len
+    | Block x ->
+      Printf.sprintf "Block len = %d" (Cstruct.len x)
+    | Empty x ->
+      Printf.sprintf "Empty %Ld" x
+end
+
 module Make = functor(File: S.IO) -> struct
   open File
 
@@ -941,13 +956,13 @@ module Make = functor(File: S.IO) -> struct
           return None) >>= fun parent ->
       return { filename; handle = fd; header; footer; bat; parent }
 
-    let rec read_sector t sector =
+    let rec get_sector_location t sector =
       let open Int64 in
       if sector lsl sector_shift > t.Vhd.footer.Footer.current_size
-      then fail (Failure (Printf.sprintf "Sector out of bounds: %Ld (current_size = %Ld bytes)" sector t.Vhd.footer.Footer.current_size))
+      then return None (* perhaps elements in the vhd chain have different sizes *)
       else
         let maybe_get_from_parent () = match t.Vhd.footer.Footer.disk_type,t.Vhd.parent with
-          | Disk_type.Differencing_hard_disk,Some vhd2 -> read_sector vhd2 sector
+          | Disk_type.Differencing_hard_disk,Some vhd2 -> get_sector_location vhd2 sector
           | Disk_type.Differencing_hard_disk,None -> fail (Failure "Sector in parent but no parent found!")
           | Disk_type.Dynamic_hard_disk,_ -> return None
           | Disk_type.Fixed_hard_disk,_ -> fail (Failure "Fixed disks are not supported") in
@@ -963,10 +978,16 @@ module Make = functor(File: S.IO) -> struct
           then maybe_get_from_parent ()
           else begin
             let data_sector = (of_int32 t.Vhd.bat.(block_num)) ++ (of_int (Header.sizeof_bitmap t.Vhd.header) lsr sector_shift) ++ sector_in_block in
-            really_read t.Vhd.handle (data_sector lsl sector_shift) sector_size >>= fun data ->
-            return (Some data)
+            return (Some(t, data_sector lsl sector_shift))
           end
         end  
+
+    let read_sector t sector =
+      get_sector_location t sector >>= function
+      | None -> return None
+      | Some (t, offset) ->
+        really_read t.Vhd.handle offset sector_size >>= fun data ->
+        return (Some data)
 
     let write_trailing_footer t =
       let pos = Vhd.get_top_unused_offset t.Vhd.header t.Vhd.bat in
@@ -1031,4 +1052,47 @@ module Make = functor(File: S.IO) -> struct
       end
   end
 
+  type 'a stream =
+    | Cons of 'a * (unit -> 'a stream t)
+    | End
+
+  let rec iter f = function
+    | Cons(x, rest) ->
+      f x >>= fun () ->
+      rest () >>= fun x ->
+      iter f x
+    | End ->
+      return ()
+
+  open Element
+
+  let raw (vhd: File.fd Vhd.t) =
+    let block_size_sectors_shift = vhd.Vhd.header.Header.block_size_sectors_shift in
+    let max_table_entries = Int32.to_int vhd.Vhd.header.Header.max_table_entries in
+    let empty_block = Empty (Int64.shift_left 1L (block_size_sectors_shift + sector_shift)) in
+    let empty_sector = Empty (Int64.shift_left 1L sector_shift) in
+    let rec block i =
+      let next_block () = block (i + 1) in
+      if i = max_table_entries
+      then return End
+      else begin
+        if vhd.Vhd.bat.(i) = BAT.unused
+        then return (Cons(empty_block, next_block))
+        else begin
+          let rec sector j =
+            let next_sector () = sector (j + 1) in
+            if j = 1 lsl block_size_sectors_shift
+            then next_block ()
+            else begin
+              let absolute_sector = Int64.(shift_left (of_int i) (block_size_sectors_shift + j)) in
+              Vhd_IO.get_sector_location vhd absolute_sector >>= function
+              | None ->
+                return (Cons(empty_sector, next_sector))
+              | Some (vhd', offset) ->
+                return (Cons(Copy(vhd', offset, sector_size), next_sector))
+            end in
+          sector 0
+        end
+      end in
+    block 0
 end

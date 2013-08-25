@@ -41,6 +41,10 @@ let main () =
         lwt vhd = Vhd_IO.openfile Sys.argv.(2) in
         Vhd.check_overlapping_blocks vhd;
         Lwt.return ()
+    | "stream" ->
+        lwt vhd = Vhd_IO.openfile Sys.argv.(2) in
+        lwt s = raw vhd in
+        iter (fun x -> Printf.printf "%s\n" (Element.to_string x); return ()) s
     | "makefromfile" ->
 	    let file = Sys.argv.(2) in
 	    lwt filesize = 
