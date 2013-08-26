@@ -26,7 +26,9 @@ let diff () =
 let dynamic_disk_name = "dynamic.vhd"
 
 let test_sizes = [
+(*
   0L;
+*)
   4194304L;
 (*
   Vhd.max_disk_size;
@@ -38,8 +40,27 @@ let check_empty_disk size =
   lwt vhd = Vhd_IO.create_dynamic ~filename:dynamic_disk_name ~size:4194304L () in
   lwt vhd' = Vhd_IO.openfile dynamic_disk_name in
   assert_equal ~printer:Header.to_string vhd.Vhd.header vhd'.Vhd.header;
+  assert_equal ~printer:Footer.to_string vhd.Vhd.footer vhd'.Vhd.footer;
   lwt () = Vhd_IO.close vhd' in
   Vhd_IO.close vhd
+
+(* Look for problems reading and writing to edge-cases *)
+type choice =
+  | First
+  | Last
+
+type position = {
+  block: choice;
+  sector: choice;
+}
+
+let positions = [
+  { block = First; sector = First };
+  { block = First; sector = Last };
+  { block = Last; sector = First };
+  { block = Last; sector = Last }
+]
+
 
 let _ =
   let verbose = ref false in
