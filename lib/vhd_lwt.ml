@@ -56,14 +56,6 @@ module MMAP = struct
     return ()
 end
 
-open Vhd
-
-module Impl = Make(MMAP)
+module Impl = Vhd.Make(MMAP)
 include Impl
 include MMAP
-
-(* FIXME: This function does not do what it says! *)
-let utf16_of_utf8 string =
-  Array.init (String.length string) 
-    (fun c -> int_of_char string.[c])
-
