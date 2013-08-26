@@ -34,28 +34,40 @@ module Fd = struct
     let buf = Lwt_bytes.create n in
     let rec rread fd buf ofs len = 
       lwt n = Lwt_bytes.read fd buf ofs len in
-      if n = 0 then raise End_of_file;
-      if n < len then rread fd buf (ofs + n) (len - n) else return () in
+      match n with
+      | _ when n = len -> return () (* NB it's ok for n = len = 0 *)
+      | 0 -> fail End_of_file
+      | n -> rread fd buf (ofs + n) (len - n) in
     Lwt_mutex.with_lock lock
       (fun () ->
-        lwt _ = Lwt_unix.LargeFile.lseek fd offset Unix.SEEK_SET in
-        lwt () = rread fd buf 0 n in
-        return (Cstruct.of_bigarray buf)
+        try_lwt
+          lwt _ = Lwt_unix.LargeFile.lseek fd offset Unix.SEEK_SET in
+          lwt () = rread fd buf 0 n in
+          return (Cstruct.of_bigarray buf)
+        with End_of_file as e ->
+          Printf.fprintf stderr "really_read offset = %Ld len = %d: End_of_file\n%!" offset n;
+          fail e 
       )
 
-  let really_write { fd; lock } offset (* in file *) buf =
-    let ofs = buf.Cstruct.off in
-    let len = buf.Cstruct.len in
-    let buf = buf.Cstruct.buffer in
+  let really_write { fd; lock } offset (* in file *) buffer =
+    let ofs = buffer.Cstruct.off in
+    let len = buffer.Cstruct.len in
+    let buf = buffer.Cstruct.buffer in
 
     let rec rwrite fd buf ofs len =
       lwt n = Lwt_bytes.write fd buf ofs len in
-      if n = 0 then raise End_of_file;
-      if n < len then rwrite fd buf (ofs + n) (len - n) else return () in
+      match n with
+      | n when n = len -> return () (* NB it's ok for n = len = 0 *)
+      | 0 -> fail End_of_file
+      | n -> rwrite fd buf (ofs + n) (len - n) in
     Lwt_mutex.with_lock lock
       (fun () ->
-        lwt _ = Lwt_unix.LargeFile.lseek fd offset Unix.SEEK_SET in
-        rwrite fd buf ofs len
+        try_lwt
+          lwt _ = Lwt_unix.LargeFile.lseek fd offset Unix.SEEK_SET in
+          rwrite fd buf ofs len
+        with End_of_file as e ->
+          Printf.fprintf stderr "really_write offset = %Ld len = %d: End_of_file\n%!" offset (Cstruct.len buffer);
+          fail e 
       )
 end
 
