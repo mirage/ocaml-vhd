@@ -93,9 +93,10 @@ module Footer: sig
   val default_creator_version: int32
 
   val sizeof : int
-  val marshal : Cstruct.t -> t -> unit
+  val marshal : Cstruct.t -> t -> t
   val unmarshal : Cstruct.t -> (t, exn) Result.t
 
+  val to_string: t -> string
 end
 
 module Platform_code : sig
@@ -232,7 +233,7 @@ module Make : functor (File : S.IO) -> sig
   open File
   module Footer_IO : sig
     val read : File.fd -> int64 -> Footer.t File.t
-    val write : File.fd -> int64 -> Footer.t -> unit File.t
+    val write : File.fd -> int64 -> Footer.t -> Footer.t File.t
   end
   module Parent_locator_IO : sig
     val read : File.fd -> Parent_locator.t -> Parent_locator.t File.t

@@ -293,6 +293,12 @@ module Footer = struct
     saved_state : bool
   }
 
+  let to_string t = Printf.sprintf "{ features = [ %s ]; data_offset = %Lx; time_stamp = %lx; creator_application = %s; creator_version = %lx; creator_host_os = %s; original_size = %Ld; current_size = %Ld; geometry = %s; disk_type = %s; checksum = %ld; uid = %s; saved_state = %b }"
+    (String.concat "; " (List.map Feature.to_string t.features)) t.data_offset t.time_stamp
+    t.creator_application t.creator_version (Host_OS.to_string t.creator_host_os)
+    t.original_size t.current_size (Geometry.to_string t.geometry) (Disk_type.to_string t.disk_type)
+    t.checksum (Uuidm.to_string t.uid) t.saved_state
+
   let magic = "conectix"
 
   let expected_version = 0x00010000l
@@ -364,7 +370,9 @@ module Footer = struct
     for i = 0 to 426 do
       Cstruct.set_uint8 remaining i 0
     done;
-    set_footer_checksum buf (Checksum.of_cstruct (Cstruct.sub buf 0 sizeof))
+    let checksum = Checksum.of_cstruct (Cstruct.sub buf 0 sizeof) in
+    set_footer_checksum buf checksum;
+    { t with checksum }
 
   let unmarshal (buf: Cstruct.t) =
     let open Result in
@@ -404,8 +412,8 @@ module Footer = struct
 
   let compute_checksum t =
     let buf = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout sizeof)) in
-    marshal buf t;
-    get_footer_checksum buf
+    let t = marshal buf t in
+    t.checksum
 end
 
 module Platform_code = struct
@@ -886,8 +894,9 @@ module Make = functor(File: S.IO) -> struct
 
     let write fd pos t =
       let sector = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout Footer.sizeof)) in
-      Footer.marshal sector t;
-      really_write fd pos sector
+      let t = Footer.marshal sector t in
+      really_write fd pos sector >>= fun () ->
+      return t
   end
 
   module Parent_locator_IO = struct
@@ -993,11 +1002,13 @@ module Make = functor(File: S.IO) -> struct
 
     let write_trailing_footer handle t =
       let pos = Vhd.get_top_unused_offset t.Vhd.header t.Vhd.bat in
-      Footer_IO.write handle pos t.Vhd.footer
+      Footer_IO.write handle pos t.Vhd.footer >>= fun _ ->
+      return ()
     
     let write t =
       get_handle t >>= fun handle ->
-      Footer_IO.write handle 0L t.Vhd.footer >>= fun () ->
+      Footer_IO.write handle 0L t.Vhd.footer >>= fun footer ->
+      let t ={ t with Vhd.footer } in
       Header_IO.write handle t.Vhd.footer.Footer.data_offset t.Vhd.header >>= fun header ->
       let t = { t with Vhd.header } in
       BAT_IO.write handle t.Vhd.header t.Vhd.bat >>= fun () ->
