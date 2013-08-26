@@ -241,6 +241,16 @@ module UTF16 = struct
       | 0xfffe -> false, 2, (len / 2 - 1)
       | _      -> true,  0, (len / 2) in
 
+    (* UTF-16 strings end with a \000\000 *)
+    let rec strlen acc i =
+      if i >= max then acc
+      else
+        if Cstruct.BE.get_uint16 buf i = 0
+        then acc
+        else strlen (acc + 1) (i + 1) in
+
+    let max = strlen 0 0 in
+
     let string = Array.create max 0 in
 
     let rec inner ofs n =
