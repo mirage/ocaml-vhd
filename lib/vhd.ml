@@ -930,6 +930,7 @@ module Make = functor(File: S.IO) -> struct
           let open Parent_locator in
           Parent_locator_IO.write fd p >>= fun () ->
           write_parent_locator (n + 1) in
+      really_write fd pos buf >>= fun () ->
       write_parent_locator 0
   end
 

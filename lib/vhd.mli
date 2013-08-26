@@ -239,7 +239,7 @@ module Make : functor (File : S.IO) -> sig
   module Header_IO : sig
     val get_parent_filename : Header.t -> string File.t
     val read : File.fd -> int64 -> Header.t File.t
-    val write : File.fd -> 'a -> Header.t -> unit File.t
+    val write : File.fd -> int64 -> Header.t -> unit File.t
   end
   module BAT_IO : sig
     val read : File.fd -> Header.t -> Cstruct.uint32 array File.t
