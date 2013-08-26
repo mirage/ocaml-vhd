@@ -48,6 +48,7 @@ let _ =
   let suite = "vhd" >:::
     [
       "create" >:: create;
+      "check_empty_disk" >:: (fun () -> Lwt_main.run (check_empty_disk 0L));
     ] in
   run_test_tt ~verbose:!verbose suite
 

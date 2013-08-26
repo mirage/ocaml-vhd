@@ -12,6 +12,7 @@
  * GNU Lesser General Public License for more details.
  *)
 
+open Lwt
 open Vhd
 open Vhd_lwt
 
@@ -41,7 +42,7 @@ let main () =
     | "check" ->
         lwt vhd = Vhd_IO.openfile Sys.argv.(2) in
         Vhd.check_overlapping_blocks vhd;
-        Lwt.return ()
+        return ()
     | "stream" ->
         lwt vhd = Vhd_IO.openfile Sys.argv.(2) in
         lwt s = raw vhd in
