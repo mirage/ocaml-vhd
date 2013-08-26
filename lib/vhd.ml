@@ -206,6 +206,8 @@ module UTF16 = struct
     with e ->
       Result.Error e
 
+  let to_string x = Printf.sprintf "[| %s |]" (String.concat "; " (List.map string_of_int (Array.to_list x)))
+
   let of_ascii string =
     Array.init (String.length string)
       (fun c -> int_of_char string.[c])
@@ -542,6 +544,12 @@ module Header = struct
     parent_unicode_name : int array;
     parent_locators : Parent_locator.t array;
   }
+
+  let to_string t =
+    Printf.sprintf "{ table_offset = %Ld; max_table_entries = %ld; block_size_sectors_shift = %d; checksum = %ld; parent_unique_id = %s; parent_time_stamp = %ld parent_unicode_name = %s; parent_locators = [| %s |]"
+      t.table_offset t.max_table_entries t.block_size_sectors_shift t.checksum
+      (Uuidm.to_string t.parent_unique_id) t.parent_time_stamp (UTF16.to_string t.parent_unicode_name)
+      (String.concat "; " (List.map Parent_locator.to_string (Array.to_list t.parent_locators)))
 
   (* 1 bit per each 512 byte sector within the block *)
   let sizeof_bitmap t = 1 lsl t.block_size_sectors_shift

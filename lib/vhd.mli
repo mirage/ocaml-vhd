@@ -156,6 +156,8 @@ module Header : sig
     (** up to 8 different pointers to the parent disk image *)
   }
 
+  val to_string: t -> string
+
   val compute_checksum: t -> int32
   (** compute the expected checksum value *)
 

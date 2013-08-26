@@ -37,6 +37,7 @@ let test_sizes = [
 let check_empty_disk size =
   lwt vhd = Vhd_IO.create_dynamic ~filename:dynamic_disk_name ~size:4194304L () in
   lwt vhd' = Vhd_IO.openfile dynamic_disk_name in
+  assert_equal ~printer:Header.to_string vhd.Vhd.header vhd'.Vhd.header;
   lwt () = Vhd_IO.close vhd' in
   Vhd_IO.close vhd
 
