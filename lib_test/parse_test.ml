@@ -36,6 +36,8 @@ let test_sizes = [
 (* Create a dynamic disk, stream contents *)
 let check_empty_disk size =
   lwt vhd = Vhd_IO.create_dynamic ~filename:dynamic_disk_name ~size:4194304L () in
+  lwt vhd' = Vhd_IO.openfile dynamic_disk_name in
+  lwt () = Vhd_IO.close vhd' in
   Vhd_IO.close vhd
 
 let _ =
