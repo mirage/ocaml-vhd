@@ -364,7 +364,7 @@ module Footer = struct
     set_footer_sectors buf t.geometry.Geometry.sectors;
     set_footer_disk_type buf (Disk_type.to_int32 t.disk_type);
     set_footer_checksum buf 0l;
-    set_footer_uid (Uuidm.to_string t.uid) 0 buf;
+    set_footer_uid (Uuidm.to_bytes t.uid) 0 buf;
     set_footer_saved_state buf (if t.saved_state then 1 else 0);
     let remaining = Cstruct.shift buf sizeof_footer in
     for i = 0 to 426 do
