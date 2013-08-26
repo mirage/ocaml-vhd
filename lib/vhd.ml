@@ -637,7 +637,9 @@ module Header = struct
     for i = 0 to 255 do
       Cstruct.set_uint8 reserved i 0
     done;
-    set_header_checksum buf (Checksum.of_cstruct (Cstruct.sub buf 0 sizeof))
+    let checksum = Checksum.of_cstruct (Cstruct.sub buf 0 sizeof) in
+    set_header_checksum buf checksum;
+    { t with checksum }
 
   let unmarshal (buf: Cstruct.t) =
     let open Result in
@@ -689,8 +691,8 @@ module Header = struct
 
   let compute_checksum t =
     let buf = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout sizeof)) in
-    marshal buf t;
-    get_header_checksum buf
+    let t = marshal buf t in
+    t.checksum
 end
 
 module BAT = struct
@@ -939,7 +941,7 @@ module Make = functor(File: S.IO) -> struct
 
     let write fd pos t =
       let buf = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout Header.sizeof)) in
-      marshal buf t;
+      let t' = marshal buf t in
       (* Write the parent_locator data *)
       let rec write_parent_locator = function
         | 8 -> return ()
@@ -949,7 +951,8 @@ module Make = functor(File: S.IO) -> struct
           Parent_locator_IO.write fd p >>= fun () ->
           write_parent_locator (n + 1) in
       really_write fd pos buf >>= fun () ->
-      write_parent_locator 0
+      write_parent_locator 0 >>= fun () ->
+      return t'
   end
 
   module BAT_IO = struct
@@ -995,10 +998,12 @@ module Make = functor(File: S.IO) -> struct
     let write t =
       get_handle t >>= fun handle ->
       Footer_IO.write handle 0L t.Vhd.footer >>= fun () ->
-      Header_IO.write handle t.Vhd.footer.Footer.data_offset t.Vhd.header >>= fun () ->
+      Header_IO.write handle t.Vhd.footer.Footer.data_offset t.Vhd.header >>= fun header ->
+      let t = { t with Vhd.header } in
       BAT_IO.write handle t.Vhd.header t.Vhd.bat >>= fun () ->
       (* Assume the data is there, or will be written later *)
-      write_trailing_footer handle t
+      write_trailing_footer handle t >>= fun () ->
+      return t
 
     let blank_uuid = match Uuidm.of_bytes (String.make 16 '\000') with
       | Some x -> x
@@ -1049,7 +1054,7 @@ module Make = functor(File: S.IO) -> struct
       File.create filename >>= fun fd ->
       let handle = ref (Some fd) in
       let t = { filename; handle; header; footer; parent = None; bat } in
-      write t >>= fun () ->
+      write t >>= fun t ->
       return t
 
     let create_difference ~filename ~parent
@@ -1101,7 +1106,7 @@ module Make = functor(File: S.IO) -> struct
       File.create filename >>= fun fd ->
       let handle = ref (Some fd) in
       let t = { filename; handle; header; footer; parent = None; bat } in
-      write t >>= fun () ->
+      write t >>= fun t ->
       return t
 
     let rec openfile filename =

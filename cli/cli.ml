@@ -32,13 +32,12 @@ let main () =
   match Sys.argv.(1) with
     | "create" ->
         lwt vhd = Vhd_IO.create_dynamic ~filename:"test.vhd" ~size:4194304L () in
-        lwt () = Vhd_IO.write vhd in
         let sector = make_sector (int_of_char 'A') in
         Vhd_IO.write_sector vhd 0L sector
     | "creatediff" ->
         lwt parent = Vhd_IO.openfile Sys.argv.(2) in
         lwt vhd = Vhd_IO.create_difference ~filename:"test2.vhd" ~parent () in
-	Vhd_IO.write vhd
+        return ()
     | "check" ->
         lwt vhd = Vhd_IO.openfile Sys.argv.(2) in
         Vhd.check_overlapping_blocks vhd;

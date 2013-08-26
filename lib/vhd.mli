@@ -167,7 +167,7 @@ module Header : sig
 
   val sizeof : int
 
-  val marshal : Cstruct.t -> t -> unit
+  val marshal : Cstruct.t -> t -> t
   val unmarshal : Cstruct.t -> (t, exn) Result.t
 end
 
@@ -241,7 +241,7 @@ module Make : functor (File : S.IO) -> sig
   module Header_IO : sig
     val get_parent_filename : Header.t -> string File.t
     val read : File.fd -> int64 -> Header.t File.t
-    val write : File.fd -> int64 -> Header.t -> unit File.t
+    val write : File.fd -> int64 -> Header.t -> Header.t File.t
   end
   module BAT_IO : sig
     val read : File.fd -> Header.t -> Cstruct.uint32 array File.t
@@ -272,7 +272,7 @@ module Make : functor (File : S.IO) -> sig
     (** [create_difference ~filename ~parent] creates an empty differencing vhd
         with filename [filename] backed by parent [parent]. *)
 
-    val write : handle Vhd.t -> unit t
+    val write : handle Vhd.t -> handle Vhd.t t
     val get_sector_location : handle Vhd.t -> int64 -> (handle Vhd.t * int64) option t
     val read_sector : handle Vhd.t -> int64 -> Cstruct.t option t
     val write_sector : handle Vhd.t -> int64 -> Cstruct.t -> unit t
