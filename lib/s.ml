@@ -257,13 +257,22 @@ module type ASYNC = sig
   val return: 'a -> 'a t
 end
 
+module type TIME = sig
+  val now: unit -> int32
+end
+
 module type IO = sig
   include ASYNC
+  include TIME
 
   type fd
 
   val exists: string -> bool t
   val openfile: string -> fd t
+  val create: string -> fd t
+  val close: fd -> unit t
+  val get_modification_time: string -> int32 t
+
   val really_read: fd -> int64 -> int -> Cstruct.t t
   val really_write: fd -> int64 -> Cstruct.t -> unit t
 end

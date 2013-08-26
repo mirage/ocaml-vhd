@@ -12,6 +12,8 @@
  * GNU Lesser General Public License for more details.
  *)
 open OUnit
+open Vhd
+open Vhd_lwt
 
 let create () =
   let _ = Create_vhd.disk in
@@ -20,6 +22,21 @@ let create () =
 let diff () =
   let _ = Diff_vhd.disk in
   ()
+
+let dynamic_disk_name = "dynamic.vhd"
+
+let test_sizes = [
+  0L;
+  4194304L;
+(*
+  Vhd.max_disk_size;
+*)
+]
+
+(* Create a dynamic disk, stream contents *)
+let check_empty_disk size =
+  lwt vhd = Vhd_IO.create_dynamic ~filename:dynamic_disk_name ~size:4194304L () in
+  Vhd_IO.close vhd
 
 let _ =
   let verbose = ref false in

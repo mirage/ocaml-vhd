@@ -28,6 +28,15 @@ module Int64 = struct
   let ( lsr ) = shift_right_logical
 end
 
+let kib = Int64.(1024L ** 1024L)
+let mib = Int64.(1024L ** kib)
+let gib = Int64.(1024L ** mib)
+let max_disk_size = Int64.(2040L ** gib)
+
+let kib_shift = 10
+let mib_shift = 20
+let gib_shift = 30
+
 module Feature = struct
   type t = 
     | Temporary
@@ -103,6 +112,8 @@ module Geometry = struct
 
   (* from the Appendix 'CHS calculation' *)
   let of_sectors sectors =
+    (* TODO: switch this to int64 *)
+    let sectors = Int64.to_int sectors in
     let max_secs = 65535*255*16 in
     let secs = min max_secs sectors in
 
@@ -194,6 +205,12 @@ module UTF16 = struct
       Result.Ok (String.concat "" (List.map (fun c -> Printf.sprintf "%c" c) (List.flatten (List.map utf8_chars_of_int (Array.to_list s)))))
     with e ->
       Result.Error e
+
+  let of_ascii string =
+    Array.init (String.length string)
+      (fun c -> int_of_char string.[c])
+
+  let of_utf8 = of_ascii (* FIXME (obviously) *)
 
   let marshal (buf: Cstruct.t) t =
     let rec inner ofs n =
@@ -942,6 +959,132 @@ module Make = functor(File: S.IO) -> struct
   module Vhd_IO = struct
     open Vhd
 
+    (* We track whether the underlying file has been closed, to avoid
+       a 'use after free' style bug *)
+    type handle = File.fd option ref
+
+    exception Closed
+
+    let get_handle t = match !(t.Vhd.handle) with
+      | Some x -> return x
+      | None -> fail Closed
+
+    let write_trailing_footer handle t =
+      let pos = Vhd.get_top_unused_offset t.Vhd.header t.Vhd.bat in
+      Footer_IO.write handle pos t.Vhd.footer
+    
+    let write t =
+      get_handle t >>= fun handle ->
+      Footer_IO.write handle 0L t.Vhd.footer >>= fun () ->
+      Header_IO.write handle t.Vhd.footer.Footer.data_offset t.Vhd.header >>= fun () ->
+      BAT_IO.write handle t.Vhd.header t.Vhd.bat >>= fun () ->
+      (* Assume the data is there, or will be written later *)
+      write_trailing_footer handle t
+
+    let blank_uuid = match Uuidm.of_bytes (String.make 16 '\000') with
+      | Some x -> x
+      | None -> assert false (* never happens *)
+
+    let create_dynamic ~filename ~size
+      ?(uuid = Uuidm.create `V4)
+      ?(saved_state=false)
+      ?(features=[]) () =
+
+      (* The physical disk layout will be:
+         byte 0   - 511:  backup footer
+         byte 512 - 1535: file header
+         ... empty sector-- this is where we'll put the parent locator
+         byte 2048 - ...: BAT *)
+
+      (* Use the default 2 MiB block size *)
+      let block_size_sectors_shift = Header.default_block_size_sectors_shift in
+
+      let data_offset = 512L in
+      let table_offset = 2048L in
+
+      let open Int64 in
+      (* Round the size up to the nearest 2 MiB block *)
+      let size = ((size ++ mib ++ mib -- 1L) lsr mib_shift) lsl mib_shift in
+
+      let geometry = Geometry.of_sectors (size lsr sector_shift) in
+      let creator_application = Footer.default_creator_application in
+      let creator_version = Footer.default_creator_version in
+      let footer = {
+        Footer.features; data_offset; time_stamp = 0l; creator_application; creator_version;
+        creator_host_os = Host_OS.Other 0l; original_size = size; current_size = size;
+        geometry; disk_type = Disk_type.Dynamic_hard_disk;
+        checksum = 0l; (* Filled in later *)
+        uid = uuid; saved_state;
+      } in
+      let header = {
+        Header.table_offset;
+        max_table_entries = to_int32 (size lsr (block_size_sectors_shift + sector_shift));
+        block_size_sectors_shift;
+        checksum = 0l;
+        parent_unique_id = blank_uuid;
+        parent_time_stamp = 0l;
+        parent_unicode_name = [| |];
+        parent_locators = Array.make 8 Parent_locator.null
+      } in
+      let bat = Array.make (Int32.to_int header.Header.max_table_entries) (BAT.unused) in
+      File.create filename >>= fun fd ->
+      let handle = ref (Some fd) in
+      let t = { filename; handle; header; footer; parent = None; bat } in
+      write t >>= fun () ->
+      return t
+
+    let create_difference ~filename ~parent
+      ?(uuid=Uuidm.create `V4)
+      ?(saved_state=false)
+      ?(features=[]) () =
+
+      (* We use the same basic file layout as in create_dynamic *)
+
+      let data_offset = 512L in
+      let table_offset = 2048L in
+      let creator_application = Footer.default_creator_application in
+      let creator_version = Footer.default_creator_version in
+      let footer = {
+        Footer.features; data_offset;
+        time_stamp = File.now ();
+        creator_application; creator_version;
+        creator_host_os = Host_OS.Other 0l;
+        original_size = parent.Vhd.footer.Footer.current_size;
+        current_size = parent.Vhd.footer.Footer.current_size;
+        geometry = parent.Vhd.footer.Footer.geometry;
+        disk_type = Disk_type.Differencing_hard_disk;
+        checksum = 0l; uid = uuid; saved_state = saved_state; } in
+      let locator0 = 
+        let uri = "file://./" ^ parent.Vhd.filename in
+        let platform_data = Cstruct.create (String.length uri) in
+        Cstruct.blit_from_string uri 0 platform_data 0 (String.length uri);
+        {
+          Parent_locator.platform_code = Platform_code.MacX;
+          platform_data_space = 1l;
+          platform_data_space_original=1l;
+          platform_data_length = Int32.of_int (String.length uri);
+          platform_data_offset = 1536L;
+          platform_data;
+        } in
+      File.get_modification_time parent.Vhd.filename >>= fun parent_time_stamp ->
+      let header = {
+        Header.table_offset;
+        max_table_entries = parent.Vhd.header.Header.max_table_entries;
+        block_size_sectors_shift = parent.Vhd.header.Header.block_size_sectors_shift;
+        checksum = 0l;
+        parent_unique_id = parent.Vhd.footer.Footer.uid;
+        parent_time_stamp;
+        parent_unicode_name = UTF16.of_utf8 parent.Vhd.filename;
+        parent_locators = [| locator0; Parent_locator.null; Parent_locator.null; Parent_locator.null;
+                             Parent_locator.null; Parent_locator.null; Parent_locator.null; Parent_locator.null; |];
+      } in
+      let bat = Array.make (Int32.to_int header.Header.max_table_entries) (BAT.unused) in
+      File.create filename >>= fun fd ->
+      let handle = ref (Some fd) in
+      let t = { filename; handle; header; footer; parent = None; bat } in
+      write t >>= fun () ->
+      return t
+
     let rec openfile filename =
       File.openfile filename >>= fun fd ->
       Footer_IO.read fd 0L >>= fun footer ->
@@ -954,15 +1097,27 @@ module Make = functor(File: S.IO) -> struct
           return (Some p)
         | _ ->
           return None) >>= fun parent ->
-      return { filename; handle = fd; header; footer; bat; parent }
+      let handle = ref (Some fd) in
+      return { filename; handle; header; footer; bat; parent }
 
-    let rec get_sector_location t sector =
+    let close t =
+      (* This is where we could repair the footer if we have chosen not to
+         update it for speed. *)
+      match !(t.Vhd.handle) with
+      | Some x ->
+        File.close x >>= fun () ->
+        t.Vhd.handle := None;
+        return ()
+      | None ->
+        return ()
+
+    let rec get_sector_location' handle t sector =
       let open Int64 in
       if sector lsl sector_shift > t.Vhd.footer.Footer.current_size
       then return None (* perhaps elements in the vhd chain have different sizes *)
       else
         let maybe_get_from_parent () = match t.Vhd.footer.Footer.disk_type,t.Vhd.parent with
-          | Disk_type.Differencing_hard_disk,Some vhd2 -> get_sector_location vhd2 sector
+          | Disk_type.Differencing_hard_disk,Some vhd2 -> get_sector_location' handle vhd2 sector
           | Disk_type.Differencing_hard_disk,None -> fail (Failure "Sector in parent but no parent found!")
           | Disk_type.Dynamic_hard_disk,_ -> return None
           | Disk_type.Fixed_hard_disk,_ -> fail (Failure "Fixed disks are not supported") in
@@ -973,7 +1128,7 @@ module Make = functor(File: S.IO) -> struct
         if t.Vhd.bat.(block_num) = BAT.unused
         then maybe_get_from_parent ()
         else begin
-          Bitmap_IO.read t.Vhd.handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
+          Bitmap_IO.read handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
           if t.Vhd.footer.Footer.disk_type = Disk_type.Differencing_hard_disk && (not (Bitmap.get bitmap sector_in_block))
           then maybe_get_from_parent ()
           else begin
@@ -982,25 +1137,19 @@ module Make = functor(File: S.IO) -> struct
           end
         end  
 
+    let get_sector_location t sector =
+      get_handle t >>= fun handle ->
+      get_sector_location' handle t sector
+
     let read_sector t sector =
-      get_sector_location t sector >>= function
+      get_handle t >>= fun handle ->
+      get_sector_location' handle t sector >>= function
       | None -> return None
       | Some (t, offset) ->
-        really_read t.Vhd.handle offset sector_size >>= fun data ->
+        really_read handle offset sector_size >>= fun data ->
         return (Some data)
 
-    let write_trailing_footer t =
-      let pos = Vhd.get_top_unused_offset t.Vhd.header t.Vhd.bat in
-      Footer_IO.write t.Vhd.handle pos t.Vhd.footer
-    
-    let write t =
-      Footer_IO.write t.Vhd.handle 0L t.Vhd.footer >>= fun () ->
-      Header_IO.write t.Vhd.handle t.Vhd.footer.Footer.data_offset t.Vhd.header >>= fun () ->
-      BAT_IO.write t.Vhd.handle t.Vhd.header t.Vhd.bat >>= fun () ->
-      (* Assume the data is there, or will be written later *)
-      write_trailing_footer t
-
-    let write_zero_block t block_num =
+    let write_zero_block handle t block_num =
       let block_size_in_sectors = 1 lsl t.Vhd.header.Header.block_size_sectors_shift in
       let open Int64 in
       let bitmap_size = Header.sizeof_bitmap t.Vhd.header in
@@ -1010,7 +1159,7 @@ module Make = functor(File: S.IO) -> struct
       for i = 0 to bitmap_size - 1 do
         Cstruct.set_uint8 bitmap i 0
       done;
-      really_write t.Vhd.handle (bitmap_sector lsl sector_shift) bitmap >>= fun () ->
+      really_write handle (bitmap_sector lsl sector_shift) bitmap >>= fun () ->
 
       let sector = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout 512)) in
       for i = 0 to 511 do
@@ -1021,11 +1170,12 @@ module Make = functor(File: S.IO) -> struct
         then return ()
         else
           let pos = (bitmap_sector lsl sector_shift) ++ (of_int bitmap_size) ++ (of_int (sector_size * n)) in
-          really_write t.Vhd.handle pos sector >>= fun () ->
+          really_write handle pos sector >>= fun () ->
           loop (n + 1) in
       loop 0
 
     let write_sector t sector data =
+      get_handle t >>= fun handle ->
       let block_size_in_sectors = 1 lsl t.Vhd.header.Header.block_size_sectors_shift in
       let open Int64 in
 
@@ -1035,17 +1185,17 @@ module Make = functor(File: S.IO) -> struct
       let update_sector bitmap_sector =
         let bitmap_sector = of_int32 bitmap_sector in
         let data_sector = bitmap_sector ++ (of_int (Header.sizeof_bitmap t.Vhd.header)) ++ sector_in_block in
-        Bitmap_IO.read t.Vhd.handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
-        really_write t.Vhd.handle (data_sector lsl sector_shift) data >>= fun () ->
+        Bitmap_IO.read handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
+        really_write handle (data_sector lsl sector_shift) data >>= fun () ->
         match Bitmap.set bitmap sector_in_block with
         | None -> return ()
-        | Some (offset, buf) -> really_write t.Vhd.handle ((bitmap_sector lsl sector_shift) ++ offset) buf in
+        | Some (offset, buf) -> really_write handle ((bitmap_sector lsl sector_shift) ++ offset) buf in
 
       if t.Vhd.bat.(block_num) = BAT.unused then begin
         t.Vhd.bat.(block_num) <- Vhd.get_free_sector t.Vhd.header t.Vhd.bat;
-        write_zero_block t block_num >>= fun () ->
-        BAT_IO.write t.Vhd.handle t.Vhd.header t.Vhd.bat >>= fun () ->
-        write_trailing_footer t >>= fun () ->
+        write_zero_block handle t block_num >>= fun () ->
+        BAT_IO.write handle t.Vhd.header t.Vhd.bat >>= fun () ->
+        write_trailing_footer handle t >>= fun () ->
         update_sector t.Vhd.bat.(block_num)
       end else begin
         update_sector t.Vhd.bat.(block_num)
@@ -1066,7 +1216,8 @@ module Make = functor(File: S.IO) -> struct
 
   open Element
 
-  let raw (vhd: File.fd Vhd.t) =
+  let raw (vhd: Vhd_IO.handle Vhd.t) =
+    Vhd_IO.get_handle vhd >>= fun handle ->
     let block_size_sectors_shift = vhd.Vhd.header.Header.block_size_sectors_shift in
     let max_table_entries = Int32.to_int vhd.Vhd.header.Header.max_table_entries in
     let empty_block = Empty (Int64.shift_left 1L (block_size_sectors_shift + sector_shift)) in
@@ -1085,7 +1236,7 @@ module Make = functor(File: S.IO) -> struct
             then next_block ()
             else begin
               let absolute_sector = Int64.(shift_left (of_int i) (block_size_sectors_shift + j)) in
-              Vhd_IO.get_sector_location vhd absolute_sector >>= function
+              Vhd_IO.get_sector_location' handle vhd absolute_sector >>= function
               | None ->
                 return (Cons(empty_sector, next_sector))
               | Some (vhd', offset) ->

@@ -15,6 +15,9 @@
 val sector_size: int
 val sector_shift: int
 
+val max_disk_size: int64
+(** Maximum size of a dynamic disk in bytes *)
+
 module Feature: sig
   type t = 
     | Temporary (** A temporary disk is a candidate for deletion on shutdown *)
@@ -52,7 +55,7 @@ module Geometry: sig
 
   val to_string : t -> string
 
-  val of_sectors : int -> t
+  val of_sectors : int64 -> t
 end
 
 module Footer: sig
@@ -224,6 +227,7 @@ module Element : sig
 end
 
 module Make : functor (File : S.IO) -> sig
+  open File
   module Footer_IO : sig
     val read : File.fd -> int64 -> Footer.t File.t
     val write : File.fd -> int64 -> Footer.t -> unit File.t
@@ -245,21 +249,39 @@ module Make : functor (File : S.IO) -> sig
     val read : File.fd -> Header.t -> BAT.t -> int -> Bitmap.t File.t
   end
   module Vhd_IO : sig
-    val openfile : string -> File.fd Vhd.t File.t
-    val write : File.fd Vhd.t -> unit File.t
-    val get_sector_location : File.fd Vhd.t -> int64 -> (File.fd Vhd.t * int64) option File.t
-    val read_sector :
-      File.fd Vhd.t -> int64 -> Cstruct.t option File.t
-    val write_sector :
-      File.fd Vhd.t -> int64 -> Cstruct.t -> unit File.t
+    type handle
+
+    val openfile : string -> handle Vhd.t t
+    val close : handle Vhd.t -> unit t
+
+    val create_dynamic: filename:string -> size:int64
+      -> ?uuid:Uuidm.t
+      -> ?saved_state:bool
+      -> ?features:Feature.t list
+      -> unit -> handle Vhd.t t
+    (** [create_dynamic ~filename ~size] creates an empty dynamic vhd with
+        virtual size [size] bytes and filename [filename]. *)
+
+    val create_difference: filename:string -> parent:handle Vhd.t
+      -> ?uuid:Uuidm.t
+      -> ?saved_state:bool
+      -> ?features:Feature.t list
+      -> unit -> handle Vhd.t t
+    (** [create_difference ~filename ~parent] creates an empty differencing vhd
+        with filename [filename] backed by parent [parent]. *)
+
+    val write : handle Vhd.t -> unit t
+    val get_sector_location : handle Vhd.t -> int64 -> (handle Vhd.t * int64) option t
+    val read_sector : handle Vhd.t -> int64 -> Cstruct.t option t
+    val write_sector : handle Vhd.t -> int64 -> Cstruct.t -> unit t
   end
 
   type 'a stream =
-    | Cons of 'a * (unit -> 'a stream File.t)
+    | Cons of 'a * (unit -> 'a stream t)
     | End
 
-  val iter: ('a -> unit File.t) -> 'a stream -> unit File.t
+  val iter: ('a -> unit t) -> 'a stream -> unit t
 
-  val raw: File.fd Vhd.t -> File.fd Element.t stream File.t
+  val raw: Vhd_IO.handle Vhd.t -> Vhd_IO.handle Element.t stream File.t
 
 end

@@ -30,12 +30,13 @@ let round_up_to_2mb_block size =
 let main () =
   match Sys.argv.(1) with
     | "create" ->
-        lwt vhd = create_new_dynamic "test.vhd" 4194304L (Uuidm.create `V4) () in
+        lwt vhd = Vhd_IO.create_dynamic ~filename:"test.vhd" ~size:4194304L () in
         lwt () = Vhd_IO.write vhd in
         let sector = make_sector (int_of_char 'A') in
         Vhd_IO.write_sector vhd 0L sector
     | "creatediff" ->
-        lwt vhd = create_new_difference "test2.vhd" Sys.argv.(2) (Uuidm.create `V4) () in
+        lwt parent = Vhd_IO.openfile Sys.argv.(2) in
+        lwt vhd = Vhd_IO.create_difference ~filename:"test2.vhd" ~parent () in
 	Vhd_IO.write vhd
     | "check" ->
         lwt vhd = Vhd_IO.openfile Sys.argv.(2) in
@@ -45,6 +46,7 @@ let main () =
         lwt vhd = Vhd_IO.openfile Sys.argv.(2) in
         lwt s = raw vhd in
         iter (fun x -> Printf.printf "%s\n" (Element.to_string x); return ()) s
+(*
     | "makefromfile" ->
 	    let file = Sys.argv.(2) in
 	    lwt filesize = 
@@ -82,6 +84,7 @@ let main () =
         in
         lwt () = doit 0L in 
         Lwt.return ()
+*)
    | _ -> Printf.fprintf stderr "Unknown command";
 		Lwt.return ()
 
