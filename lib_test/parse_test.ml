@@ -41,6 +41,7 @@ let check_empty_disk size =
   lwt vhd' = Vhd_IO.openfile dynamic_disk_name in
   assert_equal ~printer:Header.to_string vhd.Vhd.header vhd'.Vhd.header;
   assert_equal ~printer:Footer.to_string vhd.Vhd.footer vhd'.Vhd.footer;
+  assert_equal ~printer:BAT.to_string vhd.Vhd.bat vhd'.Vhd.bat;
   lwt () = Vhd_IO.close vhd' in
   Vhd_IO.close vhd
 
@@ -60,6 +61,16 @@ let positions = [
   { block = Last; sector = First };
   { block = Last; sector = Last }
 ]
+
+(* Check everything still works with a simple chain *)
+
+(* ... with all data in the parent *)
+
+(* ... with all data in the leaf *)
+
+(* ... with data overwritten in the leaf *)
+
+(* ... and all of that again with a larger leaf *)
 
 
 let _ =

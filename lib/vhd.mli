@@ -177,6 +177,8 @@ module BAT : sig
   (** Absolute sector offset of a data block, where a data block contains
       a sector bitmap and then data *)
 
+  val to_string : t -> string
+
   val unused : int32
   (** An 'unused' BAT entry indicates no block is present *)
 

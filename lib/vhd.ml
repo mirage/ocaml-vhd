@@ -708,6 +708,10 @@ module BAT = struct
 
   let unused = 0xffffffffl
 
+  let to_string t =
+    let _, used = Array.fold_left (fun (i, acc) x -> i + 1, (if x = unused then acc else (i, x) :: acc)) (0, []) t in
+    Printf.sprintf "[ %s ]" (String.concat "; " (List.map (fun (i, x) -> Printf.sprintf "(%d, %lx)" i x) (List.rev used)))
+
   let sizeof (header: Header.t) =
     let size_needed = Int32.to_int header.Header.max_table_entries * 4 in
     (* The BAT is always extended to a sector boundary *)
