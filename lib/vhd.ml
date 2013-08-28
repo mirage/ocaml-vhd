@@ -712,15 +712,17 @@ module BAT = struct
     let _, used = Array.fold_left (fun (i, acc) x -> i + 1, (if x = unused then acc else (i, x) :: acc)) (0, []) t in
     Printf.sprintf "[ %s ]" (String.concat "; " (List.map (fun (i, x) -> Printf.sprintf "(%d, %lx)" i x) (List.rev used)))
 
-  let sizeof (header: Header.t) =
+  let sizeof_bytes (header: Header.t) =
     let size_needed = Int32.to_int header.Header.max_table_entries * 4 in
     (* The BAT is always extended to a sector boundary *)
     ((size_needed + sector_size - 1) lsr sector_shift) lsl sector_shift
 
+  let sizeof (header: Header.t) = sizeof_bytes header / 4
+
   let unmarshal (buf: Cstruct.t) (header: Header.t) =
     let t = Array.create (sizeof header) unused in
     for i = 0 to Int32.to_int header.Header.max_table_entries - 1 do
-      t.(i) <- Cstruct.BE.get_uint32 buf (i * 4)
+      t.(i) <- Cstruct.BE.get_uint32 buf i
     done;
     t
 
@@ -972,11 +974,11 @@ module Make = functor(File: S.IO) -> struct
     open BAT
 
     let read fd (header: Header.t) =
-      really_read fd header.Header.table_offset (sizeof header) >>= fun buf ->
+      really_read fd header.Header.table_offset (sizeof_bytes header) >>= fun buf ->
       return (unmarshal buf header)
 
     let write fd (header: Header.t) t =
-      let buf = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout (sizeof header))) in
+      let buf = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout (sizeof_bytes header))) in
       marshal buf t;
       really_write fd header.Header.table_offset buf
   end
@@ -1065,7 +1067,7 @@ module Make = functor(File: S.IO) -> struct
         parent_unicode_name = [| |];
         parent_locators = Array.make 8 Parent_locator.null
       } in
-      let bat = Array.make (Int32.to_int header.Header.max_table_entries) (BAT.unused) in
+      let bat = Array.make (BAT.sizeof header) BAT.unused in
       File.create filename >>= fun fd ->
       let handle = ref (Some fd) in
       let t = { filename; handle; header; footer; parent = None; bat } in
