@@ -12,6 +12,7 @@
  * GNU Lesser General Public License for more details.
  *)
 open OUnit
+open Lwt
 open Vhd
 open Vhd_lwt
 
@@ -62,6 +63,54 @@ let positions = [
   { block = Last; sector = Last }
 ]
 
+let nonzero_sector =
+  let b = Cstruct.create 512 in
+  let pattern = "This is a sector which contains simple data.\n" in
+  for i = 0 to 511 do
+    Cstruct.set_char b i (pattern.[i mod (String.length pattern)])
+  done;
+  b
+
+let absolute_sector_of vhd { block; sector } =
+  let block = match block with
+  | First -> 0l
+  | Last -> Int32.sub vhd.Vhd.header.Header.max_table_entries 1l in
+  let sectors_per_block = 1 lsl vhd.Vhd.header.Header.block_size_sectors_shift in
+  let relative_sector = match sector with
+  | First -> 0
+  | Last -> sectors_per_block - 1 in
+  Int64.(add(mul (of_int32 block) (of_int sectors_per_block)) (of_int relative_sector))
+
+let write_sector vhd p =
+  let sector = absolute_sector_of vhd p in
+  Vhd_IO.write_sector vhd sector nonzero_sector
+
+let cstruct_equal a b =
+  let check_contents a b =
+    try
+      for i = 0 to Cstruct.len a - 1 do
+        if Cstruct.get_char a i <> (Cstruct.get_char b i)
+        then failwith "argh"
+      done;
+      true
+    with _ -> false in
+  (Cstruct.len a = (Cstruct.len b)) && (check_contents a b)
+
+let cstruct_to_string c = String.escaped (Cstruct.to_string c)
+
+(* Check writing and then reading back works *)
+let check_read_write size p =
+  lwt vhd = Vhd_IO.create_dynamic ~filename:dynamic_disk_name ~size () in
+  let sector = absolute_sector_of vhd p in
+  lwt () = Vhd_IO.write_sector vhd sector nonzero_sector in
+  lwt x = Vhd_IO.read_sector vhd sector in
+  ( match x with
+    | None -> failwith "read after write failed"
+    | Some x ->
+      assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal nonzero_sector x );
+  return ()
+  
+
 (* Check everything still works with a simple chain *)
 
 (* ... with all data in the parent *)
@@ -84,6 +133,7 @@ let _ =
     [
       "create" >:: create;
       "check_empty_disk" >:: (fun () -> Lwt_main.run (check_empty_disk 0L));
+      "check_read_write" >:: (fun () -> Lwt_main.run (check_read_write 4194304L { block = First; sector = First }));
     ] in
   run_test_tt ~verbose:!verbose suite
 
