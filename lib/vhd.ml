@@ -570,7 +570,7 @@ module Header = struct
       (String.concat "; " (List.map Parent_locator.to_string (Array.to_list t.parent_locators)))
 
   (* 1 bit per each 512 byte sector within the block *)
-  let sizeof_bitmap t = 1 lsl t.block_size_sectors_shift
+  let sizeof_bitmap t = 1 lsl (t.block_size_sectors_shift - 3)
 
   let magic = "cxsparse"
 
@@ -1222,10 +1222,9 @@ module Make = functor(File: S.IO) -> struct
 
       let block_num = to_int (sector lsr t.Vhd.header.Header.block_size_sectors_shift) in
       let sector_in_block = rem sector (of_int block_size_in_sectors) in
-
       let update_sector bitmap_sector =
         let bitmap_sector = of_int32 bitmap_sector in
-        let data_sector = bitmap_sector ++ (of_int (Header.sizeof_bitmap t.Vhd.header)) ++ sector_in_block in
+        let data_sector = bitmap_sector ++ (of_int (Header.sizeof_bitmap t.Vhd.header) lsr sector_shift) ++ sector_in_block in
         Bitmap_IO.read handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
         really_write handle (data_sector lsl sector_shift) data >>= fun () ->
         match Bitmap.set bitmap sector_in_block with
