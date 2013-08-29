@@ -24,9 +24,9 @@ let diff () =
   let _ = Diff_vhd.disk in
   ()
 
-let dynamic_disk_name = "dynamic.vhd"
+let dynamic_disk_name = "/tmp/dynamic.vhd"
 
-let test_sizes = [
+let sizes = [
 (*
   0L;
 *)
@@ -50,6 +50,10 @@ let check_empty_disk size =
 type choice =
   | First
   | Last
+
+let string_of_choice = function
+  | First -> "first"
+  | Last -> "last"
 
 type position = {
   block: choice;
@@ -122,6 +126,10 @@ let check_read_write size p =
 (* ... and all of that again with a larger leaf *)
 
 
+let rec allpairs xs ys = match xs with
+  | [] -> []
+  | x :: xs -> List.map (fun y -> x, y) ys @ (allpairs xs ys)
+
 let _ =
   let verbose = ref false in
   Arg.parse [
@@ -129,11 +137,14 @@ let _ =
   ] (fun x -> Printf.fprintf stderr "Ignoring argument: %s" x)
     "Test vhd parser";
 
+  let check_read_write (size, p) =
+    Printf.sprintf "check_read_write_%Ld_%s_%s" size (string_of_choice p.block) (string_of_choice p.sector)
+    >:: (fun () -> Lwt_main.run (check_read_write size p)) in
+
   let suite = "vhd" >:::
     [
       "create" >:: create;
       "check_empty_disk" >:: (fun () -> Lwt_main.run (check_empty_disk 0L));
-      "check_read_write" >:: (fun () -> Lwt_main.run (check_read_write 4194304L { block = First; sector = First }));
-    ] in
+    ] @ (List.map check_read_write (allpairs sizes positions)) in
   run_test_tt ~verbose:!verbose suite
 
