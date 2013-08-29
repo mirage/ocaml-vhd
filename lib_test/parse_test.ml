@@ -27,18 +27,14 @@ let diff () =
 let dynamic_disk_name = "/tmp/dynamic.vhd"
 
 let sizes = [
-(*
   0L;
-*)
   4194304L;
-(*
-  Vhd.max_disk_size;
-*)
+  max_disk_size;
 ]
 
 (* Create a dynamic disk, stream contents *)
 let check_empty_disk size =
-  lwt vhd = Vhd_IO.create_dynamic ~filename:dynamic_disk_name ~size:4194304L () in
+  lwt vhd = Vhd_IO.create_dynamic ~filename:dynamic_disk_name ~size () in
   lwt vhd' = Vhd_IO.openfile dynamic_disk_name in
   assert_equal ~printer:Header.to_string vhd.Vhd.header vhd'.Vhd.header;
   assert_equal ~printer:Footer.to_string vhd.Vhd.footer vhd'.Vhd.footer;
@@ -112,7 +108,7 @@ let check_read_write size p =
     | None -> failwith "read after write failed"
     | Some x ->
       assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal nonzero_sector x );
-  return ()
+  Vhd_IO.close vhd
   
 
 (* Check everything still works with a simple chain *)
@@ -140,11 +136,14 @@ let _ =
   let check_read_write (size, p) =
     Printf.sprintf "check_read_write_%Ld_%s_%s" size (string_of_choice p.block) (string_of_choice p.sector)
     >:: (fun () -> Lwt_main.run (check_read_write size p)) in
+  let check_empty_disk size =
+    Printf.sprintf "check_empty_disk_%Ld" size
+    >:: (fun () -> Lwt_main.run (check_empty_disk size)) in
 
   let suite = "vhd" >:::
     [
       "create" >:: create;
-      "check_empty_disk" >:: (fun () -> Lwt_main.run (check_empty_disk 0L));
-    ] @ (List.map check_read_write (allpairs sizes positions)) in
+    ] @ (List.map check_empty_disk sizes)
+      @ (List.map check_read_write (allpairs sizes positions)) in
   run_test_tt ~verbose:!verbose suite
 
