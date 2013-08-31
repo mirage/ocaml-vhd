@@ -18,6 +18,8 @@
 let sector_size = 512
 let sector_shift = 9
 
+exception Invalid_sector of int64 * int64
+
 module Int64 = struct
   include Int64
   let ( ++ ) = add
@@ -1183,7 +1185,10 @@ module Make = functor(File: S.IO) -> struct
 
     let read_sector t sector =
       get_handle t >>= fun handle ->
-      get_sector_location' handle t sector >>= function
+      let open Int64 in
+      if sector < 0L || (sector lsl sector_shift >= t.Vhd.footer.Footer.current_size)
+      then fail (Invalid_sector(sector, t.Vhd.footer.Footer.current_size lsr sector_shift))
+      else get_sector_location' handle t sector >>= function
       | None -> return None
       | Some (t, offset) ->
         really_read handle offset sector_size >>= fun data ->
@@ -1218,27 +1223,30 @@ module Make = functor(File: S.IO) -> struct
       get_handle t >>= fun handle ->
       let block_size_in_sectors = 1 lsl t.Vhd.header.Header.block_size_sectors_shift in
       let open Int64 in
+      if sector < 0L || (sector lsl sector_shift >= t.Vhd.footer.Footer.current_size)
+      then fail (Invalid_sector(sector, t.Vhd.footer.Footer.current_size lsr sector_shift))
+      else
+        let block_num = to_int (sector lsr t.Vhd.header.Header.block_size_sectors_shift) in
+        assert (block_num < (Array.length t.Vhd.bat));
+        let sector_in_block = rem sector (of_int block_size_in_sectors) in
+        let update_sector bitmap_sector =
+          let bitmap_sector = of_int32 bitmap_sector in
+          let data_sector = bitmap_sector ++ (of_int (Header.sizeof_bitmap t.Vhd.header) lsr sector_shift) ++ sector_in_block in
+          Bitmap_IO.read handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
+          really_write handle (data_sector lsl sector_shift) data >>= fun () ->
+          match Bitmap.set bitmap sector_in_block with
+          | None -> return ()
+          | Some (offset, buf) -> really_write handle ((bitmap_sector lsl sector_shift) ++ offset) buf in
 
-      let block_num = to_int (sector lsr t.Vhd.header.Header.block_size_sectors_shift) in
-      let sector_in_block = rem sector (of_int block_size_in_sectors) in
-      let update_sector bitmap_sector =
-        let bitmap_sector = of_int32 bitmap_sector in
-        let data_sector = bitmap_sector ++ (of_int (Header.sizeof_bitmap t.Vhd.header) lsr sector_shift) ++ sector_in_block in
-        Bitmap_IO.read handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
-        really_write handle (data_sector lsl sector_shift) data >>= fun () ->
-        match Bitmap.set bitmap sector_in_block with
-        | None -> return ()
-        | Some (offset, buf) -> really_write handle ((bitmap_sector lsl sector_shift) ++ offset) buf in
-
-      if t.Vhd.bat.(block_num) = BAT.unused then begin
-        t.Vhd.bat.(block_num) <- Vhd.get_free_sector t.Vhd.header t.Vhd.bat;
-        write_zero_block handle t block_num >>= fun () ->
-        BAT_IO.write handle t.Vhd.header t.Vhd.bat >>= fun () ->
-        write_trailing_footer handle t >>= fun () ->
-        update_sector t.Vhd.bat.(block_num)
-      end else begin
-        update_sector t.Vhd.bat.(block_num)
-      end
+        if t.Vhd.bat.(block_num) = BAT.unused then begin
+          t.Vhd.bat.(block_num) <- Vhd.get_free_sector t.Vhd.header t.Vhd.bat;
+          write_zero_block handle t block_num >>= fun () ->
+          BAT_IO.write handle t.Vhd.header t.Vhd.bat >>= fun () ->
+          write_trailing_footer handle t >>= fun () ->
+          update_sector t.Vhd.bat.(block_num)
+        end else begin
+          update_sector t.Vhd.bat.(block_num)
+        end
   end
 
   type 'a stream =

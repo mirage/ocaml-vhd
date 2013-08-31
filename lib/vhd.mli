@@ -15,6 +15,9 @@
 val sector_size: int
 val sector_shift: int
 
+exception Invalid_sector of int64 (* request *) * int64 (* maximum *)
+(** An attempt to access (read/write) an invalid sector *)
+
 val max_disk_size: int64
 (** Maximum size of a dynamic disk in bytes *)
 
