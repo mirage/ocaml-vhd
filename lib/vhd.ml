@@ -112,38 +112,37 @@ module Geometry = struct
 
   (* from the Appendix 'CHS calculation' *)
   let of_sectors sectors =
-    (* TODO: switch this to int64 *)
-    let sectors = Int64.to_int sectors in
-    let max_secs = 65535*255*16 in
+    let open Int64 in
+    let max_secs = 65535L ** 255L ** 16L in
     let secs = min max_secs sectors in
 
-    let secs_per_track = ref 0 in
-    let heads = ref 0 in
-    let cyls_times_heads = ref 0 in
+    let secs_per_track = ref 0L in
+    let heads = ref 0L in
+    let cyls_times_heads = ref 0L in
   
-    if secs > 65535*63*16 then begin
-      secs_per_track := 255;
-      heads := 16;
-      cyls_times_heads := secs / !secs_per_track;
+    if secs > 65535L ** 63L ** 16L then begin
+      secs_per_track := 255L;
+      heads := 16L;
+      cyls_times_heads := secs // !secs_per_track;
     end else begin
-      secs_per_track := 17;
-      cyls_times_heads := secs / !secs_per_track;
+      secs_per_track := 17L;
+      cyls_times_heads := secs // !secs_per_track;
 
-      heads := max ((!cyls_times_heads+1023)/1024) 4;
+      heads := max ((!cyls_times_heads ++ 1023L) // 1024L) 4L;
 
-      if (!cyls_times_heads >= (!heads * 1024) || !heads > 16) then begin
-        secs_per_track := 31;
-        heads := 16;
-        cyls_times_heads := secs / !secs_per_track;
+      if (!cyls_times_heads >= (!heads ** 1024L) || !heads > 16L) then begin
+        secs_per_track := 31L;
+        heads := 16L;
+        cyls_times_heads := secs // !secs_per_track;
       end;
 
-      if (!cyls_times_heads >= (!heads*1024)) then begin
-        secs_per_track := 63;
-        heads := 16;
-        cyls_times_heads := secs / !secs_per_track;
+      if (!cyls_times_heads >= (!heads ** 1024L)) then begin
+        secs_per_track := 63L;
+        heads := 16L;
+        cyls_times_heads := secs // !secs_per_track;
       end	    
     end;
-    { cylinders = !cyls_times_heads / !heads; heads = !heads; sectors = !secs_per_track }
+    { cylinders = to_int (!cyls_times_heads // !heads); heads = to_int !heads; sectors = to_int !secs_per_track }
 
   let to_string t = Printf.sprintf "{ cylinders = %d; heads = %d; sectors = %d }"
     t.cylinders t.heads t.sectors
