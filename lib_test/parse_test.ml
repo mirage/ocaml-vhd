@@ -158,11 +158,31 @@ let verify state = match state.child with
         loop xs in
     lwt () = loop state.contents in
     lwt stream = raw vhd in
-    lwt _ = fold_left (fun offset x -> match x with
-      | Element.Empty y -> return (Int64.add offset y)
-      | Element.Copy(vhd', offset', len) -> return (Int64.add offset offset')
-      | Element.Block data -> return (Int64.(add offset (of_int (Cstruct.len data))))
+    lwt next_sector = fold_left (fun offset x -> match x with
+      | Element.Empty y ->
+        (* all sectors in [offset, offset + y = 1] should not be in the contents list *)
+        List.iter (fun x ->
+          if x >= offset && x < (Int64.add offset y)
+          then failwith (Printf.sprintf "Sector %Ld is not supposed to be empty" x)
+        ) state.contents;
+        return (Int64.add offset y)
+      | Element.Copy(vhd', offset', len) ->
+        (* all sectors in [offset, offset + len - 1] should be in the contents list *)
+        for i = 0 to len - 1 do
+          let sector = Int64.(add offset (of_int i)) in
+          if not(List.mem sector state.contents)
+          then failwith (Printf.sprintf "Sector %Ld is not supposed to be written to" sector)
+        done;
+        return (Int64.add offset offset')
+      | Element.Sector data ->
+        (* the sector [offset] should be in the contents list *)
+        if not(List.mem offset state.contents)
+        then failwith (Printf.sprintf "Sector %Ld is not supposed to be written to" offset);
+        return (Int64.(add offset 1L))
     ) 0L stream in
+    (* [next_sector] should be higher than the highest sector in the contents list *)
+    let highest_sector = List.fold_left max (-1L) state.contents in
+    assert (next_sector > highest_sector);
     return ()
 
 let cleanup state =
