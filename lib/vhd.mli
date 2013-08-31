@@ -225,11 +225,12 @@ end
 module Element : sig
   type 'a t =
     | Copy of ('a Vhd.t * int64 * int)
-    (** copy a physical block from an underlying file *)
-    | Block of Cstruct.t
-    (** a new data block (e.g. for metadata) *)
+    (** [Copy (t, offset, len)] copies [len] sectors from sector [offset]
+        from the file [t] *)
+    | Sector of Cstruct.t
+    (** a new sector (e.g. for metadata) *)
     | Empty of int64
-    (** empty space *)
+    (** empty space in sectors *)
 
   val to_string: 'a t -> string
 end

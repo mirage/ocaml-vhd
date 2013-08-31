@@ -871,16 +871,16 @@ end
 module Element = struct
   type 'a t =
     | Copy of ('a Vhd.t * int64 * int)
-    | Block of Cstruct.t
+    | Sector of Cstruct.t
     | Empty of int64
 
   let to_string = function
     | Copy(vhd, offset, len) ->
-      Printf.sprintf "Copy %s offset = %Ld len = %d" vhd.Vhd.filename offset len
-    | Block x ->
-      Printf.sprintf "Block len = %d" (Cstruct.len x)
+      Printf.sprintf "Copy %s offset sector = %Ld length in sectors = %d" vhd.Vhd.filename offset len
+    | Sector x ->
+      "Sector"
     | Empty x ->
-      Printf.sprintf "Empty %Ld" x
+      Printf.sprintf "Empty %Ld sectors" x
 end
 
 module Make = functor(File: S.IO) -> struct
@@ -1274,8 +1274,8 @@ module Make = functor(File: S.IO) -> struct
     Vhd_IO.get_handle vhd >>= fun handle ->
     let block_size_sectors_shift = vhd.Vhd.header.Header.block_size_sectors_shift in
     let max_table_entries = Int32.to_int vhd.Vhd.header.Header.max_table_entries in
-    let empty_block = Empty (Int64.shift_left 1L (block_size_sectors_shift + sector_shift)) in
-    let empty_sector = Empty (Int64.shift_left 1L sector_shift) in
+    let empty_block = Empty (Int64.shift_left 1L block_size_sectors_shift) in
+    let empty_sector = Empty 1L in
     let rec block i =
       let next_block () = block (i + 1) in
       if i = max_table_entries
@@ -1294,7 +1294,7 @@ module Make = functor(File: S.IO) -> struct
               | None ->
                 return (Cons(empty_sector, next_sector))
               | Some (vhd', offset) ->
-                return (Cons(Copy(vhd', offset, sector_size), next_sector))
+                return (Cons(Copy(vhd', Int64.shift_right offset sector_shift, 1), next_sector))
             end in
           sector 0
         end
