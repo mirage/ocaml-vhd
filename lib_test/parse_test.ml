@@ -72,18 +72,17 @@ let nonzero_sector =
   b
 
 let absolute_sector_of vhd { block; sector } =
-  let block = match block with
-  | First -> 0l
-  | Last -> Int32.sub vhd.Vhd.header.Header.max_table_entries 1l in
-  let sectors_per_block = 1 lsl vhd.Vhd.header.Header.block_size_sectors_shift in
-  let relative_sector = match sector with
-  | First -> 0
-  | Last -> sectors_per_block - 1 in
-  Int64.(add(mul (of_int32 block) (of_int sectors_per_block)) (of_int relative_sector))
-
-let write_sector vhd p =
-  let sector = absolute_sector_of vhd p in
-  Vhd_IO.write_sector vhd sector nonzero_sector
+  if vhd.Vhd.header.Header.max_table_entries = 0l
+  then None
+  else
+    let block = match block with
+    | First -> 0l
+    | Last -> Int32.sub vhd.Vhd.header.Header.max_table_entries 1l in
+    let sectors_per_block = 1 lsl vhd.Vhd.header.Header.block_size_sectors_shift in
+    let relative_sector = match sector with
+    | First -> 0
+    | Last -> sectors_per_block - 1 in
+    Some (Int64.(add(mul (of_int32 block) (of_int sectors_per_block)) (of_int relative_sector)))
 
 let cstruct_equal a b =
   let check_contents a b =
@@ -101,13 +100,18 @@ let cstruct_to_string c = String.escaped (Cstruct.to_string c)
 (* Check writing and then reading back works *)
 let check_read_write size p =
   lwt vhd = Vhd_IO.create_dynamic ~filename:dynamic_disk_name ~size () in
-  let sector = absolute_sector_of vhd p in
-  lwt () = Vhd_IO.write_sector vhd sector nonzero_sector in
-  lwt x = Vhd_IO.read_sector vhd sector in
-  ( match x with
-    | None -> failwith "read after write failed"
-    | Some x ->
-      assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal nonzero_sector x );
+  lwt () = match absolute_sector_of vhd p with
+  | Some sector ->
+    lwt () = Vhd_IO.write_sector vhd sector nonzero_sector in
+    lwt x = Vhd_IO.read_sector vhd sector in
+    begin match x with
+      | None -> fail (Failure "read after write failed")
+      | Some x ->
+        assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal nonzero_sector x;
+        return ()
+    end
+  | None -> return () in
+  (* TODO: check reads and write to invalid sectors fail *)
   Vhd_IO.close vhd
   
 
