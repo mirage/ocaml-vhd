@@ -44,8 +44,7 @@ let sizes = [
 let check_empty_disk size =
   let filename = make_new_filename () in
   lwt vhd = Vhd_IO.create_dynamic ~filename ~size () in
-  let filename' = make_new_filename () in
-  lwt vhd' = Vhd_IO.openfile filename' in
+  lwt vhd' = Vhd_IO.openfile filename in
   assert_equal ~printer:Header.to_string vhd.Vhd.header vhd'.Vhd.header;
   assert_equal ~printer:Footer.to_string vhd.Vhd.footer vhd'.Vhd.footer;
   assert_equal ~printer:BAT.to_string vhd.Vhd.bat vhd'.Vhd.bat;
