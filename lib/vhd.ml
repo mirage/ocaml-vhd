@@ -28,7 +28,7 @@ module Int64 = struct
   let ( lsr ) = shift_right_logical
 end
 
-let kib = Int64.(1024L ** 1024L)
+let kib = 1024L
 let mib = Int64.(1024L ** kib)
 let gib = Int64.(1024L ** mib)
 let max_disk_size = Int64.(2040L ** gib)
