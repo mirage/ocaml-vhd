@@ -1043,9 +1043,9 @@ module Make = functor(File: S.IO) -> struct
       let table_offset = 2048L in
 
       let open Int64 in
-      (* Round the size up to the nearest 2 MiB block *)
-      let size = ((size ++ mib ++ mib -- 1L) lsr mib_shift) lsl mib_shift in
 
+      (* Round the size up to the nearest 2 MiB block *)
+      let size = ((size ++ mib ++ mib -- 1L) lsr (1 + mib_shift)) lsl (1 + mib_shift) in
       let geometry = Geometry.of_sectors (size lsr sector_shift) in
       let creator_application = Footer.default_creator_application in
       let creator_version = Footer.default_creator_version in
