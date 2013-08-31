@@ -1171,12 +1171,16 @@ module Make = functor(File: S.IO) -> struct
         then maybe_get_from_parent ()
         else begin
           Bitmap_IO.read handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
-          if t.Vhd.footer.Footer.disk_type = Disk_type.Differencing_hard_disk && (not (Bitmap.get bitmap sector_in_block))
-          then maybe_get_from_parent ()
-          else begin
+          let in_this_bitmap = Bitmap.get bitmap sector_in_block in
+          match t.Vhd.footer.Footer.disk_type, in_this_bitmap with
+          | _, true ->
             let data_sector = (of_int32 t.Vhd.bat.(block_num)) ++ (of_int (Header.sizeof_bitmap t.Vhd.header) lsr sector_shift) ++ sector_in_block in
             return (Some(t, data_sector lsl sector_shift))
-          end
+          | Disk_type.Dynamic_hard_disk, false ->
+            return None
+          | Disk_type.Differencing_hard_disk, false ->
+            maybe_get_from_parent ()
+          | Disk_type.Fixed_hard_disk, _ -> fail (Failure "Fixed disks are not supported")
         end  
 
     let get_sector_location t sector =
