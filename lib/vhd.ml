@@ -1289,7 +1289,7 @@ module Make = functor(File: S.IO) -> struct
             if j = 1 lsl block_size_sectors_shift
             then next_block ()
             else begin
-              let absolute_sector = Int64.(shift_left (of_int i) (block_size_sectors_shift + j)) in
+              let absolute_sector = Int64.(add (shift_left (of_int i) block_size_sectors_shift) (of_int j)) in
               Vhd_IO.get_sector_location' handle vhd absolute_sector >>= function
               | None ->
                 return (Cons(empty_sector, next_sector))
