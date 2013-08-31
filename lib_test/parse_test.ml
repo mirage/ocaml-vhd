@@ -24,7 +24,15 @@ let diff () =
   let _ = Diff_vhd.disk in
   ()
 
-let dynamic_disk_name = "/tmp/dynamic.vhd"
+let disk_name_stem = "/tmp/dynamic."
+let disk_suffix = ".vhd"
+
+let make_new_filename =
+  let counter = ref 0 in
+  fun () ->
+    let this = !counter in
+    incr counter;
+    disk_name_stem ^ (string_of_int this) ^ disk_suffix
 
 let sizes = [
   0L;
@@ -34,8 +42,10 @@ let sizes = [
 
 (* Create a dynamic disk, stream contents *)
 let check_empty_disk size =
-  lwt vhd = Vhd_IO.create_dynamic ~filename:dynamic_disk_name ~size () in
-  lwt vhd' = Vhd_IO.openfile dynamic_disk_name in
+  let filename = make_new_filename () in
+  lwt vhd = Vhd_IO.create_dynamic ~filename ~size () in
+  let filename' = make_new_filename () in
+  lwt vhd' = Vhd_IO.openfile filename' in
   assert_equal ~printer:Header.to_string vhd.Vhd.header vhd'.Vhd.header;
   assert_equal ~printer:Footer.to_string vhd.Vhd.footer vhd'.Vhd.footer;
   assert_equal ~printer:BAT.to_string vhd.Vhd.bat vhd'.Vhd.bat;
@@ -97,23 +107,72 @@ let cstruct_equal a b =
 
 let cstruct_to_string c = String.escaped (Cstruct.to_string c)
 
+type operation =
+  | Create of int64
+  | Write of position
+
+type state = {
+  to_close: Vhd_IO.handle Vhd.t list;
+  child: Vhd_IO.handle Vhd.t option;
+  contents: int64 list;
+}
+
+let initial = {
+  to_close = [];
+  child = None;
+  contents = [];
+}
+
+let execute state = function
+  | Create size ->
+    let filename = make_new_filename () in
+    lwt vhd = Vhd_IO.create_dynamic ~filename ~size () in
+    return {
+      to_close = vhd :: state.to_close;
+      child = Some vhd;
+      contents = [];
+    }
+  | Write position ->
+    let vhd = match state.child with
+    | Some vhd -> vhd
+    | None -> failwith "no vhd open" in
+    begin match absolute_sector_of vhd position with
+      | Some sector ->
+        lwt () = Vhd_IO.write_sector vhd sector nonzero_sector in
+        return { state with contents = sector :: state.contents }
+      | None ->
+        return state
+    end
+
+let verify state = match state.child with
+  | None -> return ()
+  | Some vhd ->
+    let rec loop = function
+      | [] -> return ()
+      | x :: xs ->
+        lwt y = Vhd_IO.read_sector vhd x in
+        lwt () = match y with
+        | None -> fail (Failure "read after write failed")
+        | Some y ->
+          assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal nonzero_sector y;
+          return () in
+        loop xs in
+    loop state.contents
+
+let cleanup state =
+  Lwt_list.iter_s Vhd_IO.close state.to_close
+
+let run program =
+  let single_instruction state x =
+    lwt state' = execute state x in
+    lwt () = verify state' in
+    return state' in
+  lwt final_state = Lwt_list.fold_left_s single_instruction initial program in
+  cleanup final_state
+
 (* Check writing and then reading back works *)
 let check_read_write size p =
-  lwt vhd = Vhd_IO.create_dynamic ~filename:dynamic_disk_name ~size () in
-  lwt () = match absolute_sector_of vhd p with
-  | Some sector ->
-    lwt () = Vhd_IO.write_sector vhd sector nonzero_sector in
-    lwt x = Vhd_IO.read_sector vhd sector in
-    begin match x with
-      | None -> fail (Failure "read after write failed")
-      | Some x ->
-        assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal nonzero_sector x;
-        return ()
-    end
-  | None -> return () in
-  (* TODO: check reads and write to invalid sectors fail *)
-  Vhd_IO.close vhd
-  
+  run [ Create size; Write p ]
 
 (* Check everything still works with a simple chain *)
 
