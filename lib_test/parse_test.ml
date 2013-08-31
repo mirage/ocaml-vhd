@@ -173,7 +173,7 @@ let verify state = match state.child with
           if not(List.mem sector state.contents)
           then failwith (Printf.sprintf "Sector %Ld is not supposed to be written to" sector)
         done;
-        return (Int64.add offset offset')
+        return (Int64.(add offset (of_int len)))
       | Element.Sector data ->
         (* the sector [offset] should be in the contents list *)
         if not(List.mem offset state.contents)
