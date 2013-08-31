@@ -290,6 +290,8 @@ module Make : functor (File : S.IO) -> sig
 
   val iter: ('a -> unit t) -> 'a stream -> unit t
 
+  val fold_left: ('a -> 'b -> 'a t) -> 'a -> 'b stream -> 'a t
+
   val raw: Vhd_IO.handle Vhd.t -> Vhd_IO.handle Element.t stream File.t
 
 end

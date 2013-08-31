@@ -156,7 +156,14 @@ let verify state = match state.child with
           assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal nonzero_sector y;
           return () in
         loop xs in
-    loop state.contents
+    lwt () = loop state.contents in
+    lwt stream = raw vhd in
+    lwt _ = fold_left (fun offset x -> match x with
+      | Element.Empty y -> return (Int64.add offset y)
+      | Element.Copy(vhd', offset', len) -> return (Int64.add offset offset')
+      | Element.Block data -> return (Int64.(add offset (of_int (Cstruct.len data))))
+    ) 0L stream in
+    return ()
 
 let cleanup state =
   Lwt_list.iter_s Vhd_IO.close state.to_close

@@ -1261,6 +1261,13 @@ module Make = functor(File: S.IO) -> struct
     | End ->
       return ()
 
+  let rec fold_left f initial xs = match xs with
+    | End -> return initial
+    | Cons (x, rest) ->
+      f initial x >>= fun initial' ->
+      rest () >>= fun xs ->
+      fold_left f initial' xs
+
   open Element
 
   let raw (vhd: Vhd_IO.handle Vhd.t) =
