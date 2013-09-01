@@ -95,17 +95,17 @@ let nonzero_sector =
   b
 
 let absolute_sector_of vhd { block; sector } =
-  if vhd.Vhd.header.Header.max_table_entries = 0l
+  if vhd.Vhd.header.Header.max_table_entries = 0
   then None
   else
     let block = match block with
-    | First -> 0l
-    | Last -> Int32.sub vhd.Vhd.header.Header.max_table_entries 1l in
+    | First -> 0
+    | Last -> vhd.Vhd.header.Header.max_table_entries - 1 in
     let sectors_per_block = 1 lsl vhd.Vhd.header.Header.block_size_sectors_shift in
     let relative_sector = match sector with
     | First -> 0
     | Last -> sectors_per_block - 1 in
-    Some (Int64.(add(mul (of_int32 block) (of_int sectors_per_block)) (of_int relative_sector)))
+    Some (Int64.(add(mul (of_int block) (of_int sectors_per_block)) (of_int relative_sector)))
 
 let cstruct_equal a b =
   let check_contents a b =

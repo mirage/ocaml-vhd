@@ -144,7 +144,7 @@ module Header : sig
   type t = {
     table_offset : int64;
     (** absolute byte offset of the BAT *)
-    max_table_entries : int32;
+    max_table_entries : int;
     (** the maximum number of blocks *)
     block_size_sectors_shift : int;
     (** each block is 2 ** block_size_sectors_shift sectors in size *)

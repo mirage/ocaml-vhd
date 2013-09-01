@@ -558,7 +558,7 @@ module Header = struct
     (* 0xFFFFFFFF *)
     table_offset : int64;
     (* 0x00010000l *)
-    max_table_entries : int32;
+    max_table_entries : int;
     block_size_sectors_shift : int;
     checksum : int32;
     parent_unique_id : Uuidm.t;
@@ -568,7 +568,7 @@ module Header = struct
   }
 
   let to_string t =
-    Printf.sprintf "{ table_offset = %Ld; max_table_entries = %ld; block_size_sectors_shift = %d; checksum = %ld; parent_unique_id = %s; parent_time_stamp = %ld parent_unicode_name = %s; parent_locators = [| %s |]"
+    Printf.sprintf "{ table_offset = %Ld; max_table_entries = %d; block_size_sectors_shift = %d; checksum = %ld; parent_unique_id = %s; parent_time_stamp = %ld parent_unicode_name = %s; parent_locators = [| %s |]"
       t.table_offset t.max_table_entries t.block_size_sectors_shift t.checksum
       (Uuidm.to_string t.parent_unique_id) t.parent_time_stamp (UTF16.to_string t.parent_unicode_name)
       (String.concat "; " (List.map Parent_locator.to_string (Array.to_list t.parent_locators)))
@@ -592,7 +592,7 @@ module Header = struct
     Printf.printf "data_offset         : %Lx\n" expected_data_offset;
     Printf.printf "table_offset        : %Lu\n" t.table_offset;
     Printf.printf "header_version      : 0x%lx\n" expected_version;
-    Printf.printf "max_table_entries   : 0x%lx\n" t.max_table_entries;
+    Printf.printf "max_table_entries   : 0x%x\n" t.max_table_entries;
     Printf.printf "block_size          : 0x%x\n" ((1 lsl t.block_size_sectors_shift) * sector_size);
     Printf.printf "checksum            : %lu\n" t.checksum;
     Printf.printf "parent_unique_id    : %s\n" (Uuidm.to_string t.parent_unique_id);
@@ -629,7 +629,7 @@ module Header = struct
     set_header_data_offset buf expected_data_offset;
     set_header_table_offset buf t.table_offset;
     set_header_header_version buf expected_version;
-    set_header_max_table_entries buf t.max_table_entries;
+    set_header_max_table_entries buf (Int32.of_int t.max_table_entries);
     set_header_block_size buf (Int32.of_int (1 lsl (t.block_size_sectors_shift + sector_shift)));
     set_header_checksum buf 0l;
     set_header_parent_unique_id (Uuidm.to_bytes t.parent_unique_id) 0 buf;
@@ -669,6 +669,9 @@ module Header = struct
       then fail (Failure (Printf.sprintf "Expected header_version %lx, got %lx" expected_version header_version))
       else return () ) >>= fun () ->
     let max_table_entries = get_header_max_table_entries buf in
+    ( if max_table_entries > Int32.of_int Sys.max_array_length
+      then fail (Failure (Printf.sprintf "expected max_table_entries < %d, got %ld" Sys.max_array_length max_table_entries))
+      else return (Int32.to_int max_table_entries) ) >>= fun max_table_entries ->
     let block_size = get_header_block_size buf in
     let rec to_shift acc = function
       | 0 -> fail (Failure "block size is zero")
@@ -714,18 +717,18 @@ module BAT = struct
 
   let to_string t =
     let _, used = Array.fold_left (fun (i, acc) x -> i + 1, (if x = unused then acc else (i, x) :: acc)) (0, []) t in
-    Printf.sprintf "[ %s ]" (String.concat "; " (List.map (fun (i, x) -> Printf.sprintf "(%d, %lx)" i x) (List.rev used)))
+    Printf.sprintf "(%d)[ %s ]" (Array.length t) (String.concat "; " (List.map (fun (i, x) -> Printf.sprintf "(%d, %lx)" i x) (List.rev used)))
 
   let sizeof_bytes (header: Header.t) =
-    let size_needed = Int32.to_int header.Header.max_table_entries * 4 in
+    let size_needed = header.Header.max_table_entries * 4 in
     (* The BAT is always extended to a sector boundary *)
     ((size_needed + sector_size - 1) lsr sector_shift) lsl sector_shift
 
   let sizeof (header: Header.t) = sizeof_bytes header / 4
 
   let unmarshal (buf: Cstruct.t) (header: Header.t) =
-    let t = Array.create (sizeof header) unused in
-    for i = 0 to Int32.to_int header.Header.max_table_entries - 1 do
+    let t = Array.create header.Header.max_table_entries unused in
+    for i = 0 to header.Header.max_table_entries - 1 do
       t.(i) <- Cstruct.BE.get_uint32 buf i
     done;
     t
@@ -829,7 +832,7 @@ module Vhd = struct
         (List.flatten locations) @ blocks
       end else blocks in
     let bat_start = t.header.Header.table_offset in
-    let bat_size = Int64.of_int32 t.header.Header.max_table_entries in
+    let bat_size = Int64.of_int t.header.Header.max_table_entries in
     let bat = tomarkers "BAT" bat_start bat_size in
     let blocks = bat @ blocks in
     let bat_blocks = Array.to_list (Array.mapi (fun i b -> (i,b)) t.bat) in
@@ -861,7 +864,7 @@ module Vhd = struct
     with 
       | EmptyVHD ->
         let pos = add header.Header.table_offset 
-          (mul 4L (of_int32 header.Header.max_table_entries)) in
+          (mul 4L (of_int header.Header.max_table_entries)) in
         pos
 
   (* TODO: need a quicker block allocator *)
@@ -1062,7 +1065,7 @@ module Make = functor(File: S.IO) -> struct
       } in
       let header = {
         Header.table_offset;
-        max_table_entries = to_int32 (size lsr (block_size_sectors_shift + sector_shift));
+        max_table_entries = to_int (size lsr (block_size_sectors_shift + sector_shift));
         block_size_sectors_shift;
         checksum = 0l;
         parent_unique_id = blank_uuid;
@@ -1122,7 +1125,7 @@ module Make = functor(File: S.IO) -> struct
         parent_locators = [| locator0; Parent_locator.null; Parent_locator.null; Parent_locator.null;
                              Parent_locator.null; Parent_locator.null; Parent_locator.null; Parent_locator.null; |];
       } in
-      let bat = Array.make (Int32.to_int header.Header.max_table_entries) (BAT.unused) in
+      let bat = Array.make header.Header.max_table_entries (BAT.unused) in
       File.create filename >>= fun fd ->
       let handle = ref (Some fd) in
       let t = { filename; handle; header; footer; parent = Some parent; bat } in
@@ -1279,7 +1282,7 @@ module Make = functor(File: S.IO) -> struct
   let raw (vhd: Vhd_IO.handle Vhd.t) =
     Vhd_IO.get_handle vhd >>= fun handle ->
     let block_size_sectors_shift = vhd.Vhd.header.Header.block_size_sectors_shift in
-    let max_table_entries = Int32.to_int vhd.Vhd.header.Header.max_table_entries in
+    let max_table_entries = vhd.Vhd.header.Header.max_table_entries in
     let empty_block = Empty (Int64.shift_left 1L block_size_sectors_shift) in
     let empty_sector = Empty 1L in
     let rec block i =
