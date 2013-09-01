@@ -1281,12 +1281,20 @@ module Make = functor(File: S.IO) -> struct
     let max_table_entries = vhd.Vhd.header.Header.max_table_entries in
     let empty_block = Empty (Int64.shift_left 1L block_size_sectors_shift) in
     let empty_sector = Empty 1L in
+
+    (* Test whether a block is in any BAT in the path to the root. If so then we will
+       look up all sectors. *)
+    let rec in_any_bat vhd i = match vhd.Vhd.bat.(i) <> BAT.unused, vhd.Vhd.parent with
+      | true, _ -> true
+      | false, Some parent -> in_any_bat parent i
+      | false, None -> false in
+
     let rec block i =
       let next_block () = block (i + 1) in
       if i = max_table_entries
       then return End
       else begin
-        if vhd.Vhd.bat.(i) = BAT.unused
+        if not(in_any_bat vhd i)
         then return (Cons(empty_block, next_block))
         else begin
           let rec sector j =
