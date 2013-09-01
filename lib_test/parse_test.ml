@@ -86,13 +86,17 @@ let positions = [
   { block = Last; sector = Last }
 ]
 
-let nonzero_sector =
+let fill_sector_with pattern =
   let b = Cstruct.create 512 in
-  let pattern = "This is a sector which contains simple data.\n" in
   for i = 0 to 511 do
     Cstruct.set_char b i (pattern.[i mod (String.length pattern)])
   done;
   b
+
+let first_write_message = "This is a sector which contains simple data.\n"
+let second_write_message = "All work and no play makes Dave a dull boy.\n"
+let first_sector = fill_sector_with first_write_message
+let second_sector = fill_sector_with second_write_message
 
 let absolute_sector_of vhd { block; sector } =
   if vhd.Vhd.header.Header.max_table_entries = 0
@@ -123,17 +127,17 @@ let cstruct_to_string c = String.escaped (Cstruct.to_string c)
 type operation =
   | Create of int64
   | Snapshot
-  | Write of position
+  | Write of (position * string * Cstruct.t)
 
 let descr_of_operation = function
   | Create x -> Printf.sprintf "create a disk of size %Ld bytes" x
   | Snapshot -> "take a snapshot"
-  | Write p -> Printf.sprintf "write to the %s sector of the %s block" (string_of_choice p.sector) (string_of_choice p.block)
+  | Write (p, message, _) -> Printf.sprintf "write \"%s\"to the %s sector of the %s block" (String.escaped message) (string_of_choice p.sector) (string_of_choice p.block)
 
 let string_of_operation = function
   | Create x -> Printf.sprintf "Create:%Ld" x
   | Snapshot -> "Snapshot"
-  | Write p -> Printf.sprintf "Write:%s:%s" (string_of_choice p.block) (string_of_choice p.sector)
+  | Write (p, _, _) -> Printf.sprintf "Write:%s:%s" (string_of_choice p.block) (string_of_choice p.sector)
 
 let descr_of_program = function
   | [] -> ""
@@ -146,7 +150,7 @@ type state = {
   to_close: Vhd_IO.handle Vhd.t list;
   to_unlink: string list;
   child: Vhd_IO.handle Vhd.t option;
-  contents: int64 list;
+  contents: (int64 * Cstruct.t) list;
 }
 
 let initial = {
@@ -178,14 +182,16 @@ let execute state = function
       child = Some vhd';
       contents = state.contents;
     }
-  | Write position ->
+  | Write (position, _, data) ->
     let vhd = match state.child with
     | Some vhd -> vhd
     | None -> failwith "no vhd open" in
     begin match absolute_sector_of vhd position with
       | Some sector ->
-        lwt () = Vhd_IO.write_sector vhd sector nonzero_sector in
-        return { state with contents = sector :: state.contents }
+        lwt () = Vhd_IO.write_sector vhd sector data in
+        (* Overwrite means we forget any previous contents *)
+        let contents = List.filter (fun (x, _) -> x <> sector) state.contents in
+        return { state with contents = (sector, data) :: contents }
       | None ->
         return state
     end
@@ -195,12 +201,12 @@ let verify state = match state.child with
   | Some vhd ->
     let rec loop = function
       | [] -> return ()
-      | x :: xs ->
+      | (x, data) :: xs ->
         lwt y = Vhd_IO.read_sector vhd x in
         lwt () = match y with
         | None -> fail (Failure "read after write failed")
         | Some y ->
-          assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal nonzero_sector y;
+          assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal data y;
           return () in
         loop xs in
     lwt () = loop state.contents in
@@ -208,27 +214,36 @@ let verify state = match state.child with
     lwt next_sector = fold_left (fun offset x -> match x with
       | Element.Empty y ->
         (* all sectors in [offset, offset + y = 1] should not be in the contents list *)
-        List.iter (fun x ->
+        List.iter (fun (x, _) ->
           if x >= offset && x < (Int64.add offset y)
           then failwith (Printf.sprintf "Sector %Ld is not supposed to be empty" x)
         ) state.contents;
         return (Int64.add offset y)
-      | Element.Copy(vhd', offset', len) ->
+      | Element.Copy(handle, offset', len) ->
         (* all sectors in [offset, offset + len - 1] should be in the contents list *)
-        for i = 0 to len - 1 do
-          let sector = Int64.(add offset (of_int i)) in
-          if not(List.mem sector state.contents)
-          then failwith (Printf.sprintf "Sector %Ld is not supposed to be written to" sector)
-        done;
+        let rec check i =
+          if i >= len then return ()
+          else
+            let sector = Int64.(add offset (of_int i)) in
+            if not(List.mem_assoc sector state.contents)
+            then fail (Failure (Printf.sprintf "Sector %Ld is not supposed to be written to" sector))
+            else
+              let expected = List.assoc sector state.contents in
+              lwt actual = Vhd_lwt.Fd.really_read handle (Int64.mul offset' 512L) (len * 512) in
+              assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal expected actual;
+              check (i + 1) in
+        lwt () = check 0 in
         return (Int64.(add offset (of_int len)))
       | Element.Sector data ->
         (* the sector [offset] should be in the contents list *)
-        if not(List.mem offset state.contents)
+        if not(List.mem_assoc offset state.contents)
         then failwith (Printf.sprintf "Sector %Ld is not supposed to be written to" offset);
+        let expected = List.assoc offset state.contents in
+        assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal expected data;
         return (Int64.(add offset 1L))
     ) 0L stream in
     (* [next_sector] should be higher than the highest sector in the contents list *)
-    let highest_sector = List.fold_left max (-1L) state.contents in
+    let highest_sector = List.fold_left max (-1L) (List.map fst state.contents) in
     assert (next_sector > highest_sector);
     return ()
 
@@ -248,28 +263,31 @@ let rec allpairs xs ys = match xs with
   | [] -> []
   | x :: xs -> List.map (fun y -> x, y) ys @ (allpairs xs ys)
 
+let first_write p = Write(p, first_write_message, first_sector)
+let second_write p = Write(p, second_write_message, second_sector)
+
 (* Check writing and then reading back works *)
 let create_write_read =
   List.map (fun (size, p) ->
-    [ Create size; Write p ]
+    [ Create size; first_write p ]
   ) (allpairs sizes positions)
 
 (* Check writing and then reading back works in a simple chain *)
 let create_write_read_leaf =
   List.map (fun (size, p) ->
-    [ Create size; Snapshot; Write p ]
+    [ Create size; Snapshot; first_write p ]
   ) (allpairs sizes positions)
 
 (* Check writing and then reading back works in a chain where the writes are in the parent *)
 let create_write_read_parent =
   List.map (fun (size, p) ->
-    [ Create size; Write p; Snapshot ]
+    [ Create size; first_write p; Snapshot ]
   ) (allpairs sizes positions)
 
 (* Check writing and then reading back works in a chain where there are writes in both parent and leaf *)
 let create_write_overwrite =
   List.map (fun (size, (p1, p2)) ->
-    [ Create size; Write p1; Snapshot; Write p2 ]
+    [ Create size; first_write p1; Snapshot; second_write p2 ]
   ) (allpairs sizes (allpairs positions positions))
 
 (* TODO: ... and all of that again with a larger leaf *)
