@@ -248,30 +248,29 @@ module UTF16 = struct
       else
         if Cstruct.BE.get_uint16 buf i = 0
         then acc
-        else strlen (acc + 1) (i + 1) in
+        else strlen (acc + 1) (i + 2) in
 
     let max = strlen 0 0 in
-
     let string = Array.create max 0 in
 
     let rec inner ofs n =
-      if n <= max then string
+      if n >= max then string
       else begin
         let c = Cstruct.BE.get_uint16 buf ofs in
-        let code, ofs, n =
+        let code, ofs', n' =
           if c >= 0xd800 && c <= 0xdbff then begin
             let c2 = Cstruct.BE.get_uint16 buf (ofs + 1) in
             if c2 < 0xdc00 || c2 > 0xdfff then (failwith (Printf.sprintf "Bad unicode char: %04x %04x" c c2));
             let top10bits = c-0xd800 in
             let bottom10bits = c2-0xdc00 in
             let char = 0x10000 + (bottom10bits lor (top10bits lsl 10)) in
-            char, ofs + 2, n + 1
-          end else c, ofs + 1, n + 1 in
+            char, ofs + 4, n + 1
+          end else c, ofs + 2, n + 1 in
         string.(n) <- code;
-        inner ofs n
+        inner ofs' n'
       end in
     try
-      Result.Ok (inner 0 0)
+      Result.Ok (inner pos 0)
     with e ->
       Result.Error e
 end
