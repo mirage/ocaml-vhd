@@ -505,7 +505,7 @@ module Parent_locator = struct
           then Cstruct.sub t.platform_data 0 from
           else find_string (from + 1) in
       let path = Cstruct.to_string (find_string 0) in
-      let expected_prefix = "file://" in
+      let expected_prefix = "file://./" in
       let expected_prefix' = String.length expected_prefix in
       let startswith prefix x =
         let prefix' = String.length prefix and x' = String.length x in
@@ -930,7 +930,6 @@ module Make = functor(File: S.IO) -> struct
         else
           let l = t.parent_locators.(n) in
           let open Parent_locator in
-          Printf.printf "locator %d\nplatform_code: %s\nplatform_data: %s\n" n (Platform_code.to_string l.platform_code) (Cstruct.to_string l.platform_data);
           match to_filename l with
           | Some path ->
             exists path >>= fun x ->
