@@ -1123,7 +1123,7 @@ module Make = functor(File: S.IO) -> struct
       let bat = Array.make (Int32.to_int header.Header.max_table_entries) (BAT.unused) in
       File.create filename >>= fun fd ->
       let handle = ref (Some fd) in
-      let t = { filename; handle; header; footer; parent = None; bat } in
+      let t = { filename; handle; header; footer; parent = Some parent; bat } in
       write t >>= fun t ->
       return t
 
