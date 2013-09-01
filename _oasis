@@ -45,3 +45,7 @@ Executable parse_test
   Custom:             true
   Install:            false
   BuildDepends:       lwt, lwt.unix, vhd-format, vhd-format.lwt, cstruct, oUnit
+
+Test parse_test
+  Command:            ./parse_test.native
+  Run:                true
