@@ -1073,7 +1073,7 @@ module Make = functor(File: S.IO) -> struct
         parent_unicode_name = [| |];
         parent_locators = Array.make 8 Parent_locator.null
       } in
-      let bat = Array.make (BAT.sizeof header) BAT.unused in
+      let bat = Array.make header.Header.max_table_entries BAT.unused in
       File.create filename >>= fun fd ->
       let handle = ref (Some fd) in
       let t = { filename; handle; header; footer; parent = None; bat } in
