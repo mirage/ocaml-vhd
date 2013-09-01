@@ -259,7 +259,7 @@ module UTF16 = struct
         let c = Cstruct.BE.get_uint16 buf ofs in
         let code, ofs', n' =
           if c >= 0xd800 && c <= 0xdbff then begin
-            let c2 = Cstruct.BE.get_uint16 buf (ofs + 1) in
+            let c2 = Cstruct.BE.get_uint16 buf (ofs + 2) in
             if c2 < 0xdc00 || c2 > 0xdfff then (failwith (Printf.sprintf "Bad unicode char: %04x %04x" c c2));
             let top10bits = c-0xd800 in
             let bottom10bits = c2-0xdc00 in
@@ -729,13 +729,13 @@ module BAT = struct
   let unmarshal (buf: Cstruct.t) (header: Header.t) =
     let t = Array.create header.Header.max_table_entries unused in
     for i = 0 to header.Header.max_table_entries - 1 do
-      t.(i) <- Cstruct.BE.get_uint32 buf i
+      t.(i) <- Cstruct.BE.get_uint32 buf (i * 4)
     done;
     t
 
   let marshal (buf: Cstruct.t) (t: t) =
     for i = 0 to Array.length t - 1 do
-      Cstruct.BE.set_uint32 buf i t.(i)
+      Cstruct.BE.set_uint32 buf (i * 4)  t.(i)
     done
   
   let dump t =
