@@ -1158,13 +1158,14 @@ module Make = functor(File: S.IO) -> struct
       | None ->
         return ()
 
-    let rec get_sector_location' handle t sector =
+    let rec get_sector_location t sector =
+      get_handle t >>= fun handle ->
       let open Int64 in
       if sector lsl sector_shift > t.Vhd.footer.Footer.current_size
       then return None (* perhaps elements in the vhd chain have different sizes *)
       else
         let maybe_get_from_parent () = match t.Vhd.footer.Footer.disk_type,t.Vhd.parent with
-          | Disk_type.Differencing_hard_disk,Some vhd2 -> get_sector_location' handle vhd2 sector
+          | Disk_type.Differencing_hard_disk,Some vhd2 -> get_sector_location vhd2 sector
           | Disk_type.Differencing_hard_disk,None -> fail (Failure "Sector in parent but no parent found!")
           | Disk_type.Dynamic_hard_disk,_ -> return None
           | Disk_type.Fixed_hard_disk,_ -> fail (Failure "Fixed disks are not supported") in
@@ -1188,18 +1189,14 @@ module Make = functor(File: S.IO) -> struct
           | Disk_type.Fixed_hard_disk, _ -> fail (Failure "Fixed disks are not supported")
         end  
 
-    let get_sector_location t sector =
-      get_handle t >>= fun handle ->
-      get_sector_location' handle t sector
-
     let read_sector t sector =
-      get_handle t >>= fun handle ->
       let open Int64 in
       if sector < 0L || (sector lsl sector_shift >= t.Vhd.footer.Footer.current_size)
       then fail (Invalid_sector(sector, t.Vhd.footer.Footer.current_size lsr sector_shift))
-      else get_sector_location' handle t sector >>= function
+      else get_sector_location t sector >>= function
       | None -> return None
       | Some (t, offset) ->
+        get_handle t >>= fun handle ->
         really_read handle offset sector_size >>= fun data ->
         return (Some data)
 
@@ -1280,7 +1277,6 @@ module Make = functor(File: S.IO) -> struct
   open Element
 
   let raw (vhd: Vhd_IO.handle Vhd.t) =
-    Vhd_IO.get_handle vhd >>= fun handle ->
     let block_size_sectors_shift = vhd.Vhd.header.Header.block_size_sectors_shift in
     let max_table_entries = vhd.Vhd.header.Header.max_table_entries in
     let empty_block = Empty (Int64.shift_left 1L block_size_sectors_shift) in
@@ -1299,7 +1295,7 @@ module Make = functor(File: S.IO) -> struct
             then next_block ()
             else begin
               let absolute_sector = Int64.(add (shift_left (of_int i) block_size_sectors_shift) (of_int j)) in
-              Vhd_IO.get_sector_location' handle vhd absolute_sector >>= function
+              Vhd_IO.get_sector_location vhd absolute_sector >>= function
               | None ->
                 return (Cons(empty_sector, next_sector))
               | Some (vhd', offset) ->
