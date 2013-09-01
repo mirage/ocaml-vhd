@@ -224,7 +224,7 @@ end
 
 module Element : sig
   type 'a t =
-    | Copy of ('a Vhd.t * int64 * int)
+    | Copy of ('a * int64 * int)
     (** [Copy (t, offset, len)] copies [len] sectors from sector [offset]
         from the file [t] *)
     | Sector of Cstruct.t
@@ -293,6 +293,6 @@ module Make : functor (File : S.IO) -> sig
 
   val fold_left: ('a -> 'b -> 'a t) -> 'a -> 'b stream -> 'a t
 
-  val raw: Vhd_IO.handle Vhd.t -> Vhd_IO.handle Element.t stream File.t
+  val raw: Vhd_IO.handle Vhd.t -> File.fd Element.t stream File.t
 
 end

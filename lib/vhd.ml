@@ -876,13 +876,13 @@ end
 
 module Element = struct
   type 'a t =
-    | Copy of ('a Vhd.t * int64 * int)
+    | Copy of ('a * int64 * int)
     | Sector of Cstruct.t
     | Empty of int64
 
   let to_string = function
-    | Copy(vhd, offset, len) ->
-      Printf.sprintf "Copy %s offset sector = %Ld length in sectors = %d" vhd.Vhd.filename offset len
+    | Copy(_, offset, len) ->
+      Printf.sprintf "Copy offset sector = %Ld length in sectors = %d" offset len
     | Sector x ->
       "Sector"
     | Empty x ->
@@ -1307,7 +1307,8 @@ module Make = functor(File: S.IO) -> struct
               | None ->
                 return (Cons(empty_sector, next_sector))
               | Some (vhd', offset) ->
-                return (Cons(Copy(vhd', Int64.shift_right offset sector_shift, 1), next_sector))
+                Vhd_IO.get_handle vhd' >>= fun handle ->
+                return (Cons(Copy(handle, Int64.shift_right offset sector_shift, 1), next_sector))
             end in
           sector 0
         end
