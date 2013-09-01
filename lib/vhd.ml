@@ -526,7 +526,7 @@ module Parent_locator = struct
 
   let marshal (buf: Cstruct.t) t =
     set_header_platform_code buf (Platform_code.to_int32 t.platform_code);
-    set_header_platform_data_space buf t.platform_data_space;
+    set_header_platform_data_space buf (Int32.shift_right_logical t.platform_data_space sector_shift);
     set_header_platform_data_length buf t.platform_data_length;
     set_header_reserved buf 0l;
     set_header_platform_data_offset buf t.platform_data_offset
@@ -535,10 +535,14 @@ module Parent_locator = struct
     let open Result in
     Platform_code.of_int32 (get_header_platform_code buf) >>= fun platform_code ->
     let platform_data_space_original = get_header_platform_data_space buf in
-    (* WARNING WARNING - see comment on field at the beginning of this file *)
+    (* The spec says this field should be stored in sectors. However some viridian vhds
+       store the value in bytes. We assume that any value we read < 512l is actually in
+       sectors (511l sectors is adequate space for a filename) and any value >= 511l is
+       in bytes. We store the unaltered on-disk value in [platform_data_space_original]
+       and the decoded value in *bytes* in [platform_data_space]. *)
     let platform_data_space =
-      if platform_data_space_original < 511l
-      then Int32.mul 512l platform_data_space_original
+      if platform_data_space_original < 512l
+      then Int32.shift_left platform_data_space_original sector_shift
       else platform_data_space_original in
     let platform_data_length = get_header_platform_data_length buf in
     let platform_data_offset = get_header_platform_data_offset buf in
@@ -1100,8 +1104,8 @@ module Make = functor(File: S.IO) -> struct
         Cstruct.blit_from_string uri 0 platform_data 0 (String.length uri);
         {
           Parent_locator.platform_code = Platform_code.MacX;
-          platform_data_space = 1l;
-          platform_data_space_original=1l;
+          platform_data_space = 512l;      (* bytes *)
+          platform_data_space_original=1l; (* sector *)
           platform_data_length = Int32.of_int (String.length uri);
           platform_data_offset = 1536L;
           platform_data;
