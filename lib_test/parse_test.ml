@@ -108,16 +108,36 @@ let cstruct_to_string c = String.escaped (Cstruct.to_string c)
 
 type operation =
   | Create of int64
+  | Snapshot
   | Write of position
+
+let descr_of_operation = function
+  | Create x -> Printf.sprintf "create a disk of size %Ld bytes" x
+  | Snapshot -> "take a snapshot"
+  | Write p -> Printf.sprintf "write to the %s sector of the %s block" (string_of_choice p.sector) (string_of_choice p.block)
+
+let string_of_operation = function
+  | Create x -> Printf.sprintf "Create:%Ld" x
+  | Snapshot -> "Snapshot"
+  | Write p -> Printf.sprintf "Write:%s:%s" (string_of_choice p.block) (string_of_choice p.sector)
+
+let descr_of_program = function
+  | [] -> ""
+  | [ x ] -> descr_of_operation x
+  | x :: xs -> "First, " ^ (descr_of_operation x) ^ "; then " ^ (String.concat "; then " (List.map descr_of_operation xs))
+
+let string_of_program p = String.concat "_" (List.map string_of_operation p)
 
 type state = {
   to_close: Vhd_IO.handle Vhd.t list;
+  to_unlink: string list;
   child: Vhd_IO.handle Vhd.t option;
   contents: int64 list;
 }
 
 let initial = {
   to_close = [];
+  to_unlink = [];
   child = None;
   contents = [];
 }
@@ -128,8 +148,21 @@ let execute state = function
     lwt vhd = Vhd_IO.create_dynamic ~filename ~size () in
     return {
       to_close = vhd :: state.to_close;
+      to_unlink = filename :: state.to_unlink;
       child = Some vhd;
       contents = [];
+    }
+  | Snapshot ->
+    let vhd = match state.child with
+    | Some vhd -> vhd
+    | None -> failwith "no vhd open" in
+    let filename = make_new_filename () in
+    lwt vhd' = Vhd_IO.create_difference ~filename ~parent:vhd () in
+    return {
+      to_close = vhd' :: state.to_close;
+      to_unlink = filename :: state.to_unlink;
+      child = Some vhd';
+      contents = state.contents;
     }
   | Write position ->
     let vhd = match state.child with
@@ -186,6 +219,7 @@ let verify state = match state.child with
     return ()
 
 let cleanup state =
+  List.iter Unix.unlink state.to_unlink;
   Lwt_list.iter_s Vhd_IO.close state.to_close
 
 let run program =
@@ -196,24 +230,49 @@ let run program =
   lwt final_state = Lwt_list.fold_left_s single_instruction initial program in
   cleanup final_state
 
-(* Check writing and then reading back works *)
-let check_read_write size p =
-  run [ Create size; Write p ]
-
-(* Check everything still works with a simple chain *)
-
-(* ... with all data in the parent *)
-
-(* ... with all data in the leaf *)
-
-(* ... with data overwritten in the leaf *)
-
-(* ... and all of that again with a larger leaf *)
-
-
 let rec allpairs xs ys = match xs with
   | [] -> []
   | x :: xs -> List.map (fun y -> x, y) ys @ (allpairs xs ys)
+
+(* Check writing and then reading back works *)
+let create_write_read =
+  List.map (fun (size, p) ->
+    [ Create size; Write p ]
+  ) (allpairs sizes positions)
+
+(* Check writing and then reading back works in a simple chain *)
+let create_write_read_leaf =
+  List.map (fun (size, p) ->
+    [ Create size; Snapshot; Write p ]
+  ) (allpairs sizes positions)
+
+(* Check writing and then reading back works in a chain where the writes are in the parent *)
+let create_write_read_parent =
+  List.map (fun (size, p) ->
+    [ Create size; Write p; Snapshot ]
+  ) (allpairs sizes positions)
+
+(* Check writing and then reading back works in a chain where there are writes in both parent and leaf *)
+let create_write_overwrite =
+  List.map (fun (size, (p1, p2)) ->
+    [ Create size; Write p1; Snapshot; Write p2 ]
+  ) (allpairs sizes (allpairs positions positions))
+
+(* TODO: ... and all of that again with a larger leaf *)
+
+let all_programs =
+  List.concat [
+    create_write_read;
+    create_write_read_leaf;
+(*
+    create_write_read_parent;
+    create_write_overwrite;
+*)
+  ]
+
+let all_program_tests = List.map (fun p ->
+  (string_of_program p) >:: (fun () -> Lwt_main.run (run p))
+) all_programs
 
 let _ =
   let verbose = ref false in
@@ -222,9 +281,6 @@ let _ =
   ] (fun x -> Printf.fprintf stderr "Ignoring argument: %s" x)
     "Test vhd parser";
 
-  let check_read_write (size, p) =
-    Printf.sprintf "check_read_write_%Ld_%s_%s" size (string_of_choice p.block) (string_of_choice p.sector)
-    >:: (fun () -> Lwt_main.run (check_read_write size p)) in
   let check_empty_disk size =
     Printf.sprintf "check_empty_disk_%Ld" size
     >:: (fun () -> Lwt_main.run (check_empty_disk size)) in
@@ -233,6 +289,6 @@ let _ =
     [
       "create" >:: create;
     ] @ (List.map check_empty_disk sizes)
-      @ (List.map check_read_write (allpairs sizes positions)) in
+      @ all_program_tests in
   run_test_tt ~verbose:!verbose suite
 
