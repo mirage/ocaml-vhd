@@ -40,7 +40,7 @@ let sizes = [
   max_disk_size;
 ]
 
-(* Create a dynamic disk, stream contents *)
+(* Create a dynamic disk, check headers *)
 let check_empty_disk size =
   let filename = make_new_filename () in
   lwt vhd = Vhd_IO.create_dynamic ~filename ~size () in
@@ -48,6 +48,20 @@ let check_empty_disk size =
   assert_equal ~printer:Header.to_string vhd.Vhd.header vhd'.Vhd.header;
   assert_equal ~printer:Footer.to_string vhd.Vhd.footer vhd'.Vhd.footer;
   assert_equal ~printer:BAT.to_string vhd.Vhd.bat vhd'.Vhd.bat;
+  lwt () = Vhd_IO.close vhd' in
+  Vhd_IO.close vhd
+
+(* Create a snapshot, check headers *)
+let check_empty_snapshot size =
+  let filename = make_new_filename () in
+  lwt vhd = Vhd_IO.create_dynamic ~filename ~size () in
+  let filename = make_new_filename () in
+  lwt vhd' = Vhd_IO.create_difference ~filename ~parent:vhd () in
+  lwt vhd'' = Vhd_IO.openfile filename in
+  assert_equal ~printer:Header.to_string vhd'.Vhd.header vhd''.Vhd.header;
+  assert_equal ~printer:Footer.to_string vhd'.Vhd.footer vhd''.Vhd.footer;
+  assert_equal ~printer:BAT.to_string vhd'.Vhd.bat vhd''.Vhd.bat;
+  lwt () = Vhd_IO.close vhd'' in
   lwt () = Vhd_IO.close vhd' in
   Vhd_IO.close vhd
 
@@ -284,11 +298,15 @@ let _ =
   let check_empty_disk size =
     Printf.sprintf "check_empty_disk_%Ld" size
     >:: (fun () -> Lwt_main.run (check_empty_disk size)) in
+  let check_empty_snapshot size =
+    Printf.sprintf "check_empty_snapshot_%Ld" size
+    >:: (fun () -> Lwt_main.run (check_empty_snapshot size)) in
 
   let suite = "vhd" >:::
     [
       "create" >:: create;
     ] @ (List.map check_empty_disk sizes)
+      @ (List.map check_empty_snapshot sizes)
       @ all_program_tests in
   run_test_tt ~verbose:!verbose suite
 
