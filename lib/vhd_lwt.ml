@@ -26,7 +26,7 @@ module Fd = struct
     return {fd; lock}
 
   let openfile = open_create_common [ Unix.O_RDWR ]
-  let create = open_create_common [ Unix.O_RDWR; Unix.O_CREAT ]
+  let create = open_create_common [ Unix.O_RDWR; Unix.O_CREAT; Unix.O_TRUNC ]
 
   let close t = Lwt_unix.close t.fd
 
