@@ -279,9 +279,7 @@ let all_programs =
     create_write_read;
     create_write_read_leaf;
     create_write_read_parent;
-(*
     create_write_overwrite;
-*)
   ]
 
 let all_program_tests = List.map (fun p ->
