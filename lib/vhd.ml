@@ -1387,7 +1387,7 @@ module Make = functor(File: S.IO) -> struct
 
     let rec block i andthen =
       let rec sector j =
-        let next () = if j = sizeof_data_sectors then block (i + 1) andthen else sector (j + 1) in
+        let next () = if j = sizeof_data_sectors - 1 then block (i + 1) andthen else sector (j + 1) in
         let absolute_sector = Int64.(add (shift_left (of_int i) block_size_sectors_shift) (of_int j)) in
         Vhd_IO.get_sector_location t absolute_sector >>= function
         | None ->
