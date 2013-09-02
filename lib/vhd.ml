@@ -669,7 +669,7 @@ module Header = struct
       then fail (Failure (Printf.sprintf "Expected header_version %lx, got %lx" expected_version header_version))
       else return () ) >>= fun () ->
     let max_table_entries = get_header_max_table_entries buf in
-    ( if max_table_entries > Int32.of_int Sys.max_array_length
+    ( if Int64.of_int32 max_table_entries > Int64.of_int Sys.max_array_length
       then fail (Failure (Printf.sprintf "expected max_table_entries < %d, got %ld" Sys.max_array_length max_table_entries))
       else return (Int32.to_int max_table_entries) ) >>= fun max_table_entries ->
     let block_size = get_header_block_size buf in
