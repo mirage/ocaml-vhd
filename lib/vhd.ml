@@ -1283,6 +1283,26 @@ module Make = functor(File: S.IO) -> struct
     | false, Some parent -> in_any_bat parent i
     | false, None -> false
 
+  let rec coalesce_empty_sectors empties s =
+    s >>= function
+    | End ->
+      if empties > 0L
+      then return (Cons(Empty empties, fun () -> return End))
+      else return End
+    | Cons(Sector s, next) ->
+      let more () =
+        return (Cons(Sector s, fun () -> coalesce_empty_sectors 0L (next ()))) in
+      if empties > 0L
+      then return (Cons(Empty empties, more))
+      else more ()
+    | Cons(Copy(h, ofs, len), next) ->
+      let more () =
+        return (Cons(Copy(h, ofs, len), fun () -> coalesce_empty_sectors 0L (next ()))) in
+      if empties > 0L
+      then return (Cons(Empty empties, more))
+      else more ()
+    | Cons(Empty n, next) -> coalesce_empty_sectors (Int64.add empties n) (next ())
+
   let raw (vhd: Vhd_IO.handle Vhd.t) =
     let block_size_sectors_shift = vhd.Vhd.header.Header.block_size_sectors_shift in
     let max_table_entries = vhd.Vhd.header.Header.max_table_entries in
@@ -1313,7 +1333,7 @@ module Make = functor(File: S.IO) -> struct
           sector 0
         end
       end in
-    block 0
+    coalesce_empty_sectors 0L (block 0)
 
   let vhd (t: Vhd_IO.handle Vhd.t) =
     let block_size_sectors_shift = t.Vhd.header.Header.block_size_sectors_shift in
@@ -1404,7 +1424,7 @@ module Make = functor(File: S.IO) -> struct
 
     let buf = Cstruct.create (max Footer.sizeof (max Header.sizeof sizeof_bat)) in
     let (_: Footer.t) = Footer.marshal buf footer in
-    return (Cons(Sector(Cstruct.sub buf 0 Footer.sizeof), fun () ->
+    coalesce_empty_sectors 0L (return (Cons(Sector(Cstruct.sub buf 0 Footer.sizeof), fun () ->
       let (_: Header.t) = Header.marshal buf header in
       write_sectors (Cstruct.sub buf 0 Header.sizeof) 0 (fun () ->
         return(Cons(Empty 1L, fun () ->
@@ -1417,5 +1437,5 @@ module Make = functor(File: S.IO) -> struct
           )
        ))
      )
-   ))
+   )))
 end
