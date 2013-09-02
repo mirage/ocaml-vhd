@@ -233,6 +233,9 @@ module Element : sig
     (** empty space in sectors *)
 
   val to_string: 'a t -> string
+
+  val len: 'a t -> int
+  (** [len t] is the length of [t] in sectors *)
 end
 
 module Make : functor (File : S.IO) -> sig

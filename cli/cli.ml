@@ -43,13 +43,21 @@ let main () =
         Vhd.check_overlapping_blocks vhd;
         return ()
     | "stream" ->
-        lwt vhd = Vhd_IO.openfile Sys.argv.(2) in
-        lwt s = raw vhd in
-        iter (fun x -> Printf.printf "%s\n" (Element.to_string x); return ()) s
+        lwt t = Vhd_IO.openfile Sys.argv.(2) in
+        lwt s = raw t in
+        lwt _ = fold_left (fun sector x ->
+          Printf.printf "%4d: %s\n" sector (Element.to_string x);
+          return (sector + (Element.len x))
+        ) 0 s in
+        return ()
     | "streamvhd" ->
         lwt t = Vhd_IO.openfile Sys.argv.(2) in
         lwt s = vhd t in
-        iter (fun x -> Printf.printf "%s\n" (Element.to_string x); return ()) s
+        lwt _ = fold_left (fun sector x ->
+          Printf.printf "%4d: %s\n" sector (Element.to_string x);
+          return (sector + (Element.len x))
+        ) 0 s in
+        return ()
 (*
     | "makefromfile" ->
 	    let file = Sys.argv.(2) in

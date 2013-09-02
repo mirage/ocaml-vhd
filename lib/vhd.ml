@@ -885,12 +885,21 @@ module Element = struct
     | Empty of int64
 
   let to_string = function
+    | Copy(_, offset, 1) ->
+      Printf.sprintf "1 sector copied starting at offset %Ld" offset
     | Copy(_, offset, len) ->
-      Printf.sprintf "Copy offset sector = %Ld length in sectors = %d" offset len
+      Printf.sprintf "%d sectors copied starting at offset %Ld" len offset
     | Sector x ->
-      "Sector"
+      Printf.sprintf "Sector \"%s...\"" (String.escaped (Cstruct.to_string (Cstruct.sub x 0 16)))
+    | Empty 1L ->
+      "1 empty sector"
     | Empty x ->
-      Printf.sprintf "Empty %Ld sectors" x
+      Printf.sprintf "%Ld empty sectors" x
+
+  let len = function
+    | Copy(_, _, len) -> len
+    | Sector _ -> 1
+    | Empty x -> Int64.to_int x
 end
 
 module Make = functor(File: S.IO) -> struct
