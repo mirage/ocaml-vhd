@@ -39,6 +39,10 @@ let kib_shift = 10
 let mib_shift = 20
 let gib_shift = 30
 
+let blank_uuid = match Uuidm.of_bytes (String.make 16 '\000') with
+  | Some x -> x
+  | None -> assert false (* never happens *)
+
 module Feature = struct
   type t = 
     | Temporary
@@ -1028,10 +1032,6 @@ module Make = functor(File: S.IO) -> struct
       write_trailing_footer handle t >>= fun () ->
       return t
 
-    let blank_uuid = match Uuidm.of_bytes (String.make 16 '\000') with
-      | Some x -> x
-      | None -> assert false (* never happens *)
-
     let create_dynamic ~filename ~size
       ?(uuid = Uuidm.create `V4)
       ?(saved_state=false)
@@ -1276,18 +1276,18 @@ module Make = functor(File: S.IO) -> struct
 
   open Element
 
+  (* Test whether a block is in any BAT in the path to the root. If so then we will
+     look up all sectors. *)
+  let rec in_any_bat vhd i = match vhd.Vhd.bat.(i) <> BAT.unused, vhd.Vhd.parent with
+    | true, _ -> true
+    | false, Some parent -> in_any_bat parent i
+    | false, None -> false
+
   let raw (vhd: Vhd_IO.handle Vhd.t) =
     let block_size_sectors_shift = vhd.Vhd.header.Header.block_size_sectors_shift in
     let max_table_entries = vhd.Vhd.header.Header.max_table_entries in
     let empty_block = Empty (Int64.shift_left 1L block_size_sectors_shift) in
     let empty_sector = Empty 1L in
-
-    (* Test whether a block is in any BAT in the path to the root. If so then we will
-       look up all sectors. *)
-    let rec in_any_bat vhd i = match vhd.Vhd.bat.(i) <> BAT.unused, vhd.Vhd.parent with
-      | true, _ -> true
-      | false, Some parent -> in_any_bat parent i
-      | false, None -> false in
 
     let rec block i =
       let next_block () = block (i + 1) in
@@ -1314,4 +1314,108 @@ module Make = functor(File: S.IO) -> struct
         end
       end in
     block 0
+
+  let vhd (t: Vhd_IO.handle Vhd.t) =
+    let block_size_sectors_shift = t.Vhd.header.Header.block_size_sectors_shift in
+    let max_table_entries = t.Vhd.header.Header.max_table_entries in
+
+    (* The physical disk layout will be:
+       byte 0   - 511:  backup footer
+       byte 512 - 1535: file header
+       ... empty sector-- this is where we'll put the parent locator
+       byte 2048 - ...: BAT *)
+
+    let data_offset = 512L in
+    let table_offset = 2048L in
+
+    let size = t.Vhd.footer.Footer.current_size in
+    let geometry = Geometry.of_sectors (Int64.shift_right_logical size sector_shift) in
+    let creator_application = Footer.default_creator_application in
+    let creator_version = Footer.default_creator_version in
+    let uuid = Uuidm.create `V4 in
+
+    let footer = {
+      Footer.features = [];
+      data_offset;
+      time_stamp = 0l; creator_application; creator_version;
+      creator_host_os = Host_OS.Other 0l;
+      original_size = size; current_size = size;
+      geometry; disk_type = Disk_type.Dynamic_hard_disk;
+      checksum = 0l; (* Filled in later *)
+      uid = uuid; saved_state = false;
+    } in
+
+    let header = {
+      Header.table_offset; max_table_entries; block_size_sectors_shift;
+      checksum = 0l;
+      parent_unique_id = blank_uuid;
+      parent_time_stamp = 0l;
+      parent_unicode_name = [| |];
+      parent_locators = [| Parent_locator.null; Parent_locator.null; Parent_locator.null; Parent_locator.null;
+                           Parent_locator.null; Parent_locator.null; Parent_locator.null; Parent_locator.null; |];
+    } in
+    let bat = Array.make header.Header.max_table_entries (BAT.unused) in
+
+    let sizeof_bat = BAT.sizeof_bytes header in
+
+    let sizeof_bitmap = Header.sizeof_bitmap header in
+    (* We'll always set all bitmap bits *)
+    let bitmap = Cstruct.create sizeof_bitmap in
+    for i = 0 to sizeof_bitmap - 1 do
+      Cstruct.set_uint8 bitmap i 0xff
+    done;
+    let sizeof_data_sectors = 1 lsl block_size_sectors_shift in
+    let sizeof_data = 1 lsl (block_size_sectors_shift + sector_shift) in
+
+    (* Calculate where the first data block will go. Note the sizeof_bat is already
+       rounded up to the next sector boundary. *)
+    let first_block = Int64.(table_offset ++ (of_int sizeof_bat)) in
+    let next_byte = ref first_block in
+    for i = 0 to max_table_entries - 1 do
+      if in_any_bat t i then begin
+        bat.(i) <- Int64.(to_int32(!next_byte lsr sector_shift));
+        next_byte := Int64.(!next_byte ++ (of_int sizeof_bitmap) ++ (of_int sizeof_data))
+      end
+    done;
+
+    let rec write_sectors buf from andthen =
+      if from >= (Cstruct.len buf)
+      then andthen ()
+      else
+        let sector = Cstruct.sub buf from 512 in
+        return(Cons(Sector sector, fun () -> write_sectors buf (from + 512) andthen)) in
+
+    let rec block i andthen =
+      let rec sector j =
+        let next () = if j = sizeof_data_sectors then block (i + 1) andthen else sector (j + 1) in
+        let absolute_sector = Int64.(add (shift_left (of_int i) block_size_sectors_shift) (of_int j)) in
+        Vhd_IO.get_sector_location t absolute_sector >>= function
+        | None ->
+          return (Cons(Empty 1L, next))
+        | Some (vhd', offset) ->
+          Vhd_IO.get_handle vhd' >>= fun handle ->
+          return (Cons(Copy(handle, Int64.shift_right offset sector_shift, 1), next)) in
+      if i >= header.Header.max_table_entries
+      then andthen ()
+      else return(Cons(Sector bitmap, fun () -> sector 0)) in
+
+    assert(Footer.sizeof = 512);
+    assert(Header.sizeof = 1024);
+
+    let buf = Cstruct.create (max Footer.sizeof (max Header.sizeof sizeof_bat)) in
+    let (_: Footer.t) = Footer.marshal buf footer in
+    return (Cons(Sector(Cstruct.sub buf 0 Footer.sizeof), fun () ->
+      let (_: Header.t) = Header.marshal buf header in
+      write_sectors (Cstruct.sub buf 0 Header.sizeof) 0 (fun () ->
+        return(Cons(Empty 1L, fun () ->
+          BAT.marshal buf bat;
+          write_sectors (Cstruct.sub buf 0 sizeof_bat) 0 (fun () ->
+            let (_: Footer.t) = Footer.marshal buf footer in
+            block 0 (fun () ->
+              return(Cons(Sector(Cstruct.sub buf 0 Footer.sizeof), fun () -> return End))
+            )
+          )
+       ))
+     )
+   ))
 end

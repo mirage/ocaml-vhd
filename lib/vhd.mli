@@ -295,4 +295,7 @@ module Make : functor (File : S.IO) -> sig
 
   val raw: Vhd_IO.handle Vhd.t -> File.fd Element.t stream File.t
 
+  val vhd: Vhd_IO.handle Vhd.t -> File.fd Element.t stream File.t
+  (** [vhd t] creates a vhd-formatted stream representing the consolidated
+      data present in the virtual disk [t] *)
 end
