@@ -1424,7 +1424,10 @@ module Make = functor(File: S.IO) -> struct
           return (Cons(Copy(handle, Int64.shift_right offset sector_shift, 1), next)) in
       if i >= header.Header.max_table_entries
       then andthen ()
-      else return(Cons(Sector bitmap, fun () -> sector 0)) in
+      else
+        if bat.(i) <> BAT.unused
+        then return(Cons(Sector bitmap, fun () -> sector 0))
+        else block (i + 1) andthen in
 
     assert(Footer.sizeof = 512);
     assert(Header.sizeof = 1024);
