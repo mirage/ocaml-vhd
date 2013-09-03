@@ -196,55 +196,92 @@ let execute state = function
         return state
     end
 
+(* Verify that vhd [t] contains the sectors [expected] *)
+let rec check_written_sectors t expected = match expected with
+  | [] -> return ()
+  | (x, data) :: xs ->
+    lwt y = Vhd_IO.read_sector t x in
+    lwt () = match y with
+    | None -> fail (Failure "read after write failed")
+    | Some y ->
+      assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal data y;
+      return () in
+    check_written_sectors t xs
+
+let empty_sector = Cstruct.create 512
+
+(* Verify the raw data stream from [t] contains exactly [expected] and no more.
+   If ~allow_empty then we accept sectors which are present (in the bitmap) but
+   physically empty. *)
+let check_raw_stream_contents ~allow_empty t expected =
+  lwt stream = raw t in
+  lwt next_sector = fold_left (fun offset x -> match x with
+    | Element.Empty y ->
+      (* all sectors in [offset, offset + y = 1] should not be in the contents list *)
+      List.iter (fun (x, _) ->
+        if x >= offset && x < (Int64.add offset y)
+        then failwith (Printf.sprintf "Sector %Ld is not supposed to be empty" x)
+      ) expected;
+      return (Int64.add offset y)
+    | Element.Copy(handle, offset', len) ->
+      (* all sectors in [offset, offset + len - 1] should be in the contents list *)
+      let rec check i =
+        if i >= len then return ()
+        else
+          let sector = Int64.(add offset (of_int i)) in
+          lwt actual = Vhd_lwt.Fd.really_read handle (Int64.(mul (add offset' (of_int i)) 512L)) 512 in
+
+          lwt () = if not(List.mem_assoc sector expected) then begin
+            if not allow_empty
+            then fail (Failure (Printf.sprintf "Sector %Ld is not supposed to be written to" sector))
+            else (assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal empty_sector actual; return ())
+          end else begin
+            let expected = List.assoc sector expected in
+            assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal expected actual;
+            return ()
+          end in
+          check (i + 1) in
+      lwt () = check 0 in
+      return (Int64.(add offset (of_int len)))
+    | Element.Sector data ->
+      (* the sector [offset] should be in the contents list *)
+      if not(List.mem_assoc offset expected)
+      then failwith (Printf.sprintf "Sector %Ld is not supposed to be written to" offset);
+      let expected = List.assoc offset expected in
+      assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal expected data;
+      return (Int64.(add offset 1L))
+  ) 0L stream in
+  (* [next_sector] should be higher than the highest sector in the contents list *)
+  let highest_sector = List.fold_left max (-1L) (List.map fst expected) in
+  assert (next_sector > highest_sector);
+  return ()
+
 let verify state = match state.child with
   | None -> return ()
-  | Some vhd ->
-    let rec loop = function
-      | [] -> return ()
-      | (x, data) :: xs ->
-        lwt y = Vhd_IO.read_sector vhd x in
-        lwt () = match y with
-        | None -> fail (Failure "read after write failed")
-        | Some y ->
-          assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal data y;
-          return () in
-        loop xs in
-    lwt () = loop state.contents in
-    lwt stream = raw vhd in
-    lwt next_sector = fold_left (fun offset x -> match x with
-      | Element.Empty y ->
-        (* all sectors in [offset, offset + y = 1] should not be in the contents list *)
-        List.iter (fun (x, _) ->
-          if x >= offset && x < (Int64.add offset y)
-          then failwith (Printf.sprintf "Sector %Ld is not supposed to be empty" x)
-        ) state.contents;
-        return (Int64.add offset y)
-      | Element.Copy(handle, offset', len) ->
-        (* all sectors in [offset, offset + len - 1] should be in the contents list *)
-        let rec check i =
-          if i >= len then return ()
-          else
-            let sector = Int64.(add offset (of_int i)) in
-            if not(List.mem_assoc sector state.contents)
-            then fail (Failure (Printf.sprintf "Sector %Ld is not supposed to be written to" sector))
-            else
-              let expected = List.assoc sector state.contents in
-              lwt actual = Vhd_lwt.Fd.really_read handle (Int64.mul offset' 512L) (len * 512) in
-              assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal expected actual;
-              check (i + 1) in
-        lwt () = check 0 in
-        return (Int64.(add offset (of_int len)))
+  | Some t ->
+    lwt () = check_written_sectors t state.contents in
+    lwt () = check_raw_stream_contents ~allow_empty:false t state.contents in
+
+    (* Stream the contents as a fresh vhd *)
+    let filename = make_new_filename () in
+    lwt fd = Fd.create filename in
+    lwt stream = vhd t in
+    lwt _ = fold_left (fun offset x -> match x with
+      | Element.Empty y -> return (Int64.(add offset (mul y 512L)))
       | Element.Sector data ->
-        (* the sector [offset] should be in the contents list *)
-        if not(List.mem_assoc offset state.contents)
-        then failwith (Printf.sprintf "Sector %Ld is not supposed to be written to" offset);
-        let expected = List.assoc offset state.contents in
-        assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal expected data;
-        return (Int64.(add offset 1L))
+        lwt () = Fd.really_write fd offset data in
+        return (Int64.(add offset (of_int (Cstruct.len data))))
+      | Element.Copy(fd', offset', len') ->
+        lwt buf = really_read fd' (Int64.mul offset' 512L) (len' * 512) in
+        lwt () = Fd.really_write fd offset buf in
+        return (Int64.(add offset (of_int (Cstruct.len buf))))
     ) 0L stream in
-    (* [next_sector] should be higher than the highest sector in the contents list *)
-    let highest_sector = List.fold_left max (-1L) (List.map fst state.contents) in
-    assert (next_sector > highest_sector);
+    lwt () = Fd.close fd in
+    (* Check the contents look correct *)
+    lwt t' = Vhd_IO.openfile filename in
+    lwt () = check_written_sectors t' state.contents in
+    lwt () = check_raw_stream_contents ~allow_empty:true t' state.contents in
+    lwt () = Vhd_IO.close t' in
     return ()
 
 let cleanup state =
