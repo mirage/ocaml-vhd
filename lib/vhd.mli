@@ -176,18 +176,21 @@ module Header : sig
 end
 
 module BAT : sig
-  type t = int32 array
+  type t
   (** Absolute sector offset of a data block, where a data block contains
       a sector bitmap and then data *)
 
+  val get: t -> int -> int32
+  (** [get t i] returns the [i]th entry *)
+
+  val set: t -> int -> int32 -> unit
+  (** [set t i j] sets the [i]th entry to [j] *)
+
+  val length: t -> int
+  (** [length t] the number of entries in the table *)
+
   val to_string : t -> string
-
-  val unused : int32
-  (** An 'unused' BAT entry indicates no block is present *)
-
-  val sizeof : Header.t -> int
-  val unmarshal : Cstruct.t -> Header.t -> Cstruct.uint32 array
-  val marshal : Cstruct.t -> t -> unit
+  (** [to_string t] creates a debug-printable string *)
 end
 
 module Bitmap : sig
@@ -218,8 +221,6 @@ module Vhd : sig
   }
 
   val check_overlapping_blocks : 'a t -> unit
-  exception EmptyVHD
-  val get_top_unused_offset : Header.t -> Int32.t array -> int64
 end
 
 module Element : sig
@@ -254,7 +255,7 @@ module Make : functor (File : S.IO) -> sig
     val write : File.fd -> int64 -> Header.t -> Header.t File.t
   end
   module BAT_IO : sig
-    val read : File.fd -> Header.t -> Cstruct.uint32 array File.t
+    val read : File.fd -> Header.t -> BAT.t File.t
     val write : File.fd -> Header.t -> BAT.t -> unit File.t
   end
   module Bitmap_IO : sig

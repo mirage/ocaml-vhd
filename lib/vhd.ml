@@ -715,13 +715,31 @@ module Header = struct
 end
 
 module BAT = struct
-  type t = int32 array
+  type t = {
+    data: int32 array;
+    mutable highest_value: int32;
+  }
 
   let unused = 0xffffffffl
 
-  let to_string t =
-    let _, used = Array.fold_left (fun (i, acc) x -> i + 1, (if x = unused then acc else (i, x) :: acc)) (0, []) t in
-    Printf.sprintf "(%d)[ %s ]" (Array.length t) (String.concat "; " (List.map (fun (i, x) -> Printf.sprintf "(%d, %lx)" i x) (List.rev used)))
+  let make (header: Header.t) = {
+    data = Array.create header.Header.max_table_entries unused;
+    highest_value = -1l;
+  }
+
+  let get t i = t.data.(i)
+  let set t i j =
+    t.data.(i) <- j;
+    (* TODO: we need a proper free 'list' if we are going to allow blocks to be deallocated
+       eg through TRIM *)
+    if j <> unused && j > t.highest_value
+    then t.highest_value <- j
+
+  let length t = Array.length t.data
+
+  let to_string (t: t) =
+    let _, used = Array.fold_left (fun (i, acc) x -> i + 1, (if x = unused then acc else (i, x) :: acc)) (0, []) t.data in
+    Printf.sprintf "(%d)[ %s ] with highest_value = %ld" (length t) (String.concat "; " (List.map (fun (i, x) -> Printf.sprintf "(%d, %lx)" i x) (List.rev used))) t.highest_value
 
   let sizeof_bytes (header: Header.t) =
     let size_needed = header.Header.max_table_entries * 4 in
@@ -731,21 +749,21 @@ module BAT = struct
   let sizeof (header: Header.t) = sizeof_bytes header / 4
 
   let unmarshal (buf: Cstruct.t) (header: Header.t) =
-    let t = Array.create header.Header.max_table_entries unused in
-    for i = 0 to header.Header.max_table_entries - 1 do
-      t.(i) <- Cstruct.BE.get_uint32 buf (i * 4)
+    let t = make header in
+    for i = 0 to length t - 1 do
+      set t i (Cstruct.BE.get_uint32 buf (i * 4))
     done;
     t
 
   let marshal (buf: Cstruct.t) (t: t) =
-    for i = 0 to Array.length t - 1 do
-      Cstruct.BE.set_uint32 buf (i * 4)  t.(i)
+    for i = 0 to length t - 1 do
+      Cstruct.BE.set_uint32 buf (i * 4) (get t i)
     done
   
   let dump t =
     Printf.printf "BAT\n";
     Printf.printf "-=-\n";
-    Array.iteri (fun i x -> Printf.printf "%d\t:0x%lx\n" i x) t
+    Array.iteri (fun i x -> Printf.printf "%d\t:0x%lx\n" i x) t.data
 end
 
 module Bitmap = struct
@@ -839,11 +857,11 @@ module Vhd = struct
     let bat_size = Int64.of_int t.header.Header.max_table_entries in
     let bat = tomarkers "BAT" bat_start bat_size in
     let blocks = bat @ blocks in
-    let bat_blocks = Array.to_list (Array.mapi (fun i b -> (i,b)) t.bat) in
+    let bat_blocks = Array.to_list (Array.mapi (fun i b -> (i,b)) t.bat.BAT.data) in
     let bat_blocks = List.filter (fun (_,b) -> b <> BAT.unused) bat_blocks in
     let bat_blocks = List.map (fun (i,b) ->
       let name = Printf.sprintf "block %d" i in
-      let start = Int64.mul 512L (Int64.of_int32 t.bat.(i)) in
+      let start = Int64.mul 512L (Int64.of_int32 (BAT.get t.bat i)) in
       let size = Int64.shift_left 1L (t.header.Header.block_size_sectors_shift + sector_shift) in
       tomarkers name start size) bat_blocks in
     let blocks = (List.flatten bat_blocks) @ blocks in
@@ -859,10 +877,9 @@ module Vhd = struct
   let get_top_unused_offset header bat =
     let open Int64 in
     try
-      let last_block_start = 
-        let entries = List.filter (fun x -> x<>BAT.unused) (Array.to_list bat) in
-        if List.length entries = 0 then raise EmptyVHD;
-        let max_entry = List.hd (List.rev (List.sort Int32.compare entries)) in
+      let last_block_start =
+        let max_entry = bat.BAT.highest_value in
+        if max_entry = -1l then raise EmptyVHD;
         512L ** (of_int32 max_entry) in
       last_block_start ++ (of_int (Header.sizeof_bitmap header)) ++ (1L lsl (header.Header.block_size_sectors_shift + sector_shift))
     with 
@@ -1007,7 +1024,7 @@ module Make = functor(File: S.IO) -> struct
 
     let read fd (header: Header.t) (bat: BAT.t) (block: int) =
       let open Int64 in
-      let pos = (of_int32 bat.(block)) lsl sector_shift in
+      let pos = (of_int32 (BAT.get bat block)) lsl sector_shift in
       really_read fd pos (Header.sizeof_bitmap header) >>= fun bitmap ->
       return (Partial bitmap)
   end
@@ -1082,7 +1099,7 @@ module Make = functor(File: S.IO) -> struct
         parent_unicode_name = [| |];
         parent_locators = Array.make 8 Parent_locator.null
       } in
-      let bat = Array.make header.Header.max_table_entries BAT.unused in
+      let bat = BAT.make header in
       File.create filename >>= fun fd ->
       let handle = ref (Some fd) in
       let t = { filename; handle; header; footer; parent = None; bat } in
@@ -1134,7 +1151,7 @@ module Make = functor(File: S.IO) -> struct
         parent_locators = [| locator0; Parent_locator.null; Parent_locator.null; Parent_locator.null;
                              Parent_locator.null; Parent_locator.null; Parent_locator.null; Parent_locator.null; |];
       } in
-      let bat = Array.make header.Header.max_table_entries (BAT.unused) in
+      let bat = BAT.make header in
       File.create filename >>= fun fd ->
       let handle = ref (Some fd) in
       let t = { filename; handle; header; footer; parent = Some parent; bat } in
@@ -1182,14 +1199,14 @@ module Make = functor(File: S.IO) -> struct
         let block_num = to_int (sector lsr t.Vhd.header.Header.block_size_sectors_shift) in
         let sector_in_block = rem sector (1L lsl t.Vhd.header.Header.block_size_sectors_shift) in
  
-        if t.Vhd.bat.(block_num) = BAT.unused
+        if BAT.get t.Vhd.bat block_num = BAT.unused
         then maybe_get_from_parent ()
         else begin
           Bitmap_IO.read handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
           let in_this_bitmap = Bitmap.get bitmap sector_in_block in
           match t.Vhd.footer.Footer.disk_type, in_this_bitmap with
           | _, true ->
-            let data_sector = (of_int32 t.Vhd.bat.(block_num)) ++ (of_int (Header.sizeof_bitmap t.Vhd.header) lsr sector_shift) ++ sector_in_block in
+            let data_sector = (of_int32 (BAT.get t.Vhd.bat block_num)) ++ (of_int (Header.sizeof_bitmap t.Vhd.header) lsr sector_shift) ++ sector_in_block in
             return (Some(t, data_sector lsl sector_shift))
           | Disk_type.Dynamic_hard_disk, false ->
             return None
@@ -1213,7 +1230,7 @@ module Make = functor(File: S.IO) -> struct
       let block_size_in_sectors = 1 lsl t.Vhd.header.Header.block_size_sectors_shift in
       let open Int64 in
       let bitmap_size = Header.sizeof_bitmap t.Vhd.header in
-      let bitmap_sector = of_int32 t.Vhd.bat.(block_num) in
+      let bitmap_sector = of_int32 (BAT.get t.Vhd.bat block_num) in
 
       let bitmap = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout bitmap_size)) in
       for i = 0 to bitmap_size - 1 do
@@ -1242,7 +1259,7 @@ module Make = functor(File: S.IO) -> struct
       then fail (Invalid_sector(sector, t.Vhd.footer.Footer.current_size lsr sector_shift))
       else
         let block_num = to_int (sector lsr t.Vhd.header.Header.block_size_sectors_shift) in
-        assert (block_num < (Array.length t.Vhd.bat));
+        assert (block_num < (BAT.length t.Vhd.bat));
         let sector_in_block = rem sector (of_int block_size_in_sectors) in
         let update_sector bitmap_sector =
           let bitmap_sector = of_int32 bitmap_sector in
@@ -1253,14 +1270,14 @@ module Make = functor(File: S.IO) -> struct
           | None -> return ()
           | Some (offset, buf) -> really_write handle ((bitmap_sector lsl sector_shift) ++ offset) buf in
 
-        if t.Vhd.bat.(block_num) = BAT.unused then begin
-          t.Vhd.bat.(block_num) <- Vhd.get_free_sector t.Vhd.header t.Vhd.bat;
+        if BAT.get t.Vhd.bat block_num = BAT.unused then begin
+          BAT.set t.Vhd.bat block_num (Vhd.get_free_sector t.Vhd.header t.Vhd.bat);
           write_zero_block handle t block_num >>= fun () ->
           BAT_IO.write handle t.Vhd.header t.Vhd.bat >>= fun () ->
           write_trailing_footer handle t >>= fun () ->
-          update_sector t.Vhd.bat.(block_num)
+          update_sector (BAT.get t.Vhd.bat block_num)
         end else begin
-          update_sector t.Vhd.bat.(block_num)
+          update_sector (BAT.get t.Vhd.bat block_num)
         end
   end
 
@@ -1287,7 +1304,7 @@ module Make = functor(File: S.IO) -> struct
 
   (* Test whether a block is in any BAT in the path to the root. If so then we will
      look up all sectors. *)
-  let rec in_any_bat vhd i = match vhd.Vhd.bat.(i) <> BAT.unused, vhd.Vhd.parent with
+  let rec in_any_bat vhd i = match BAT.get vhd.Vhd.bat i <> BAT.unused, vhd.Vhd.parent with
     | true, _ -> true
     | false, Some parent -> in_any_bat parent i
     | false, None -> false
@@ -1381,7 +1398,7 @@ module Make = functor(File: S.IO) -> struct
       parent_locators = [| Parent_locator.null; Parent_locator.null; Parent_locator.null; Parent_locator.null;
                            Parent_locator.null; Parent_locator.null; Parent_locator.null; Parent_locator.null; |];
     } in
-    let bat = Array.make header.Header.max_table_entries (BAT.unused) in
+    let bat = BAT.make header in
 
     let sizeof_bat = BAT.sizeof_bytes header in
 
@@ -1400,7 +1417,7 @@ module Make = functor(File: S.IO) -> struct
     let next_byte = ref first_block in
     for i = 0 to max_table_entries - 1 do
       if in_any_bat t i then begin
-        bat.(i) <- Int64.(to_int32(!next_byte lsr sector_shift));
+        BAT.set bat i (Int64.(to_int32(!next_byte lsr sector_shift)));
         next_byte := Int64.(!next_byte ++ (of_int sizeof_bitmap) ++ (of_int sizeof_data))
       end
     done;
@@ -1425,7 +1442,7 @@ module Make = functor(File: S.IO) -> struct
       if i >= header.Header.max_table_entries
       then andthen ()
       else
-        if bat.(i) <> BAT.unused
+        if BAT.get bat i <> BAT.unused
         then return(Cons(Sector bitmap, fun () -> sector 0))
         else block (i + 1) andthen in
 
