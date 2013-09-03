@@ -764,12 +764,15 @@ module BAT = struct
     done;
     Printf.sprintf "(%d rounded to %d)[ %s ] with highest_value = %ld" (length t) (Cstruct.len t.data / 4) (String.concat "; " (List.map (fun (i, x) -> Printf.sprintf "(%d, %lx)" i x) (List.rev !used))) t.highest_value
 
-(*
-  let sizeof (header: Header.t) = sizeof_bytes header / 4
-*)
   let unmarshal (buf: Cstruct.t) (header: Header.t) =
-    let t = make header in
-    Cstruct.blit buf 0 t.data 0 (sizeof_bytes header);
+    let t = {
+      data = buf;
+      max_table_entries = header.Header.max_table_entries;
+      highest_value = -1l;
+    } in
+    for i = 0 to length t - 1 do
+      if get t i > t.highest_value then t.highest_value <- get t i
+    done;
     t
 
   let marshal (buf: Cstruct.t) (t: t) =
