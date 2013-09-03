@@ -716,54 +716,71 @@ end
 
 module BAT = struct
   type t = {
-    data: int32 array;
+    max_table_entries: int;
+    data: Cstruct.t;
     mutable highest_value: int32;
   }
 
   let unused = 0xffffffffl
 
-  let make (header: Header.t) = {
-    data = Array.create header.Header.max_table_entries unused;
-    highest_value = -1l;
-  }
-
-  let get t i = t.data.(i)
+  let get t i = Cstruct.BE.get_uint32 t.data (i * 4)
   let set t i j =
-    t.data.(i) <- j;
+    Cstruct.BE.set_uint32 t.data (i * 4) j;
     (* TODO: we need a proper free 'list' if we are going to allow blocks to be deallocated
        eg through TRIM *)
     if j <> unused && j > t.highest_value
     then t.highest_value <- j
 
-  let length t = Array.length t.data
+  let length t = t.max_table_entries
 
-  let to_string (t: t) =
-    let _, used = Array.fold_left (fun (i, acc) x -> i + 1, (if x = unused then acc else (i, x) :: acc)) (0, []) t.data in
-    Printf.sprintf "(%d)[ %s ] with highest_value = %ld" (length t) (String.concat "; " (List.map (fun (i, x) -> Printf.sprintf "(%d, %lx)" i x) (List.rev used))) t.highest_value
+  let equal t1 t2 =
+    true
+    && t1.highest_value = t2.highest_value
+    && t1.max_table_entries = t2.max_table_entries
+    && (try
+         for i = 0 to length t1 - 1 do
+           if get t1 i <> get t2 i then raise Not_found
+         done;
+         true
+       with Not_found -> false)
 
+  (* We always round up the size of the BAT to the next sector *)
   let sizeof_bytes (header: Header.t) =
     let size_needed = header.Header.max_table_entries * 4 in
     (* The BAT is always extended to a sector boundary *)
     ((size_needed + sector_size - 1) lsr sector_shift) lsl sector_shift
 
-  let sizeof (header: Header.t) = sizeof_bytes header / 4
+  let make (header: Header.t) =
+    let data = Cstruct.create (sizeof_bytes header) in
+    for i = 0 to (Cstruct.len data) / 4 - 1 do
+      Cstruct.BE.set_uint32 data (i * 4) unused
+    done;
+    { max_table_entries = header.Header.max_table_entries; data; highest_value = -1l; }
 
+  let to_string (t: t) =
+    let used = ref [] in
+    for i = 0 to length t - 1 do
+      if get t i <> unused then used := (i, get t i) :: !used
+    done;
+    Printf.sprintf "(%d rounded to %d)[ %s ] with highest_value = %ld" (length t) (Cstruct.len t.data / 4) (String.concat "; " (List.map (fun (i, x) -> Printf.sprintf "(%d, %lx)" i x) (List.rev !used))) t.highest_value
+
+(*
+  let sizeof (header: Header.t) = sizeof_bytes header / 4
+*)
   let unmarshal (buf: Cstruct.t) (header: Header.t) =
     let t = make header in
-    for i = 0 to length t - 1 do
-      set t i (Cstruct.BE.get_uint32 buf (i * 4))
-    done;
+    Cstruct.blit buf 0 t.data 0 (sizeof_bytes header);
     t
 
   let marshal (buf: Cstruct.t) (t: t) =
-    for i = 0 to length t - 1 do
-      Cstruct.BE.set_uint32 buf (i * 4) (get t i)
-    done
+    Cstruct.blit t.data 0 buf 0 (Cstruct.len t.data)
   
   let dump t =
     Printf.printf "BAT\n";
     Printf.printf "-=-\n";
-    Array.iteri (fun i x -> Printf.printf "%d\t:0x%lx\n" i x) t.data
+    for i = 0 to t.max_table_entries - 1 do
+      Printf.printf "%d\t:0x%lx\n" i (get t i)
+    done
 end
 
 module Bitmap = struct
@@ -857,14 +874,17 @@ module Vhd = struct
     let bat_size = Int64.of_int t.header.Header.max_table_entries in
     let bat = tomarkers "BAT" bat_start bat_size in
     let blocks = bat @ blocks in
-    let bat_blocks = Array.to_list (Array.mapi (fun i b -> (i,b)) t.bat.BAT.data) in
-    let bat_blocks = List.filter (fun (_,b) -> b <> BAT.unused) bat_blocks in
-    let bat_blocks = List.map (fun (i,b) ->
-      let name = Printf.sprintf "block %d" i in
-      let start = Int64.mul 512L (Int64.of_int32 (BAT.get t.bat i)) in
-      let size = Int64.shift_left 1L (t.header.Header.block_size_sectors_shift + sector_shift) in
-      tomarkers name start size) bat_blocks in
-    let blocks = (List.flatten bat_blocks) @ blocks in
+    let bat_blocks = ref [] in
+    for i = 0 to BAT.length t.bat - 1 do
+      let e = BAT.get t.bat i in
+      if e <> BAT.unused then begin
+        let name = Printf.sprintf "block %d" i in
+        let start = Int64.mul 512L (Int64.of_int32 (BAT.get t.bat i)) in
+        let size = Int64.shift_left 1L (t.header.Header.block_size_sectors_shift + sector_shift) in
+        bat_blocks := (tomarkers name start size) @ !bat_blocks
+      end
+    done;
+    let blocks = blocks @ !bat_blocks in
     let get_pos = function | Start (_,a) -> a | End (_,a) -> a in
     let to_string = function
     | Start (name,pos) -> Printf.sprintf "%Lx START of section '%s'" pos name

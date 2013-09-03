@@ -180,6 +180,9 @@ module BAT : sig
   (** Absolute sector offset of a data block, where a data block contains
       a sector bitmap and then data *)
 
+  val equal: t -> t -> bool
+  (** [equal t1 t2] is true if [t1] and [t2] represent the same data *)
+
   val get: t -> int -> int32
   (** [get t i] returns the [i]th entry *)
 

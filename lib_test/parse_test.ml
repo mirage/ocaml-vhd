@@ -47,7 +47,7 @@ let check_empty_disk size =
   lwt vhd' = Vhd_IO.openfile filename in
   assert_equal ~printer:Header.to_string vhd.Vhd.header vhd'.Vhd.header;
   assert_equal ~printer:Footer.to_string vhd.Vhd.footer vhd'.Vhd.footer;
-  assert_equal ~printer:BAT.to_string vhd.Vhd.bat vhd'.Vhd.bat;
+  assert_equal ~printer:BAT.to_string ~cmp:BAT.equal vhd.Vhd.bat vhd'.Vhd.bat;
   lwt () = Vhd_IO.close vhd' in
   Vhd_IO.close vhd
 
@@ -60,7 +60,7 @@ let check_empty_snapshot size =
   lwt vhd'' = Vhd_IO.openfile filename in
   assert_equal ~printer:Header.to_string vhd'.Vhd.header vhd''.Vhd.header;
   assert_equal ~printer:Footer.to_string vhd'.Vhd.footer vhd''.Vhd.footer;
-  assert_equal ~printer:BAT.to_string vhd'.Vhd.bat vhd''.Vhd.bat;
+  assert_equal ~printer:BAT.to_string ~cmp:BAT.equal vhd'.Vhd.bat vhd''.Vhd.bat;
   lwt () = Vhd_IO.close vhd'' in
   lwt () = Vhd_IO.close vhd' in
   Vhd_IO.close vhd
