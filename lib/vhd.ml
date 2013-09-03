@@ -1292,25 +1292,23 @@ module Make = functor(File: S.IO) -> struct
     | false, Some parent -> in_any_bat parent i
     | false, None -> false
 
-  let rec coalesce_empty_sectors empties s =
-    s >>= function
-    | End ->
-      if empties > 0L
-      then return (Cons(Empty empties, fun () -> return End))
-      else return End
-    | Cons(Sector s, next) ->
-      let more () =
-        return (Cons(Sector s, fun () -> coalesce_empty_sectors 0L (next ()))) in
-      if empties > 0L
-      then return (Cons(Empty empties, more))
-      else more ()
-    | Cons(Copy(h, ofs, len), next) ->
-      let more () =
-        return (Cons(Copy(h, ofs, len), fun () -> coalesce_empty_sectors 0L (next ()))) in
-      if empties > 0L
-      then return (Cons(Empty empties, more))
-      else more ()
-    | Cons(Empty n, next) -> coalesce_empty_sectors (Int64.add empties n) (next ())
+  let rec coalesce_request acc s =
+    s >>= fun next -> match next, acc with
+    | End, None -> return End
+    | End, Some x -> return (Cons(x, fun () -> return End))
+    | Cons(Sector s, next), None -> return(Cons(Sector s, fun () -> coalesce_request None (next ())))
+    | Cons(Sector _, next), Some x -> return(Cons(x, fun () -> coalesce_request None s))
+    | Cons(Empty n, next), None -> coalesce_request (Some(Empty n)) (next ())
+    | Cons(Empty n, next), Some(Empty m) -> coalesce_request (Some(Empty (Int64.add n m))) (next ())
+    | Cons(Empty n, next), Some x -> return (Cons(x, fun () -> coalesce_request None s))
+    | Cons(Copy(h, ofs, len), next), None -> coalesce_request (Some (Copy(h, ofs, len))) (next ())
+    | Cons(Copy(h, ofs, len), next), Some(Copy(h', ofs', len')) ->
+      if Int64.(add ofs (of_int len)) = ofs' && h == h'
+      then coalesce_request (Some(Copy(h, ofs, len + len'))) (next ())
+      else if Int64.(add ofs' (of_int len')) = ofs && h == h'
+      then coalesce_request (Some(Copy(h, ofs', len + len'))) (next ())
+      else return (Cons(Copy(h', ofs', len'), fun () -> coalesce_request None s))
+    | Cons(Copy(h, ofs, len), next), Some x -> return(Cons(x, fun () -> coalesce_request None s))
 
   let raw (vhd: Vhd_IO.handle Vhd.t) =
     let block_size_sectors_shift = vhd.Vhd.header.Header.block_size_sectors_shift in
@@ -1342,7 +1340,7 @@ module Make = functor(File: S.IO) -> struct
           sector 0
         end
       end in
-    coalesce_empty_sectors 0L (block 0)
+    coalesce_request None (block 0)
 
   let vhd (t: Vhd_IO.handle Vhd.t) =
     let block_size_sectors_shift = t.Vhd.header.Header.block_size_sectors_shift in
@@ -1433,7 +1431,7 @@ module Make = functor(File: S.IO) -> struct
 
     let buf = Cstruct.create (max Footer.sizeof (max Header.sizeof sizeof_bat)) in
     let (_: Footer.t) = Footer.marshal buf footer in
-    coalesce_empty_sectors 0L (return (Cons(Sector(Cstruct.sub buf 0 Footer.sizeof), fun () ->
+    coalesce_request None (return (Cons(Sector(Cstruct.sub buf 0 Footer.sizeof), fun () ->
       let (_: Header.t) = Header.marshal buf header in
       write_sectors (Cstruct.sub buf 0 Header.sizeof) 0 (fun () ->
         return(Cons(Empty 1L, fun () ->
