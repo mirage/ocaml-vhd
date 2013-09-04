@@ -21,6 +21,7 @@ Library vhd_lwt
   Findlibparent:      vhd
   Modules:            Vhd_lwt
   BuildDepends:       lwt, lwt.unix
+  CSources:           odirect_stubs.c
 
 Executable vhdtool
   CompiledObject:     best

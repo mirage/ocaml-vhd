@@ -1,5 +1,5 @@
 (* OASIS_START *)
-(* DO NOT EDIT (digest: 0b65b89d9d618ce8284765c0f3eb64f9) *)
+(* DO NOT EDIT (digest: e4b3b2d5369bb33fc494782f4f86e2a5) *)
 module OASISGettext = struct
 (* # 21 "src/oasis/OASISGettext.ml" *)
 
@@ -478,7 +478,7 @@ open Ocamlbuild_plugin;;
 let package_default =
   {
      MyOCamlbuildBase.lib_ocaml = [("vhd", ["lib"]); ("vhd_lwt", ["lib"])];
-     lib_c = [];
+     lib_c = [("vhd_lwt", "lib", [])];
      flags = [];
      includes = [("lib_test", ["lib"]); ("cli", ["lib"])];
      }

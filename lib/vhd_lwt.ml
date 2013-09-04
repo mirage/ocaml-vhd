@@ -20,6 +20,8 @@ module Fd = struct
     lock: Lwt_mutex.t;
   }
 
+  external openfile_direct: string -> int -> Unix.file_descr = "stub_openfile_direct"
+
   let open_create_common flags filename =
     lwt fd = Lwt_unix.openfile filename flags 0o664 in
     let lock = Lwt_mutex.create () in
