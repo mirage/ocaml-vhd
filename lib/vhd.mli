@@ -13,7 +13,10 @@
  *)
 
 val sector_size: int
+(** Sector size of the vhd virtual disk, in bytes *)
+
 val sector_shift: int
+(** [1 lsl sector_shift = sector_size] *)
 
 exception Invalid_sector of int64 (* request *) * int64 (* maximum *)
 (** An attempt to access (read/write) an invalid sector *)
@@ -227,6 +230,8 @@ module Vhd : sig
 end
 
 module Element : sig
+
+  (** A disk can be streamed as a sequence of elements *)
   type 'a t =
     | Copy of ('a * int64 * int)
     (** [Copy (t, offset, len)] copies [len] sectors from sector [offset]
@@ -244,31 +249,16 @@ end
 
 module Make : functor (File : S.IO) -> sig
   open File
-  module Footer_IO : sig
-    val read : File.fd -> int64 -> Footer.t File.t
-    val write : File.fd -> int64 -> Footer.t -> Footer.t File.t
-  end
-  module Parent_locator_IO : sig
-    val read : File.fd -> Parent_locator.t -> Parent_locator.t File.t
-    val write : File.fd -> Parent_locator.t -> unit File.t
-  end
-  module Header_IO : sig
-    val get_parent_filename : Header.t -> string File.t
-    val read : File.fd -> int64 -> Header.t File.t
-    val write : File.fd -> int64 -> Header.t -> Header.t File.t
-  end
-  module BAT_IO : sig
-    val read : File.fd -> Header.t -> BAT.t File.t
-    val write : File.fd -> Header.t -> BAT.t -> unit File.t
-  end
-  module Bitmap_IO : sig
-    val read : File.fd -> Header.t -> BAT.t -> int -> Bitmap.t File.t
-  end
+
   module Vhd_IO : sig
     type handle
 
     val openfile : string -> handle Vhd.t t
+    (** [openfile filename] reads the vhd metadata from [filename] (and other
+        files on the path from [filename] to the root of the tree) *)
+
     val close : handle Vhd.t -> unit t
+    (** [close t] frees all resources associated with [t] *)
 
     val create_dynamic: filename:string -> size:int64
       -> ?uuid:Uuidm.t
@@ -286,21 +276,37 @@ module Make : functor (File : S.IO) -> sig
     (** [create_difference ~filename ~parent] creates an empty differencing vhd
         with filename [filename] backed by parent [parent]. *)
 
-    val write : handle Vhd.t -> handle Vhd.t t
     val get_sector_location : handle Vhd.t -> int64 -> (handle Vhd.t * int64) option t
+    (** [get_sector_location t sector] returns [Some (t', sector')] if the
+        [sector] in the virtual disk resides in physical [sector'] in
+        the vhd [t'] (where [t'] may be any vhd on the path from [t] to the
+        root of the tree. If no sector is present, this returns [None]. *)
+
     val read_sector : handle Vhd.t -> int64 -> Cstruct.t option t
+    (** [read_sector t sector] returns [Some data] where [data] is the byte
+        data stored at [sector] in the virtual disk, if any such data exists.
+        If no data is stored at [sector], this returns [None] *)
+
     val write_sector : handle Vhd.t -> int64 -> Cstruct.t -> unit t
+    (** [write_sector t sector data] writes [data] at [sector] in [t] and
+        updates all file metadata to preserve consistency. *)
   end
 
   type 'a stream =
     | Cons of 'a * (unit -> 'a stream t)
     | End
+  (** a lazy stream *)
 
   val iter: ('a -> unit t) -> 'a stream -> unit t
+  (** [iter f stream] applies each element from [stream] to [f] in order. *)
 
   val fold_left: ('a -> 'b -> 'a t) -> 'a -> 'b stream -> 'a t
+  (** [fold_left f initial stream] folds [f] across all the elements in
+      the [stream] with neutral element [initial] *)
 
   val raw: Vhd_IO.handle Vhd.t -> File.fd Element.t stream File.t
+  (** [raw t] creates a raw-formatted stream representing the consolidated
+      data present in the virtual disk [t] *)
 
   val vhd: Vhd_IO.handle Vhd.t -> File.fd Element.t stream File.t
   (** [vhd t] creates a vhd-formatted stream representing the consolidated

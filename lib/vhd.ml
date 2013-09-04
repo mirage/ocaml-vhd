@@ -1249,28 +1249,39 @@ module Make = functor(File: S.IO) -> struct
         really_read handle offset sector_size >>= fun data ->
         return (Some data)
 
+    let constant_sector v =
+      let buf = Cstruct.create 512 in
+      for i = 0 to 511 do
+        Cstruct.set_uint8 buf i v
+      done;
+      buf
+
+    let all_zeroes = constant_sector 0
+    let all_ones   = constant_sector 0xff
+ 
     let write_zero_block handle t block_num =
       let block_size_in_sectors = 1 lsl t.Vhd.header.Header.block_size_sectors_shift in
       let open Int64 in
       let bitmap_size = Header.sizeof_bitmap t.Vhd.header in
       let bitmap_sector = of_int32 (BAT.get t.Vhd.bat block_num) in
 
-      let bitmap = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout bitmap_size)) in
-      for i = 0 to bitmap_size - 1 do
-        Cstruct.set_uint8 bitmap i 0
-      done;
-      really_write handle (bitmap_sector lsl sector_shift) bitmap >>= fun () ->
+      ( if bitmap_size = 512
+        then really_write handle (bitmap_sector lsl sector_shift) all_zeroes
+        else begin
+          let bitmap = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout bitmap_size)) in
+          for i = 0 to bitmap_size - 1 do
+            Cstruct.set_uint8 bitmap i 0
+          done;
+          really_write handle (bitmap_sector lsl sector_shift) bitmap
+        end )
+      >>= fun () ->
 
-      let sector = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout 512)) in
-      for i = 0 to 511 do
-        Cstruct.set_uint8 sector i 0
-      done;
       let rec loop n =
         if n >= block_size_in_sectors
         then return ()
         else
           let pos = (bitmap_sector lsl sector_shift) ++ (of_int bitmap_size) ++ (of_int (sector_size * n)) in
-          really_write handle pos sector >>= fun () ->
+          really_write handle pos all_zeroes >>= fun () ->
           loop (n + 1) in
       loop 0
 
