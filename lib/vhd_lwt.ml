@@ -12,6 +12,8 @@
  * GNU Lesser General Public License for more details.
  *)
 
+let use_odirect = ref false
+
 module Memory = struct
 
   type buf = (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
@@ -50,9 +52,11 @@ module Fd = struct
   }
 
   external openfile_direct: string -> int -> Unix.file_descr = "stub_openfile_direct"
+  let openfile_buffered filename mode =
+    Unix.openfile filename [ Unix.O_RDWR ] mode
 
   let openfile filename =
-    let unix_fd = openfile_direct filename 0o644 in
+    let unix_fd = (if !use_odirect then openfile_direct else openfile_buffered) filename 0o644 in
     let fd = Lwt_unix.of_unix_file_descr unix_fd in
     let lock = Lwt_mutex.create () in
     return { fd; filename; lock }
