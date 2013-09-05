@@ -965,7 +965,7 @@ end
 module Element = struct
   type 'a t =
     | Copy of ('a * int64 * int)
-    | Sector of Cstruct.t
+    | Sectors of Cstruct.t
     | Empty of int64
 
   let to_string = function
@@ -973,8 +973,11 @@ module Element = struct
       Printf.sprintf "1 sector copied starting at offset %Ld" offset
     | Copy(_, offset, len) ->
       Printf.sprintf "%d sectors copied starting at offset %Ld" len offset
-    | Sector x ->
-      Printf.sprintf "Sector \"%s...\"" (String.escaped (Cstruct.to_string (Cstruct.sub x 0 16)))
+    | Sectors x ->
+      let text = String.escaped (Cstruct.to_string (Cstruct.sub x 0 16)) in
+      if Cstruct.len x = sector_size
+      then Printf.sprintf "1 sector \"%s...\"" text
+      else Printf.sprintf "%d sectors \"%s...\"" (Cstruct.len x / sector_size) text
     | Empty 1L ->
       "1 empty sector"
     | Empty x ->
@@ -982,7 +985,7 @@ module Element = struct
 
   let len = function
     | Copy(_, _, len) -> len
-    | Sector _ -> 1
+    | Sectors x -> Cstruct.len x / sector_size
     | Empty x -> Int64.to_int x
 end
 
@@ -1029,7 +1032,9 @@ module Make = functor(File: S.IO) -> struct
     let read fd t =
       let l = Int32.to_int t.platform_data_length in
       let l_rounded = ((l + 511) lsr sector_shift) lsl sector_shift in
-      really_read fd t.platform_data_offset l_rounded >>= fun platform_data ->
+      ( if l_rounded = 0
+        then return (Cstruct.create 0)
+        else really_read fd t.platform_data_offset l_rounded ) >>= fun platform_data ->
       let platform_data = Cstruct.sub platform_data 0 l in
       return { t with platform_data }
 
@@ -1321,15 +1326,18 @@ module Make = functor(File: S.IO) -> struct
         really_read handle offset sector_size >>= fun data ->
         return (Some data)
 
-    let constant_sector v =
-      let buf = File.alloc 512 in
-      for i = 0 to 511 do
+    let constant size v =
+      let buf = File.alloc size in
+      for i = 0 to size - 1 do
         Cstruct.set_uint8 buf i v
       done;
       buf
 
-    let all_zeroes = constant_sector 0
-    let all_ones   = constant_sector 0xff
+    let sectors_in_2mib = 2 * 1024 * 2
+    let empty_2mib = constant (sectors_in_2mib * 512) 0
+
+    let all_zeroes = constant 512 0
+    let all_ones   = constant 512 0xff
  
     let write_zero_block handle t block_num =
       let block_size_in_sectors = 1 lsl t.Vhd.header.Header.block_size_sectors_shift in
@@ -1349,12 +1357,17 @@ module Make = functor(File: S.IO) -> struct
       >>= fun () ->
 
       let rec loop n =
-        if n >= block_size_in_sectors
-        then return ()
+        let pos = (bitmap_sector lsl sector_shift) ++ (of_int bitmap_size) ++ (of_int (sector_size * n)) in
+        if n + sectors_in_2mib <= block_size_in_sectors
+        then
+          really_write handle pos empty_2mib >>= fun () ->
+          loop (n + sectors_in_2mib)
         else
-          let pos = (bitmap_sector lsl sector_shift) ++ (of_int bitmap_size) ++ (of_int (sector_size * n)) in
-          really_write handle pos all_zeroes >>= fun () ->
-          loop (n + 1) in
+          if n >= block_size_in_sectors
+          then return ()
+          else
+            really_write handle pos all_zeroes >>= fun () ->
+            loop (n + 1) in
       loop 0
 
     let write_sector t sector data =
@@ -1421,8 +1434,8 @@ module Make = functor(File: S.IO) -> struct
     s >>= fun next -> match next, acc with
     | End, None -> return End
     | End, Some x -> return (Cons(x, fun () -> return End))
-    | Cons(Sector s, next), None -> return(Cons(Sector s, fun () -> coalesce_request None (next ())))
-    | Cons(Sector _, next), Some x -> return(Cons(x, fun () -> coalesce_request None s))
+    | Cons(Sectors s, next), None -> return(Cons(Sectors s, fun () -> coalesce_request None (next ())))
+    | Cons(Sectors _, next), Some x -> return(Cons(x, fun () -> coalesce_request None s))
     | Cons(Empty n, next), None -> coalesce_request (Some(Empty n)) (next ())
     | Cons(Empty n, next), Some(Empty m) -> coalesce_request (Some(Empty (Int64.add n m))) (next ())
     | Cons(Empty n, next), Some x -> return (Cons(x, fun () -> coalesce_request None s))
@@ -1449,12 +1462,13 @@ module Make = functor(File: S.IO) -> struct
         if not(in_any_bat vhd i)
         then return (Cons(empty_block, next_block))
         else begin
+          let absolute_block_start = Int64.(shift_left (of_int i) block_size_sectors_shift) in
           let rec sector j =
             let next_sector () = sector (j + 1) in
             if j = 1 lsl block_size_sectors_shift
             then next_block ()
             else begin
-              let absolute_sector = Int64.(add (shift_left (of_int i) block_size_sectors_shift) (of_int j)) in
+              let absolute_sector = Int64.(add absolute_block_start (of_int j)) in
               Vhd_IO.get_sector_location vhd absolute_sector >>= function
               | None ->
                 return (Cons(empty_sector, next_sector))
@@ -1532,11 +1546,7 @@ module Make = functor(File: S.IO) -> struct
     done;
 
     let rec write_sectors buf from andthen =
-      if from >= (Cstruct.len buf)
-      then andthen ()
-      else
-        let sector = Cstruct.sub buf from 512 in
-        return(Cons(Sector sector, fun () -> write_sectors buf (from + 512) andthen)) in
+      return(Cons(Sectors buf, andthen)) in
 
     let rec block i andthen =
       let rec sector j =
@@ -1552,7 +1562,7 @@ module Make = functor(File: S.IO) -> struct
       then andthen ()
       else
         if BAT.get bat i <> BAT.unused
-        then return(Cons(Sector bitmap, fun () -> sector 0))
+        then return(Cons(Sectors bitmap, fun () -> sector 0))
         else block (i + 1) andthen in
 
     assert(Footer.sizeof = 512);
@@ -1560,7 +1570,7 @@ module Make = functor(File: S.IO) -> struct
 
     let buf = File.alloc (max Footer.sizeof (max Header.sizeof sizeof_bat)) in
     let (_: Footer.t) = Footer.marshal buf footer in
-    coalesce_request None (return (Cons(Sector(Cstruct.sub buf 0 Footer.sizeof), fun () ->
+    coalesce_request None (return (Cons(Sectors(Cstruct.sub buf 0 Footer.sizeof), fun () ->
       let (_: Header.t) = Header.marshal buf header in
       write_sectors (Cstruct.sub buf 0 Header.sizeof) 0 (fun () ->
         return(Cons(Empty 1L, fun () ->
@@ -1568,7 +1578,7 @@ module Make = functor(File: S.IO) -> struct
           write_sectors (Cstruct.sub buf 0 sizeof_bat) 0 (fun () ->
             let (_: Footer.t) = Footer.marshal buf footer in
             block 0 (fun () ->
-              return(Cons(Sector(Cstruct.sub buf 0 Footer.sizeof), fun () -> return End))
+              return(Cons(Sectors(Cstruct.sub buf 0 Footer.sizeof), fun () -> return End))
             )
           )
        ))

@@ -205,8 +205,8 @@ let empty_sector = Vhd_lwt.Memory.alloc 512
 let check_raw_stream_contents ~allow_empty t expected =
   lwt stream = raw t in
   lwt next_sector = fold_left (fun offset x -> match x with
-    | Element.Empty y ->
-      (* all sectors in [offset, offset + y = 1] should not be in the contents list *)
+    | Element.Empty y -> 
+     (* all sectors in [offset, offset + y = 1] should not be in the contents list *)
       List.iter (fun (x, _) ->
         if x >= offset && x < (Int64.add offset y)
         then failwith (Printf.sprintf "Sector %Ld is not supposed to be empty" x)
@@ -214,31 +214,38 @@ let check_raw_stream_contents ~allow_empty t expected =
       return (Int64.add offset y)
     | Element.Copy(handle, offset', len) ->
       (* all sectors in [offset, offset + len - 1] should be in the contents list *)
+      lwt data = Vhd_lwt.Fd.really_read handle (Int64.(mul offset' 512L)) (len * 512) in
       let rec check i =
-        if i >= len then return ()
+        if i >= len then ()
         else
           let sector = Int64.(add offset (of_int i)) in
-          lwt actual = Vhd_lwt.Fd.really_read handle (Int64.(mul (add offset' (of_int i)) 512L)) 512 in
+          let actual = Cstruct.sub data (i * 512) 512 in
 
-          lwt () = if not(List.mem_assoc sector expected) then begin
+          if not(List.mem_assoc sector expected) then begin
             if not allow_empty
-            then fail (Failure (Printf.sprintf "Sector %Ld is not supposed to be written to" sector))
-            else (assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal empty_sector actual; return ())
+            then failwith (Printf.sprintf "Sector %Ld is not supposed to be written to" sector)
+            else assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal empty_sector actual
           end else begin
             let expected = List.assoc sector expected in
             assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal expected actual;
-            return ()
-          end in
+          end;
           check (i + 1) in
-      lwt () = check 0 in
+      check 0;
       return (Int64.(add offset (of_int len)))
-    | Element.Sector data ->
-      (* the sector [offset] should be in the contents list *)
-      if not(List.mem_assoc offset expected)
-      then failwith (Printf.sprintf "Sector %Ld is not supposed to be written to" offset);
-      let expected = List.assoc offset expected in
-      assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal expected data;
-      return (Int64.(add offset 1L))
+    | Element.Sectors data ->
+      let rec loop offset remaining =
+        if Cstruct.len remaining = 0
+        then return offset
+        else
+          (* the sector [offset] should be in the contents list *)
+          if not(List.mem_assoc offset expected)
+          then failwith (Printf.sprintf "Sector %Ld is not supposed to be written to" offset)
+          else
+            let expected = List.assoc offset expected in
+            let actual = Cstruct.sub remaining 0 sector_size in
+            assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal expected actual;
+            loop (Int64.(add offset 1L)) (Cstruct.shift remaining sector_size) in
+      loop offset data
   ) 0L stream in
   (* [next_sector] should be higher than the highest sector in the contents list *)
   let highest_sector = List.fold_left max (-1L) (List.map fst expected) in
@@ -257,7 +264,7 @@ let verify state = match state.child with
     lwt stream = vhd t in
     lwt _ = fold_left (fun offset x -> match x with
       | Element.Empty y -> return (Int64.(add offset (mul y 512L)))
-      | Element.Sector data ->
+      | Element.Sectors data ->
         lwt () = Fd.really_write fd offset data in
         return (Int64.(add offset (of_int (Cstruct.len data))))
       | Element.Copy(fd', offset', len') ->
@@ -324,7 +331,7 @@ let all_programs =
     create_write_read_leaf;
     create_write_read_parent;
     create_write_overwrite;
-  ]
+]
 
 let all_program_tests = List.map (fun p ->
   (string_of_program p) >:: (fun () -> Lwt_main.run (run p))
@@ -340,6 +347,7 @@ let _ =
   let check_empty_disk size =
     Printf.sprintf "check_empty_disk_%Ld" size
     >:: (fun () -> Lwt_main.run (check_empty_disk size)) in
+
   let check_empty_snapshot size =
     Printf.sprintf "check_empty_snapshot_%Ld" size
     >:: (fun () -> Lwt_main.run (check_empty_snapshot size)) in
