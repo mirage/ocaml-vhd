@@ -230,6 +230,7 @@ module Vhd : sig
     footer : Footer.t;
     parent : 'a t option;
     bat : BAT.t;
+    bitmap_cache : (int * Bitmap.t) option ref;
   }
 
   val check_overlapping_blocks : 'a t -> unit

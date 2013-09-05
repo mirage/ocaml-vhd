@@ -883,6 +883,7 @@ module Vhd = struct
     footer: Footer.t;
     parent: 'a t option;
     bat: BAT.t;
+    bitmap_cache: (int * Bitmap.t) option ref; (* effective only for streaming *)
   }
 
   let rec dump t =
@@ -1190,7 +1191,7 @@ module Make = functor(File: S.IO) -> struct
       let bat = BAT.of_buffer header bat_buffer in
       File.create filename >>= fun fd ->
       let handle = ref (Some fd) in
-      let t = { filename; handle; header; footer; parent = None; bat } in
+      let t = { filename; handle; header; footer; parent = None; bat; bitmap_cache = ref None } in
       write t >>= fun t ->
       return t
 
@@ -1243,7 +1244,7 @@ module Make = functor(File: S.IO) -> struct
       let bat = BAT.of_buffer header bat_buffer in
       File.create filename >>= fun fd ->
       let handle = ref (Some fd) in
-      let t = { filename; handle; header; footer; parent = Some parent; bat } in
+      let t = { filename; handle; header; footer; parent = Some parent; bat; bitmap_cache = ref None } in
       write t >>= fun t ->
       return t
 
@@ -1260,7 +1261,7 @@ module Make = functor(File: S.IO) -> struct
         | _ ->
           return None) >>= fun parent ->
       let handle = ref (Some fd) in
-      return { filename; handle; header; footer; bat; parent }
+      return { filename; handle; header; footer; bat; bitmap_cache = ref None; parent }
 
     let close t =
       (* This is where we could repair the footer if we have chosen not to
@@ -1291,7 +1292,12 @@ module Make = functor(File: S.IO) -> struct
         if BAT.get t.Vhd.bat block_num = BAT.unused
         then maybe_get_from_parent ()
         else begin
-          Bitmap_IO.read handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
+          ( match !(t.Vhd.bitmap_cache) with
+            | Some (block_num', bitmap) when block_num' = block_num -> return bitmap
+            | _ ->
+              Bitmap_IO.read handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
+              t.Vhd.bitmap_cache := Some(block_num, bitmap);
+              return bitmap ) >>= fun bitmap ->
           let in_this_bitmap = Bitmap.get bitmap sector_in_block in
           match t.Vhd.footer.Footer.disk_type, in_this_bitmap with
           | _, true ->
