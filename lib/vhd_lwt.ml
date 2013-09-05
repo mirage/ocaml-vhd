@@ -12,62 +12,122 @@
  * GNU Lesser General Public License for more details.
  *)
 
+module Memory = struct
+
+  type buf = (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+
+  external alloc_pages: int -> buf = "caml_alloc_pages"
+
+  let get n =
+    if n < 1
+    then raise (Invalid_argument "The number of page should be greater or equal to 1")
+    else
+      try alloc_pages n with _ ->
+        Gc.compact ();
+        try alloc_pages n with _ -> raise Out_of_memory
+
+  let page_size = 4096
+
+  let alloc_bigarray bytes =
+    (* round up to next PAGE_SIZE *)
+    let pages = (bytes + page_size - 1) / page_size in
+    (* but round-up 0 pages to 0 *)
+    let pages = max pages 1 in
+    get pages
+
+  let alloc bytes =
+    let larger_than_we_need = Cstruct.of_bigarray (alloc_bigarray bytes) in
+    Cstruct.sub larger_than_we_need 0 bytes
+end
+
 module Fd = struct
   open Lwt
 
   type fd = {
     fd: Lwt_unix.file_descr;
+    filename: string;
     lock: Lwt_mutex.t;
   }
 
   external openfile_direct: string -> int -> Unix.file_descr = "stub_openfile_direct"
 
-  let open_create_common flags filename =
-    lwt fd = Lwt_unix.openfile filename flags 0o664 in
+  let openfile filename =
+    let unix_fd = openfile_direct filename 0o644 in
+    let fd = Lwt_unix.of_unix_file_descr unix_fd in
     let lock = Lwt_mutex.create () in
-    return {fd; lock}
+    return { fd; filename; lock }
 
-  let openfile = open_create_common [ Unix.O_RDWR ]
-  let create = open_create_common [ Unix.O_RDWR; Unix.O_CREAT; Unix.O_TRUNC ]
+  let create filename =
+    (* First create the file as normal *)
+    lwt fd = Lwt_unix.openfile filename [ Unix.O_RDWR; Unix.O_CREAT; Unix.O_TRUNC ] 0o644 in
+    lwt () = Lwt_unix.close fd in
+    (* Then re-open using our new API *)
+    openfile filename
 
   let close t = Lwt_unix.close t.fd
 
-  let really_read { fd; lock } offset (* in file *) n =
-    let buf = Lwt_bytes.create n in
-    let rec rread fd buf ofs len = 
+  let really_read { fd; filename; lock } offset (* in file *) n =
+    let buf = Memory.alloc_bigarray n in
+    let rec rread acc fd buf ofs len = 
       lwt n = Lwt_bytes.read fd buf ofs len in
-      match n with
-      | _ when n = len -> return () (* NB it's ok for n = len = 0 *)
-      | 0 -> fail End_of_file
-      | n -> rread fd buf (ofs + n) (len - n) in
+      let len = len - n in
+      let acc = acc + n in
+      if len = 0 || n = 0
+      then return acc
+      else rread acc fd buf (ofs + n) len in
+    (* All reads and writes should be sector-aligned *)
+    assert(Int64.(mul(div offset 512L) 512L) = offset);
+    if (n / 512 * 512 <> n) then begin
+      Printf.fprintf stderr "not sector aligned: %d\n%!" n;
+      assert false
+    end;
+    assert(n / 512 * 512 = n);
+
     Lwt_mutex.with_lock lock
       (fun () ->
         try_lwt
           lwt _ = Lwt_unix.LargeFile.lseek fd offset Unix.SEEK_SET in
-          lwt () = rread fd buf 0 n in
-          return (Cstruct.of_bigarray buf)
-        with End_of_file as e ->
+          lwt read = rread 0 fd buf 0 n in
+          if read = 0 && n <> 0
+          then fail End_of_file
+          else return (Cstruct.(sub (of_bigarray buf) 0 n))
+        with
+        | Unix.Unix_error(Unix.EINVAL, "read", "") as e ->
+          Printf.fprintf stderr "really_read offset = %Ld len = %d: EINVAL (alignment?)\n%!" offset n;
+          fail e
+        | End_of_file as e ->
           Printf.fprintf stderr "really_read offset = %Ld len = %d: End_of_file\n%!" offset n;
           fail e 
       )
 
-  let really_write { fd; lock } offset (* in file *) buffer =
+  let really_write { fd; filename; lock } offset (* in file *) buffer =
     let ofs = buffer.Cstruct.off in
     let len = buffer.Cstruct.len in
     let buf = buffer.Cstruct.buffer in
+    (* All reads and writes should be sector-aligned *)
+    assert(Int64.(mul(div offset 512L) 512L) = offset);
+    assert(len / 512 * 512 = len);
 
-    let rec rwrite fd buf ofs len =
+    let rec rwrite acc fd buf ofs len =
       lwt n = Lwt_bytes.write fd buf ofs len in
-      match n with
-      | n when n = len -> return () (* NB it's ok for n = len = 0 *)
-      | 0 -> fail End_of_file
-      | n -> rwrite fd buf (ofs + n) (len - n) in
+      let len = len - n in
+      let acc = acc + n in
+      if len = 0 || n = 0
+      then return acc
+      else rwrite acc fd buf (ofs + n) len in
     Lwt_mutex.with_lock lock
       (fun () ->
         try_lwt
           lwt _ = Lwt_unix.LargeFile.lseek fd offset Unix.SEEK_SET in
-          rwrite fd buf ofs len
-        with End_of_file as e ->
+          lwt written = rwrite 0 fd buf ofs len in
+          if written = 0 && len <> 0
+          then fail End_of_file
+          else return ()
+        with
+        | Unix.Unix_error(Unix.EINVAL, "write", "") as e ->
+          Printf.fprintf stderr "really_write offset = %Ld len = %d: EINVAL (alignment?)\n%!" offset len;
+          fail e
+        | End_of_file as e ->
           Printf.fprintf stderr "really_write offset = %Ld len = %d: End_of_file\n%!" offset (Cstruct.len buffer);
           fail e 
       )
@@ -96,7 +156,7 @@ module File = struct
     return (get_vhd_time (st.Unix.st_mtime))
 
   include Fd
-
+  include Memory
 end
 
 module Impl = Vhd.Make(File)

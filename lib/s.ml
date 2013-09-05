@@ -24,9 +24,14 @@ module type TIME = sig
   val now: unit -> int32
 end
 
+module type MEMORY = sig
+  val alloc: int -> Cstruct.t
+end
+
 module type IO = sig
   include ASYNC
   include TIME
+  include MEMORY
 
   type fd
 

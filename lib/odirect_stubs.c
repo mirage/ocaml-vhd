@@ -45,3 +45,32 @@ CAMLprim value stub_openfile_direct(value filename, value mode){
 
   CAMLreturn(Val_int(fd));
 }
+
+/* From mirage:
+   https://github.com/mirage/mirage/commit/3d7aace5eb162f99b79b21d1784f87ce26fec8b7
+*/
+
+#define PAGE_SIZE 4096
+#include <stdlib.h>
+#include <malloc.h>
+
+/* Allocate a page-aligned bigarray of length [n_pages] pages.
+   Since CAML_BA_MANAGED is set the bigarray C finaliser will
+   call free() whenever all sub-bigarrays are unreachable.
+ */
+CAMLprim value
+caml_alloc_pages(value n_pages)
+{
+  CAMLparam1(n_pages);
+  size_t len = Int_val(n_pages) * PAGE_SIZE;
+  /* If the allocation fails, return None. The ocaml layer will
+     be able to trigger a full GC which just might run finalizers
+     of unused bigarrays which will free some memory. */
+  void* block = memalign(PAGE_SIZE, len);
+
+  if (block == NULL) {
+    caml_failwith("memalign");
+  }
+  CAMLreturn(caml_ba_alloc_dims(CAML_BA_UINT8 | CAML_BA_C_LAYOUT | CAML_BA_MANAGED, 1, block, len));
+}
+

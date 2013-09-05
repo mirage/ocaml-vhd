@@ -45,7 +45,7 @@ let check_empty_disk size =
   let filename = make_new_filename () in
   lwt vhd = Vhd_IO.create_dynamic ~filename ~size () in
   lwt vhd' = Vhd_IO.openfile filename in
-  assert_equal ~printer:Header.to_string vhd.Vhd.header vhd'.Vhd.header;
+  assert_equal ~printer:Header.to_string ~cmp:Header.equal vhd.Vhd.header vhd'.Vhd.header;
   assert_equal ~printer:Footer.to_string vhd.Vhd.footer vhd'.Vhd.footer;
   assert_equal ~printer:BAT.to_string ~cmp:BAT.equal vhd.Vhd.bat vhd'.Vhd.bat;
   lwt () = Vhd_IO.close vhd' in
@@ -58,7 +58,7 @@ let check_empty_snapshot size =
   let filename = make_new_filename () in
   lwt vhd' = Vhd_IO.create_difference ~filename ~parent:vhd () in
   lwt vhd'' = Vhd_IO.openfile filename in
-  assert_equal ~printer:Header.to_string vhd'.Vhd.header vhd''.Vhd.header;
+  assert_equal ~printer:Header.to_string ~cmp:Header.equal vhd'.Vhd.header vhd''.Vhd.header;
   assert_equal ~printer:Footer.to_string vhd'.Vhd.footer vhd''.Vhd.footer;
   assert_equal ~printer:BAT.to_string ~cmp:BAT.equal vhd'.Vhd.bat vhd''.Vhd.bat;
   lwt () = Vhd_IO.close vhd'' in
@@ -87,7 +87,7 @@ let positions = [
 ]
 
 let fill_sector_with pattern =
-  let b = Cstruct.create 512 in
+  let b = Vhd_lwt.Memory.alloc 512 in
   for i = 0 to 511 do
     Cstruct.set_char b i (pattern.[i mod (String.length pattern)])
   done;
@@ -110,17 +110,6 @@ let absolute_sector_of vhd { block; sector } =
     | First -> 0
     | Last -> sectors_per_block - 1 in
     Some (Int64.(add(mul (of_int block) (of_int sectors_per_block)) (of_int relative_sector)))
-
-let cstruct_equal a b =
-  let check_contents a b =
-    try
-      for i = 0 to Cstruct.len a - 1 do
-        if Cstruct.get_char a i <> (Cstruct.get_char b i)
-        then failwith "argh"
-      done;
-      true
-    with _ -> false in
-  (Cstruct.len a = (Cstruct.len b)) && (check_contents a b)
 
 let cstruct_to_string c = String.escaped (Cstruct.to_string c)
 
@@ -208,7 +197,7 @@ let rec check_written_sectors t expected = match expected with
       return () in
     check_written_sectors t xs
 
-let empty_sector = Cstruct.create 512
+let empty_sector = Vhd_lwt.Memory.alloc 512
 
 (* Verify the raw data stream from [t] contains exactly [expected] and no more.
    If ~allow_empty then we accept sectors which are present (in the bitmap) but
@@ -358,8 +347,8 @@ let _ =
   let suite = "vhd" >:::
     [
       "create" >:: create;
-    ] @ (List.map check_empty_disk sizes)
-      @ (List.map check_empty_snapshot sizes)
-      @ all_program_tests in
+     ] @ (List.map check_empty_disk sizes)
+       @ (List.map check_empty_snapshot sizes)
+       @ all_program_tests in
   run_test_tt ~verbose:!verbose suite
 

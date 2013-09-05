@@ -18,6 +18,20 @@
 let sector_size = 512
 let sector_shift = 9
 
+exception Cstruct_differ
+
+let cstruct_equal a b =
+  let check_contents a b =
+    try
+      for i = 0 to Cstruct.len a - 1 do
+        let a' = Cstruct.get_char a i in
+        let b' = Cstruct.get_char b i in
+        if a' <> b' then raise Cstruct_differ
+      done;
+      true
+    with _ -> false in
+  (Cstruct.len a = (Cstruct.len b)) && (check_contents a b)
+
 exception Invalid_sector of int64 * int64
 
 module Int64 = struct
@@ -415,6 +429,7 @@ module Footer = struct
       creator_host_os; original_size; current_size; geometry; disk_type; checksum; uid; saved_state }
 
   let compute_checksum t =
+    (* No alignment necessary *)
     let buf = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout sizeof)) in
     let t = marshal buf t in
     t.checksum
@@ -482,6 +497,14 @@ module Parent_locator = struct
     platform_data : Cstruct.t;
   }
 
+  let equal a b =
+    true
+    && (a.platform_code = b.platform_code)
+    && (a.platform_data_space = b.platform_data_space)
+    && (a.platform_data_space_original = b.platform_data_space_original)
+    && (a.platform_data_length = b.platform_data_length)
+    && (a.platform_data_offset = b.platform_data_offset)
+    && (cstruct_equal a.platform_data b.platform_data)
 
   let null = {
     platform_code=Platform_code.None;
@@ -576,6 +599,24 @@ module Header = struct
       t.table_offset t.max_table_entries t.block_size_sectors_shift t.checksum
       (Uuidm.to_string t.parent_unique_id) t.parent_time_stamp (UTF16.to_string t.parent_unicode_name)
       (String.concat "; " (List.map Parent_locator.to_string (Array.to_list t.parent_locators)))
+
+  let equal a b =
+    true
+    && (a.table_offset = b.table_offset)
+    && (a.max_table_entries = b.max_table_entries)
+    && (a.block_size_sectors_shift = b.block_size_sectors_shift)
+    && (a.checksum = b.checksum)
+    && (a.parent_unique_id = b.parent_unique_id)
+    && (a.parent_time_stamp = b.parent_time_stamp)
+    && (a.parent_unicode_name = b.parent_unicode_name)
+    && (Array.length a.parent_locators = (Array.length b.parent_locators))
+    && (try
+          for i = 0 to Array.length a.parent_locators - 1 do
+            if not(Parent_locator.equal a.parent_locators.(i) b.parent_locators.(i))
+            then raise Not_found (* arbitrary exn *)
+          done;
+          true
+        with _ -> false)
 
   (* 1 bit per each 512 byte sector within the block *)
   let sizeof_bitmap t = 1 lsl (t.block_size_sectors_shift - 3)
@@ -709,6 +750,7 @@ module Header = struct
       parent_time_stamp; parent_unicode_name; parent_locators }
 
   let compute_checksum t =
+    (* No alignment necessary *)
     let buf = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout sizeof)) in
     let t = marshal buf t in
     t.checksum
@@ -750,8 +792,7 @@ module BAT = struct
     (* The BAT is always extended to a sector boundary *)
     ((size_needed + sector_size - 1) lsr sector_shift) lsl sector_shift
 
-  let make (header: Header.t) =
-    let data = Cstruct.create (sizeof_bytes header) in
+  let of_buffer (header: Header.t) (data: Cstruct.t) =
     for i = 0 to (Cstruct.len data) / 4 - 1 do
       Cstruct.BE.set_uint32 data (i * 4) unused
     done;
@@ -810,9 +851,11 @@ module Bitmap = struct
       if (bitmap_byte land mask) = mask
       then None (* already set, no on-disk update required *)
       else begin
-        (* not set, we must update the disk *)
-        Cstruct.set_uint8 buf (sector_in_block / 8) (bitmap_byte lor mask);
-        Some (Int64.of_int (sector_in_block / 8), Cstruct.sub buf (sector_in_block / 8) 1)
+        (* not set, we must update the sector on disk *)
+        let byte_offset = sector_in_block / 8 in
+        Cstruct.set_uint8 buf byte_offset (bitmap_byte lor mask);
+        let sector_start = (byte_offset lsr sector_shift) lsl sector_shift in
+        Some (Int64.of_int sector_start, Cstruct.sub buf sector_start sector_size)
       end
 end
 
@@ -950,6 +993,21 @@ module Make = functor(File: S.IO) -> struct
     | Result.Error e -> fail e
     | Result.Ok x -> f x
 
+  let rec unaligned_really_write fd offset buffer =
+    let open Int64 in
+    let sector_start = (offset lsr sector_shift) lsl sector_shift in
+    really_read fd sector_start sector_size >>= fun current ->
+    let adjusted_len = offset ++ (of_int (Cstruct.len buffer)) -- sector_start in
+    let write_this_time = max adjusted_len 512L in
+    let remaining_to_write = adjusted_len -- write_this_time in
+
+    let useful_bytes_to_write = min (Cstruct.len buffer) (to_int (write_this_time -- offset ++ sector_start)) in
+    Cstruct.blit buffer 0 current (to_int (offset -- sector_start)) useful_bytes_to_write;
+    really_write fd sector_start current >>= fun () ->
+    if remaining_to_write <= 0L
+    then return ()
+    else unaligned_really_write fd (offset ++ (of_int useful_bytes_to_write)) (Cstruct.shift buffer useful_bytes_to_write)
+
   module Footer_IO = struct
     open Footer
 
@@ -958,8 +1016,7 @@ module Make = functor(File: S.IO) -> struct
       Footer.unmarshal buf >>|= fun x ->
       return x
 
-    let write fd pos t =
-      let sector = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout Footer.sizeof)) in
+    let write sector fd pos t =
       let t = Footer.marshal sector t in
       really_write fd pos sector >>= fun () ->
       return t
@@ -969,13 +1026,16 @@ module Make = functor(File: S.IO) -> struct
     open Parent_locator
 
     let read fd t =
-      really_read fd t.platform_data_offset (Int32.to_int t.platform_data_length) >>= fun platform_data ->
+      let l = Int32.to_int t.platform_data_length in
+      let l_rounded = ((l + 511) lsr sector_shift) lsl sector_shift in
+      really_read fd t.platform_data_offset l_rounded >>= fun platform_data ->
+      let platform_data = Cstruct.sub platform_data 0 l in
       return { t with platform_data }
 
     let write fd t =
       (* Only write those that actually have a platform_code *)
       if t.platform_code <> Platform_code.None
-      then really_write fd t.platform_data_offset t.platform_data
+      then unaligned_really_write fd t.platform_data_offset t.platform_data
       else return ()
   end
 
@@ -1013,8 +1073,7 @@ module Make = functor(File: S.IO) -> struct
       read_parent_locator 0 >>= fun () ->
       return t  
 
-    let write fd pos t =
-      let buf = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout Header.sizeof)) in
+    let write buf fd pos t =
       let t' = marshal buf t in
       (* Write the parent_locator data *)
       let rec write_parent_locator = function
@@ -1036,8 +1095,7 @@ module Make = functor(File: S.IO) -> struct
       really_read fd header.Header.table_offset (sizeof_bytes header) >>= fun buf ->
       return (unmarshal buf header)
 
-    let write fd (header: Header.t) t =
-      let buf = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout (sizeof_bytes header))) in
+    let write buf fd (header: Header.t) t =
       marshal buf t;
       really_write fd header.Header.table_offset buf
   end
@@ -1065,20 +1123,26 @@ module Make = functor(File: S.IO) -> struct
       | Some x -> return x
       | None -> fail Closed
 
-    let write_trailing_footer handle t =
-      let pos = Vhd.get_top_unused_offset t.Vhd.header t.Vhd.bat in
-      Footer_IO.write handle pos t.Vhd.footer >>= fun _ ->
+    let write_trailing_footer buf handle t =
+      let sector = Vhd.get_free_sector t.Vhd.header t.Vhd.bat in
+      let offset = Int64.(shift_left (of_int32 sector) sector_shift) in
+      Footer_IO.write buf handle offset t.Vhd.footer >>= fun _ ->
       return ()
     
     let write t =
       get_handle t >>= fun handle ->
-      Footer_IO.write handle 0L t.Vhd.footer >>= fun footer ->
+      let footer_buf = File.alloc Footer.sizeof in
+      Footer_IO.write footer_buf handle 0L t.Vhd.footer >>= fun footer ->
+      (* This causes the file size to be increased so we can successfully
+         read empty blocks in places like the parent locators *)
+      write_trailing_footer footer_buf handle t >>= fun () ->
       let t ={ t with Vhd.footer } in
-      Header_IO.write handle t.Vhd.footer.Footer.data_offset t.Vhd.header >>= fun header ->
+      let buf = File.alloc Header.sizeof in
+      Header_IO.write buf handle t.Vhd.footer.Footer.data_offset t.Vhd.header >>= fun header ->
       let t = { t with Vhd.header } in
-      BAT_IO.write handle t.Vhd.header t.Vhd.bat >>= fun () ->
+      let buf = File.alloc (BAT.sizeof_bytes header) in
+      BAT_IO.write buf handle t.Vhd.header t.Vhd.bat >>= fun () ->
       (* Assume the data is there, or will be written later *)
-      write_trailing_footer handle t >>= fun () ->
       return t
 
     let create_dynamic ~filename ~size
@@ -1122,7 +1186,8 @@ module Make = functor(File: S.IO) -> struct
         parent_unicode_name = [| |];
         parent_locators = Array.make 8 Parent_locator.null
       } in
-      let bat = BAT.make header in
+      let bat_buffer = File.alloc (BAT.sizeof_bytes header) in
+      let bat = BAT.of_buffer header bat_buffer in
       File.create filename >>= fun fd ->
       let handle = ref (Some fd) in
       let t = { filename; handle; header; footer; parent = None; bat } in
@@ -1174,7 +1239,8 @@ module Make = functor(File: S.IO) -> struct
         parent_locators = [| locator0; Parent_locator.null; Parent_locator.null; Parent_locator.null;
                              Parent_locator.null; Parent_locator.null; Parent_locator.null; Parent_locator.null; |];
       } in
-      let bat = BAT.make header in
+      let bat_buffer = File.alloc (BAT.sizeof_bytes header) in
+      let bat = BAT.of_buffer header bat_buffer in
       File.create filename >>= fun fd ->
       let handle = ref (Some fd) in
       let t = { filename; handle; header; footer; parent = Some parent; bat } in
@@ -1250,7 +1316,7 @@ module Make = functor(File: S.IO) -> struct
         return (Some data)
 
     let constant_sector v =
-      let buf = Cstruct.create 512 in
+      let buf = File.alloc 512 in
       for i = 0 to 511 do
         Cstruct.set_uint8 buf i v
       done;
@@ -1268,7 +1334,7 @@ module Make = functor(File: S.IO) -> struct
       ( if bitmap_size = 512
         then really_write handle (bitmap_sector lsl sector_shift) all_zeroes
         else begin
-          let bitmap = Cstruct.of_bigarray (Bigarray.(Array1.create char c_layout bitmap_size)) in
+          let bitmap = File.alloc bitmap_size in
           for i = 0 to bitmap_size - 1 do
             Cstruct.set_uint8 bitmap i 0
           done;
@@ -1307,8 +1373,10 @@ module Make = functor(File: S.IO) -> struct
         if BAT.get t.Vhd.bat block_num = BAT.unused then begin
           BAT.set t.Vhd.bat block_num (Vhd.get_free_sector t.Vhd.header t.Vhd.bat);
           write_zero_block handle t block_num >>= fun () ->
-          BAT_IO.write handle t.Vhd.header t.Vhd.bat >>= fun () ->
-          write_trailing_footer handle t >>= fun () ->
+          let bat_buffer = File.alloc (BAT.sizeof_bytes t.Vhd.header) in
+          BAT_IO.write bat_buffer handle t.Vhd.header t.Vhd.bat >>= fun () ->
+          let footer_buffer = File.alloc Footer.sizeof in
+          write_trailing_footer footer_buffer handle t >>= fun () ->
           update_sector (BAT.get t.Vhd.bat block_num)
         end else begin
           update_sector (BAT.get t.Vhd.bat block_num)
@@ -1432,13 +1500,14 @@ module Make = functor(File: S.IO) -> struct
       parent_locators = [| Parent_locator.null; Parent_locator.null; Parent_locator.null; Parent_locator.null;
                            Parent_locator.null; Parent_locator.null; Parent_locator.null; Parent_locator.null; |];
     } in
-    let bat = BAT.make header in
+    let bat_buffer = File.alloc (BAT.sizeof_bytes header) in
+    let bat = BAT.of_buffer header bat_buffer in
 
     let sizeof_bat = BAT.sizeof_bytes header in
 
     let sizeof_bitmap = Header.sizeof_bitmap header in
     (* We'll always set all bitmap bits *)
-    let bitmap = Cstruct.create sizeof_bitmap in
+    let bitmap = File.alloc sizeof_bitmap in
     for i = 0 to sizeof_bitmap - 1 do
       Cstruct.set_uint8 bitmap i 0xff
     done;
@@ -1483,7 +1552,7 @@ module Make = functor(File: S.IO) -> struct
     assert(Footer.sizeof = 512);
     assert(Header.sizeof = 1024);
 
-    let buf = Cstruct.create (max Footer.sizeof (max Header.sizeof sizeof_bat)) in
+    let buf = File.alloc (max Footer.sizeof (max Header.sizeof sizeof_bat)) in
     let (_: Footer.t) = Footer.marshal buf footer in
     coalesce_request None (return (Cons(Sector(Cstruct.sub buf 0 Footer.sizeof), fun () ->
       let (_: Header.t) = Header.marshal buf header in

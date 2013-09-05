@@ -18,6 +18,8 @@ val sector_size: int
 val sector_shift: int
 (** [1 lsl sector_shift = sector_size] *)
 
+val cstruct_equal: Cstruct.t -> Cstruct.t -> bool
+
 exception Invalid_sector of int64 (* request *) * int64 (* maximum *)
 (** An attempt to access (read/write) an invalid sector *)
 
@@ -134,6 +136,8 @@ module Parent_locator : sig
   val null : t
   (** No parent locator *)
 
+  val equal: t -> t -> bool
+
   val to_string : t -> string
   val to_filename : t -> string option
   (** Attempt to read a filename from the platform_data *)
@@ -162,6 +166,8 @@ module Header : sig
     parent_locators : Parent_locator.t array;
     (** up to 8 different pointers to the parent disk image *)
   }
+
+  val equal: t -> t -> bool
 
   val to_string: t -> string
 
