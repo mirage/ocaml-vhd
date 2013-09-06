@@ -26,10 +26,10 @@ Library vhd_lwt
 Executable vhdtool
   CompiledObject:     best
   Path:               cli
-  MainIs:             cli.ml
+  MainIs:             main.ml
   Custom:             true
   Install:            false
-  BuildDepends:       lwt, lwt.unix, vhd-format, vhd-format.lwt
+  BuildDepends:       lwt, lwt.unix, vhd-format, vhd-format.lwt, cmdliner
 
 Executable disk_to_ocaml
   CompiledObject:     best
