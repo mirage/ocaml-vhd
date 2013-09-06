@@ -61,6 +61,39 @@ module Impl = struct
     }; {
       name = "data-offset";
       get = fun t -> return (Int64.to_string t.Vhd.footer.Footer.data_offset);
+    }; {
+      name = "time-stamp";
+      get = fun t -> return (Int32.to_string t.Vhd.footer.Footer.time_stamp);
+    }; {
+      name = "creator-application";
+      get = fun t -> return t.Vhd.footer.Footer.creator_application;
+    }; {
+      name = "creator-version";
+      get = fun t -> return (Int32.to_string t.Vhd.footer.Footer.creator_version);
+    }; {
+      name = "creator-host-os";
+      get = fun t -> return (Host_OS.to_string t.Vhd.footer.Footer.creator_host_os);
+    }; {
+      name = "original-size";
+      get = fun t -> return (Int64.to_string t.Vhd.footer.Footer.original_size);
+    }; {
+      name = "current-size";
+      get = fun t -> return (Int64.to_string t.Vhd.footer.Footer.current_size);
+    }; {
+      name = "geometry";
+      get = fun t -> return (Geometry.to_string t.Vhd.footer.Footer.geometry);
+    }; {
+      name = "disk-type";
+      get = fun t -> return (Disk_type.to_string t.Vhd.footer.Footer.disk_type);
+    }; {
+      name = "checksum";
+      get = fun t -> return (Int32.to_string t.Vhd.footer.Footer.checksum);
+    }; {
+      name = "uuid";
+      get = fun t -> return (Uuidm.to_string t.Vhd.footer.Footer.uid);
+    }; {
+      name = "saved-state";
+      get = fun t -> return (string_of_bool t.Vhd.footer.Footer.saved_state);
     }
   ]
 
