@@ -48,11 +48,13 @@ module Impl = struct
 let info common filename =
   `Ok ()
 
+  let require name arg = match arg with
+    | None -> failwith (Printf.sprintf "Please supply a %s argument" name)
+    | Some x -> x
+
   let create common filename size parent =
     try
-      begin let filename = match filename with
-      | Some x -> x
-      | None -> failwith "Please supply a filename argument" in
+      begin let filename = require "filename" filename in
       match parent, size with
       | None, None -> failwith "Please supply either a size or a parent"
       | None, Some size ->
@@ -76,8 +78,17 @@ let info common filename =
     with Failure x ->
       `Error(true, x)
 
-let check common filename =
-  failwith "unimplemented"
+  let check common filename =
+    try
+      let filename = require "filename" filename in
+      let t =
+        lwt vhd = Vhd_IO.openfile filename in
+        Vhd.check_overlapping_blocks vhd;
+        return () in
+      Lwt_main.run t;
+      `Ok ()
+    with Failure x ->
+      `Error(true, x)
 
 let stream common filename format =
   failwith "unimplemented"
