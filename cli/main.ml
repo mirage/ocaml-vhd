@@ -115,9 +115,39 @@ module Impl = struct
       | Not_found ->
         `Error(true, Printf.sprintf "Unknown key. Known keys are: %s" (String.concat ", " (List.map (fun f -> f.name) fields)))
 
+  let padto blank n s =
+    let result = String.make n blank in
+    String.blit s 0 result 0 (min n (String.length s));
+    result
+
+  let print_table header rows =
+    let nth xs i = try List.nth xs i with Not_found -> "" in
+    let width_of_column i =
+      let values = nth header i :: (List.map (fun r -> nth r i) rows) in
+      let widths = List.map String.length values in
+      List.fold_left max 0 widths in
+    let widths = List.rev (snd(List.fold_left (fun (i, acc) _ -> (i + 1, (width_of_column i) :: acc)) (0, []) header)) in
+    let print_row row =
+      List.iter (fun (n, s) -> Printf.printf "%s |" (padto ' ' n s)) (List.combine widths row);
+      Printf.printf "\n" in
+    print_row header;
+    List.iter (fun (n, _) -> Printf.printf "%s-|" (padto '-' n "")) (List.combine widths header);
+    Printf.printf "\n";
+    List.iter print_row rows
+    
+
   let info common filename =
     try
       let filename = require "filename" filename in
+      let t =
+        lwt t = Vhd_IO.openfile filename in
+        lwt all = Lwt_list.map_s (fun f ->
+          lwt v = f.get t in
+          return [ f.name; v ]
+        ) fields in
+        print_table ["field"; "value"] all;
+        return () in
+      Lwt_main.run t;
       `Ok ()
     with Failure x ->
       `Error(true, x)
@@ -169,13 +199,9 @@ module Impl = struct
     let decimal_digits = int_of_float (ceil (log10 (Int64.to_float sectors))) in
     Printf.printf "# beginning of stream\n";
     Printf.printf "# offset : contents\n";
-    let padto n s =
-      let result = String.make n ' ' in
-      String.blit s 0 result 0 (min n (String.length s));
-      result in
     lwt _ = fold_left (fun sector x ->
       Printf.printf "%s: %s\n"
-        (padto decimal_digits (string_of_int sector))
+        (padto ' ' decimal_digits (string_of_int sector))
         (Element.to_string x);
       return (sector + (Element.len x))
     ) 0 s in
