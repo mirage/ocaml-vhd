@@ -1,3 +1,8 @@
+trunk (unreleased)
+* new streaming interface supporting both raw and vhd formats
+* uses O_DIRECT by default
+* added lots of edge-case unit tests
+
 0.0.2 (2013-07-25):
 * rename to vhd-format in ocamlfind
 * start adding some unit tests
