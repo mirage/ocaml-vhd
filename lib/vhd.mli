@@ -26,6 +26,12 @@ exception Invalid_sector of int64 (* request *) * int64 (* maximum *)
 val max_disk_size: int64
 (** Maximum size of a dynamic disk in bytes *)
 
+module UTF16: sig
+  type t = int array
+
+  val to_utf8_exn: t -> string
+end
+
 module Feature: sig
   type t = 
     | Temporary (** A temporary disk is a candidate for deletion on shutdown *)

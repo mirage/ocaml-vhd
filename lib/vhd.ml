@@ -194,7 +194,7 @@ end
 module UTF16 = struct
   type t = int array
 
-  let to_utf8 s =
+  let to_utf8_exn s =
     let utf8_chars_of_int i = 
       if i < 0x80 then [char_of_int i] 
       else if i < 0x800 then 
@@ -220,8 +220,11 @@ module UTF16 = struct
         end
       else
         failwith "Bad unicode character!" in
+    String.concat "" (List.map (fun c -> Printf.sprintf "%c" c) (List.flatten (List.map utf8_chars_of_int (Array.to_list s))))
+
+  let to_utf8 x =
     try
-      Result.Ok (String.concat "" (List.map (fun c -> Printf.sprintf "%c" c) (List.flatten (List.map utf8_chars_of_int (Array.to_list s)))))
+      Result.Ok (to_utf8_exn x)
     with e ->
       Result.Error e
 

@@ -86,7 +86,7 @@ module Impl = struct
       name = "disk-type";
       get = fun t -> return (Disk_type.to_string t.Vhd.footer.Footer.disk_type);
     }; {
-      name = "checksum";
+      name = "footer-checksum";
       get = fun t -> return (Int32.to_string t.Vhd.footer.Footer.checksum);
     }; {
       name = "uuid";
@@ -94,8 +94,33 @@ module Impl = struct
     }; {
       name = "saved-state";
       get = fun t -> return (string_of_bool t.Vhd.footer.Footer.saved_state);
-    }
-  ]
+    }; {
+      name = "table-offset";
+      get = fun t -> return (Int64.to_string t.Vhd.header.Header.table_offset);
+    }; {
+      name = "max-table-entries";
+      get = fun t -> return (string_of_int t.Vhd.header.Header.max_table_entries);
+    }; {
+      name = "block-size-sectors-shift";
+      get = fun t -> return (string_of_int t.Vhd.header.Header.block_size_sectors_shift);
+    }; {
+      name = "header-checksum";
+      get = fun t -> return (Int32.to_string t.Vhd.header.Header.checksum);
+    }; {
+      name = "parent-uuid";
+      get = fun t -> return (Uuidm.to_string t.Vhd.header.Header.parent_unique_id);
+    }; {
+      name = "parent-time-stamp";
+      get = fun t -> return (Int32.to_string t.Vhd.header.Header.parent_time_stamp);
+    }; {
+      name = "parent-unicode-name";
+      get = fun t -> return (UTF16.to_utf8_exn t.Vhd.header.Header.parent_unicode_name);
+    };
+  ] @ (List.map (fun i ->
+    {
+      name = Printf.sprintf "parent-locator-%d" i;
+      get = fun t -> return (Parent_locator.to_string t.Vhd.header.Header.parent_locators.(i));
+    }) [ 0; 1; 2; 3; 4; 5; 6; 7 ])
 
   let get common filename key =
     try
