@@ -45,12 +45,49 @@ module Impl = struct
   open Vhd
   open Vhd_lwt
 
-let info common filename =
-  `Ok ()
-
   let require name arg = match arg with
     | None -> failwith (Printf.sprintf "Please supply a %s argument" name)
     | Some x -> x
+
+  type field = {
+    name: string;
+    get: Vhd_lwt.Vhd_IO.handle Vhd.t -> string Lwt.t;
+  }
+
+  let fields = [
+    {
+      name = "features";
+      get = fun t -> return (String.concat ", " (List.map Feature.to_string t.Vhd.footer.Footer.features));
+    }; {
+      name = "data-offset";
+      get = fun t -> return (Int64.to_string t.Vhd.footer.Footer.data_offset);
+    }
+  ]
+
+  let get common filename key =
+    try
+      let filename = require "filename" filename in
+      let key = require "key" key in
+      let field = List.find (fun f -> f.name = key) fields in
+      let t =
+        lwt t = Vhd_IO.openfile filename in
+        lwt result = field.get t in
+        Printf.printf "%s\n" result;
+        Vhd_IO.close t in
+      Lwt_main.run t;
+      `Ok ()
+    with
+      | Failure x ->
+        `Error(true, x)
+      | Not_found ->
+        `Error(true, Printf.sprintf "Unknown key. Known keys are: %s" (String.concat ", " (List.map (fun f -> f.name) fields)))
+
+  let info common filename =
+    try
+      let filename = require "filename" filename in
+      `Ok ()
+    with Failure x ->
+      `Error(true, x)
 
   let create common filename size parent =
     try
@@ -125,6 +162,21 @@ let info common filename =
       `Error(true, x)
 end
 
+let get_cmd =
+  let doc = "query vhd metadata" in
+  let man = [
+    `S "DESCRIPTION";
+    `P "Look up a particular metadata property by name and print the value."
+  ] @ help in
+  let filename =
+    let doc = Printf.sprintf "Path to the vhd file." in
+    Arg.(value & pos 0 (some file) None & info [] ~doc) in
+  let key =
+    let doc = "Key to query" in
+    Arg.(value & pos 1 (some string) None & info [] ~doc) in
+  Term.(ret(pure Impl.get $ common_options_t $ filename $ key)),
+  Term.info "get" ~sdocs:_common_options ~doc ~man
+
 let info_cmd =
   let doc = "display general information about a vhd" in
   let man = [
@@ -189,7 +241,7 @@ let default_cmd =
   Term.(ret (pure (fun _ -> `Help (`Pager, None)) $ common_options_t)),
   Term.info "vhd-tool" ~version:"1.0.0" ~sdocs:_common_options ~doc ~man
        
-let cmds = [info_cmd; create_cmd; check_cmd; stream_cmd]
+let cmds = [info_cmd; get_cmd; create_cmd; check_cmd; stream_cmd]
 
 let _ =
   match Term.eval_choice default_cmd cmds with 
