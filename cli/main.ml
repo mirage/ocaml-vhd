@@ -90,8 +90,39 @@ let info common filename =
     with Failure x ->
       `Error(true, x)
 
-let stream common filename format =
-  failwith "unimplemented"
+  let stream_english common filename =
+    lwt t = Vhd_IO.openfile filename in
+    lwt s = raw t in
+    (* How much space will we need for the sector numbers? *)
+    let bytes = t.Vhd.footer.Footer.current_size in
+    let sectors = Int64.shift_right bytes sector_shift in
+    let decimal_digits = int_of_float (ceil (log10 (Int64.to_float sectors))) in
+    Printf.printf "# beginning of stream\n";
+    Printf.printf "# offset : contents\n";
+    let padto n s =
+      let result = String.make n ' ' in
+      String.blit s 0 result 0 (min n (String.length s));
+      result in
+    lwt _ = fold_left (fun sector x ->
+      Printf.printf "%s: %s\n"
+        (padto decimal_digits (string_of_int sector))
+        (Element.to_string x);
+      return (sector + (Element.len x))
+    ) 0 s in
+    Printf.printf "# end of stream\n";
+    return ()
+ 
+  let stream common filename format =
+    try
+      let filename = require "filename" filename in
+      let format = require "format" format in
+      let t = match format with
+        | "english" -> stream_english common filename
+        | _ -> failwith (Printf.sprintf "%s is an unsupported output format" format) in
+      Lwt_main.run t;
+      `Ok ()
+    with Failure x ->
+      `Error(true, x)
 end
 
 let info_cmd =
