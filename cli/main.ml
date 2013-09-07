@@ -232,13 +232,49 @@ module Impl = struct
     ) 0 s in
     Printf.printf "# end of stream\n";
     return ()
- 
+
+  let stream_nbd common filename =
+    let sock = Lwt_unix.socket Unix.PF_UNIX Unix.SOCK_STREAM 0 in
+    let sockaddr = Lwt_unix.ADDR_UNIX "socket" in
+    lwt () = Lwt_unix.connect sock sockaddr in
+
+    lwt (server, size, flags) = Nbd_lwt_client.negotiate sock in
+
+    lwt t = Vhd_IO.openfile filename in
+    lwt s = raw t in
+
+    let twomib_bytes = 2 * 1024 * 1024 in
+    let twomib_sectors = twomib_bytes / 512 in
+
+    lwt _ = fold_left (fun sector x ->
+      lwt () = match x with
+      | Element.Copy(h, sector_start, sector_len) ->
+        let rec copy sector_start sector_len =
+          let this = min sector_len twomib_sectors in
+          lwt data = Fd.really_read h (Int64.mul sector_start 512L) (this * 512) in
+          lwt () = Nbd_lwt_client.write server data (Int64.mul sector 512L) in
+          let sector_len = sector_len - this in
+          let sector_start = Int64.(add sector_start (of_int this)) in
+          if sector_len > 0 then copy sector_start sector_len else return () in
+        copy sector_start sector_len
+      | Element.Sectors data ->
+        lwt () = Nbd_lwt_client.write server data (Int64.mul sector 512L) in
+        return ()
+      | Element.Empty n ->
+        return () in
+      return (Int64.(add sector (of_int(Element.len x))))
+    ) 0L s in
+
+    lwt () = Lwt_unix.close sock in
+    return ()
+
   let stream common filename format =
     try
       let filename = require "filename" filename in
       let format = require "format" format in
       let t = match format with
         | "english" -> stream_english common filename
+        | "raw" -> stream_nbd common filename
         | _ -> failwith (Printf.sprintf "%s is an unsupported output format" format) in
       Lwt_main.run t;
       `Ok ()

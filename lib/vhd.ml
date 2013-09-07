@@ -83,7 +83,7 @@ module Disk_type = struct
   exception Unknown of int32
 
   let of_int32 =
-    let open Result in function
+    let open Vhd_result in function
     | 2l -> return Fixed_hard_disk 
     | 3l -> return Dynamic_hard_disk
     | 4l -> return Differencing_hard_disk
@@ -224,9 +224,9 @@ module UTF16 = struct
 
   let to_utf8 x =
     try
-      Result.Ok (to_utf8_exn x)
+      Vhd_result.Ok (to_utf8_exn x)
     with e ->
-      Result.Error e
+      Vhd_result.Error e
 
   let to_string x = Printf.sprintf "[| %s |]" (String.concat "; " (List.map string_of_int (Array.to_list x)))
 
@@ -291,9 +291,9 @@ module UTF16 = struct
         inner ofs' n'
       end in
     try
-      Result.Ok (inner pos 0)
+      Vhd_result.Ok (inner pos 0)
     with e ->
-      Result.Error e
+      Vhd_result.Error e
 end
 
 module Footer = struct
@@ -396,7 +396,7 @@ module Footer = struct
     { t with checksum }
 
   let unmarshal (buf: Cstruct.t) =
-    let open Result in
+    let open Vhd_result in
     let magic' = copy_footer_magic buf in
     ( if magic' <> magic
       then fail (Failure (Printf.sprintf "Unsupported footer cookie: expected %s, got %s" magic magic'))
@@ -456,7 +456,7 @@ module Platform_code = struct
   let macx = 0x4d616358l
 
   let of_int32 =
-    let open Result in function
+    let open Vhd_result in function
     | 0l -> Ok None
     | x when x = wi2r -> Ok Wi2r
     | x when x = wi2k -> Ok Wi2k
@@ -562,7 +562,7 @@ module Parent_locator = struct
     set_header_platform_data_offset buf t.platform_data_offset
 
   let unmarshal (buf: Cstruct.t) =
-    let open Result in
+    let open Vhd_result in
     Platform_code.of_int32 (get_header_platform_code buf) >>= fun platform_code ->
     let platform_data_space_original = get_header_platform_data_space buf in
     (* The spec says this field should be stored in sectors. However some viridian vhds
@@ -646,8 +646,8 @@ module Header = struct
     Printf.printf "parent_unique_id    : %s\n" (Uuidm.to_string t.parent_unique_id);
     Printf.printf "parent_time_stamp   : %lu\n" t.parent_time_stamp;
     let s = match UTF16.to_utf8 t.parent_unicode_name with
-      | Result.Ok s -> s
-      | Result.Error e -> Printf.sprintf "<Unable to decode UTF-16: %s>" (String.concat " " (List.map (fun x -> Printf.sprintf "%02x" x) (Array.to_list t.parent_unicode_name))) in
+      | Vhd_result.Ok s -> s
+      | Vhd_result.Error e -> Printf.sprintf "<Unable to decode UTF-16: %s>" (String.concat " " (List.map (fun x -> Printf.sprintf "%02x" x) (Array.to_list t.parent_unicode_name))) in
     Printf.printf "parent_unicode_name : '%s' (%d bytes)\n" s (Array.length t.parent_unicode_name);
     Printf.printf "parent_locators     : %s\n" 
       (String.concat "\n                      " (List.map Parent_locator.to_string (Array.to_list t.parent_locators)))
@@ -702,7 +702,7 @@ module Header = struct
     { t with checksum }
 
   let unmarshal (buf: Cstruct.t) =
-    let open Result in
+    let open Vhd_result in
     let magic' = copy_header_magic buf in
     ( if magic' <> magic
       then fail (Failure (Printf.sprintf "Expected cookie %s, got %s" magic magic'))
@@ -997,8 +997,8 @@ module Make = functor(File: S.IO) -> struct
 
   (* Convert Result.Error values into failed threads *)
   let (>>|=) m f = match m with
-    | Result.Error e -> fail e
-    | Result.Ok x -> f x
+    | Vhd_result.Error e -> fail e
+    | Vhd_result.Ok x -> f x
 
   let rec unaligned_really_write fd offset buffer =
     let open Int64 in
