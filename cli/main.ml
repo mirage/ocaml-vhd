@@ -382,8 +382,34 @@ module Impl = struct
           begin match Uri.scheme uri' with
           | Some "nbd" ->
             stream_nbd common t s prezeroed progress
+          | Some "http"
+          | Some "https" ->
+            let open Cohttp in
+            lwt ic, oc = Cohttp_lwt_unix_net.connect_uri uri' in
+            let module Request = Request.Make(Cohttp_lwt_unix_io) in
+            let module Response = Response.Make(Cohttp_lwt_unix_io) in
+            let headers = Header.init () in
+            let k, v = Cookie.Cookie_hdr.serialize [ "chunked", "true" ] in
+            let headers = Header.add headers k v in
+            let request = Cohttp.Request.make ~meth:`PUT ~version:`HTTP_1_1 ~headers uri' in
+            lwt () = Request.write (fun t _ -> return ()) request oc in
+            begin match_lwt Response.read ic with
+            | None -> fail (Failure "Unable to parse HTTP response from server")
+            | Some x ->
+              let code = Code.code_of_status (Cohttp.Response.status x) in
+              if Code.is_success code then begin
+                let is_nbd =
+                  let headers = Header.to_list (Cohttp.Response.headers x) in
+                  let headers = List.map (fun (x, y) -> String.lowercase x, String.lowercase y) headers in
+                  let te = "transfer-encoding" in
+                  List.mem_assoc te headers && (List.assoc te headers = "nbd") in
+                if is_nbd
+                then stream_nbd common t s prezeroed progress
+                else fail (Failure "non-NBD upload not implemented yet")
+              end else fail (Failure (Code.reason_phrase_of_code code))
+            end
           | Some x ->
-            fail (Failure (Printf.sprintf "Unknown URI scheme %s" x))
+            fail (Failure (Printf.sprintf "Unknown URI scheme: %s" x))
           | None ->
             fail (Failure (Printf.sprintf "Failed to parse URI: %s" uri))
           end in

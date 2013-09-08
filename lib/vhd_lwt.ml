@@ -12,7 +12,7 @@
  * GNU Lesser General Public License for more details.
  *)
 
-let use_odirect = ref true
+let use_odirect = ref false
 
 module Memory = struct
 
