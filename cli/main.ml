@@ -240,23 +240,39 @@ module Impl = struct
 
     let twomib_bytes = 2 * 1024 * 1024 in
     let twomib_sectors = twomib_bytes / 512 in
+    let twomib_empty =
+      let b = Cstruct.create twomib_bytes in
+      for i = 0 to twomib_bytes - 1 do
+        Cstruct.set_uint8 b i 0
+      done;
+      b in
 
     lwt _ = fold_left (fun sector x ->
       lwt () = match x with
       | Element.Copy(h, sector_start, sector_len) ->
-        let rec copy sector_start sector_len =
+        let rec copy sector sector_start sector_len =
           let this = min sector_len twomib_sectors in
           lwt data = Fd.really_read h (Int64.mul sector_start 512L) (this * 512) in
           lwt () = Nbd_lwt_client.write server data (Int64.mul sector 512L) in
           let sector_len = sector_len - this in
           let sector_start = Int64.(add sector_start (of_int this)) in
-          if sector_len > 0 then copy sector_start sector_len else return () in
-        copy sector_start sector_len
+          let sector = Int64.(add sector (of_int this)) in
+          if sector_len > 0 then copy sector sector_start sector_len else return () in
+        copy sector sector_start sector_len
       | Element.Sectors data ->
         lwt () = Nbd_lwt_client.write server data (Int64.mul sector 512L) in
         return ()
       | Element.Empty n ->
-        return () in
+        if not prezeroed then begin
+          let rec copy sector n =
+            let this = Int64.(to_int (min n (of_int twomib_sectors))) in
+            let block = Cstruct.sub twomib_empty 0 (this * 512) in
+            lwt () = Nbd_lwt_client.write server block (Int64.mul sector 512L) in
+            let sector = Int64.(add sector (of_int this)) in
+            let n = Int64.(sub n (of_int this)) in
+            if n > 0L then copy sector n else return () in
+          copy sector n
+        end else return () in
       return (Int64.(add sector (of_int(Element.len x))))
     ) 0L s in
 
