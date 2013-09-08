@@ -78,4 +78,5 @@
 <lib/*>: syntax_camlp4o, pkg_lwt.syntax, pkg_cstruct.syntax
 <lib_test/*>: syntax_camlp4o, pkg_lwt.syntax
 <cli/*>: syntax_camlp4o, pkg_lwt.syntax
+<cli/chunked.ml{,i}>: syntax_camlp4o, pkg_cstruct.syntax
 #<lib/*>: pkg_bitstring.syntax, pkg_lwt.syntax

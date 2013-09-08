@@ -373,6 +373,8 @@ module Impl = struct
         lwt s = match format with
           | "raw" ->
             raw t
+          | "vhd" ->
+            vhd t
           | _ -> fail (Failure (Printf.sprintf "%s is an unsupported output format" format)) in
         match output with
         | "human" ->
