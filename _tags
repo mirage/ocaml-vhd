@@ -1,5 +1,5 @@
 # OASIS_START
-# DO NOT EDIT (digest: 303ea402cc425860e02c2a80a3308822)
+# DO NOT EDIT (digest: 842321db3635da8f7f1520fd5635cd9c)
 # Ignore VCS directories, you can use the same kind of rule outside 
 # OASIS_START/STOP if you want to exclude directories that contains 
 # useless stuff for the build process
@@ -33,6 +33,7 @@
 <cli/main.{native,byte}>: pkg_cmdliner
 <cli/main.{native,byte}>: pkg_nbd
 <cli/main.{native,byte}>: pkg_nbd.lwt
+<cli/main.{native,byte}>: pkg_uri
 <cli/main.{native,byte}>: pkg_uuidm
 <cli/*.ml{,i}>: use_vhd
 <cli/*.ml{,i}>: use_vhd_lwt
@@ -42,6 +43,7 @@
 <cli/*.ml{,i}>: pkg_cmdliner
 <cli/*.ml{,i}>: pkg_nbd
 <cli/*.ml{,i}>: pkg_nbd.lwt
+<cli/*.ml{,i}>: pkg_uri
 <cli/*.ml{,i}>: pkg_uuidm
 <cli/main.{native,byte}>: custom
 # Executable disk_to_ocaml

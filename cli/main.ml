@@ -215,9 +215,7 @@ module Impl = struct
     with Failure x ->
       `Error(true, x)
 
-  let stream_english common filename =
-    lwt t = Vhd_IO.openfile filename in
-    lwt s = raw t in
+  let stream_human common t s =
     (* How much space will we need for the sector numbers? *)
     let bytes = t.Vhd.footer.Footer.current_size in
     let sectors = Int64.shift_right bytes sector_shift in
@@ -233,15 +231,12 @@ module Impl = struct
     Printf.printf "# end of stream\n";
     return ()
 
-  let stream_nbd common filename =
+  let stream_nbd common t s =
     let sock = Lwt_unix.socket Unix.PF_UNIX Unix.SOCK_STREAM 0 in
     let sockaddr = Lwt_unix.ADDR_UNIX "socket" in
     lwt () = Lwt_unix.connect sock sockaddr in
 
     lwt (server, size, flags) = Nbd_lwt_client.negotiate sock in
-
-    lwt t = Vhd_IO.openfile filename in
-    lwt s = raw t in
 
     let twomib_bytes = 2 * 1024 * 1024 in
     let twomib_sectors = twomib_bytes / 512 in
@@ -268,15 +263,33 @@ module Impl = struct
     lwt () = Lwt_unix.close sock in
     return ()
 
-  let stream common filename format =
+  let stream common filename format output =
     try
       let filename = require "filename" filename in
       let format = require "format" format in
-      let t = match format with
-        | "english" -> stream_english common filename
-        | "raw" -> stream_nbd common filename
-        | _ -> failwith (Printf.sprintf "%s is an unsupported output format" format) in
-      Lwt_main.run t;
+      let output = require "output" output in
+
+      let thread =      
+        lwt t = Vhd_IO.openfile filename in
+        lwt s = match format with
+          | "raw" ->
+            raw t
+          | _ -> fail (Failure (Printf.sprintf "%s is an unsupported output format" format)) in
+        match output with
+        | "human" ->
+          stream_human common t s
+        | uri ->
+          let uri' = Uri.of_string uri in
+          begin match Uri.scheme uri' with
+          | Some "nbd" ->
+            stream_nbd common t s
+          | Some x ->
+            fail (Failure (Printf.sprintf "Unknown URI scheme %s" x))
+          | None ->
+            fail (Failure (Printf.sprintf "Failed to parse URI: %s" uri))
+          end in
+
+      Lwt_main.run thread;
       `Ok ()
     with Failure x ->
       `Error(true, x)
@@ -343,15 +356,23 @@ let stream_cmd =
   let doc = "stream the contents of a vhd disk" in
   let man = [
     `S "DESCRIPTION";
-    `P "Stream the contents of a virtual disk defined by the given vhd filename and all of its parents. The default streaming format is \"english\" where the contents are described as a sequence of I/O operations such as \"insert sector 5 from file x.vhd\". Other streaming formats are: \"raw\" and \"vhd\".";
+    `P "Stream the contents of a virtual disk defined by the given vhd filename and all of its parents, using the specified format and written to the specified output.";
+    `S "FORMATS";
+    `P "The default streaming format is \"raw\" which means no encoding. The other supported format is  \"vhd\" where the output is written as a single coalesced vhd.";
+    `S "OUTPUTS";
+    `P "There are 2 currently defined outputs: \"human\" (the default) where the contents are described as a sequence of I/O operations such as \"insert sector 5 from file x.vhd\". The other defined output is a URL which can take the form:";
+    `P "  nbd://host:port/";
   ] @ help in
   let format =
     let doc = "Output format" in
-    Arg.(value & opt (some string) (Some "english") & info [ "format" ] ~doc) in
+    Arg.(value & opt (some string) (Some "raw") & info [ "format" ] ~doc) in
   let filename =
     let doc = Printf.sprintf "Path to the vhd to be streamed." in
     Arg.(value & pos 0 (some file) None & info [] ~doc) in
-  Term.(ret(pure Impl.stream $ common_options_t $ filename $ format)),
+  let output =
+    let doc = "Destination for streamed data." in
+    Arg.(value & opt (some string) (Some "human") & info [ "output" ] ~doc) in
+  Term.(ret(pure Impl.stream $ common_options_t $ filename $ format $ output)),
   Term.info "stream" ~sdocs:_common_options ~doc ~man
 
 
