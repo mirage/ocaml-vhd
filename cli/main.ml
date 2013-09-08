@@ -40,6 +40,28 @@ let common_options_t =
     Arg.(last & vflag_all [false] [verbose]) in 
   Term.(pure Common.make $ debug $ verb)
 
+let parse_size x =
+  let kib = 1024L in
+  let mib = Int64.mul kib kib in
+  let gib = Int64.mul mib kib in
+  let tib = Int64.mul gib kib in
+  let endswith suffix x =
+    let suffix' = String.length suffix in
+    let x' = String.length x in
+    x' >= suffix' && (String.sub x (x' - suffix') suffix' = suffix) in
+  let remove suffix x =
+    let suffix' = String.length suffix in
+    let x' = String.length x in
+    String.sub x 0 (x' - suffix') in
+  try
+    if endswith "KiB" x then Int64.(mul kib (of_string (remove "KiB" x)))
+    else if endswith "MiB" x then Int64.(mul mib (of_string (remove "MiB" x)))
+    else if endswith "GiB" x then Int64.(mul gib (of_string (remove "GiB" x)))
+    else if endswith "TiB" x then Int64.(mul tib (of_string (remove "TiB" x)))
+    else Int64.of_string x
+  with _ ->
+    failwith (Printf.sprintf "Cannot parse size: %s" x)
+
 module Impl = struct
   open Lwt
   open Vhd
@@ -183,7 +205,7 @@ module Impl = struct
       match parent, size with
       | None, None -> failwith "Please supply either a size or a parent"
       | None, Some size ->
-        let size = Int64.of_string size in
+        let size = parse_size size in
         let t =
           lwt vhd = Vhd_IO.create_dynamic ~filename ~size () in
           Vhd_IO.close vhd in
