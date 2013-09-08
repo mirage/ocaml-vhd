@@ -62,6 +62,57 @@ let parse_size x =
   with _ ->
     failwith (Printf.sprintf "Cannot parse size: %s" x)
 
+module type Floatable = sig
+  type t
+  val to_float: t -> float
+end
+
+module Progress_bar(T: Floatable) = struct
+  type t = {
+    max_value: T.t;
+    mutable current_value: T.t;
+    width: int;
+    line: string;
+    mutable spin_index: int;
+  }
+
+  let prefix_s = "[*] "
+  let prefix = String.length prefix_s
+  let suffix_s = "  (   %)"
+  let suffix = String.length suffix_s
+
+  let spinner = [| '-'; '\\'; '|'; '/' |]
+
+  let create width current_value max_value =
+    let line = String.make width ' ' in
+    String.blit prefix_s 0 line 0 prefix;
+    String.blit suffix_s 0 line (width - suffix - 1) suffix;
+    let spin_index = 0 in
+    { max_value; current_value; width; line; spin_index }
+
+  let percent t = int_of_float (T.(to_float t.current_value /. (to_float t.max_value) *. 100.))
+
+  let bar_width t value =
+    int_of_float (T.(to_float value /. (to_float t.max_value) *. (float_of_int (t.width - prefix - suffix))))
+
+  let print_bar t =
+    let w = bar_width t t.current_value in
+    t.line.[1] <- spinner.(t.spin_index);
+    t.spin_index <- (t.spin_index + 1) mod (Array.length spinner);
+    for i = 0 to w - 1 do
+      t.line.[prefix + i] <- (if i = w - 1 then '>' else '#')
+    done;
+    let percent = Printf.sprintf "%3d" (percent t) in
+    String.blit percent 0 t.line (t.width - 6) 3;
+    Printf.printf "\r%s%!" t.line
+
+  let update t new_value =
+    let old_bar = bar_width t t.current_value in
+    let new_bar = bar_width t new_value in
+    t.current_value <- new_value;
+    if new_bar <> old_bar then print_bar t
+end
+
 module Impl = struct
   open Lwt
   open Vhd
@@ -253,7 +304,9 @@ module Impl = struct
     Printf.printf "# end of stream\n";
     return ()
 
-  let stream_nbd common t s prezeroed =
+  module P = Progress_bar(Int64)
+
+  let stream_nbd common t s prezeroed progress =
     let sock = Lwt_unix.socket Unix.PF_UNIX Unix.SOCK_STREAM 0 in
     let sockaddr = Lwt_unix.ADDR_UNIX "socket" in
     lwt () = Lwt_unix.connect sock sockaddr in
@@ -269,6 +322,10 @@ module Impl = struct
       done;
       b in
 
+    (* TODO: we could precompute the actual amount of work in the stream *)
+    let bytes = t.Vhd.footer.Footer.current_size in
+    let p = P.create 80 0L (Int64.div bytes 512L) in
+
     lwt _ = fold_left (fun sector x ->
       lwt () = match x with
       | Element.Copy(h, sector_start, sector_len) ->
@@ -279,10 +336,12 @@ module Impl = struct
           let sector_len = sector_len - this in
           let sector_start = Int64.(add sector_start (of_int this)) in
           let sector = Int64.(add sector (of_int this)) in
+          if progress then P.update p sector;
           if sector_len > 0 then copy sector sector_start sector_len else return () in
         copy sector sector_start sector_len
       | Element.Sectors data ->
         lwt () = Nbd_lwt_client.write server data (Int64.mul sector 512L) in
+        if progress then P.update p sector;
         return ()
       | Element.Empty n ->
         if not prezeroed then begin
@@ -292,16 +351,18 @@ module Impl = struct
             lwt () = Nbd_lwt_client.write server block (Int64.mul sector 512L) in
             let sector = Int64.(add sector (of_int this)) in
             let n = Int64.(sub n (of_int this)) in
+            if progress then P.update p sector;
             if n > 0L then copy sector n else return () in
           copy sector n
         end else return () in
       return (Int64.(add sector (of_int(Element.len x))))
     ) 0L s in
+    if progress then Printf.printf "\n%!";
 
     lwt () = Lwt_unix.close sock in
     return ()
 
-  let stream common filename format output prezeroed =
+  let stream common filename format output prezeroed progress =
     try
       let filename = require "filename" filename in
       let format = require "format" format in
@@ -320,7 +381,7 @@ module Impl = struct
           let uri' = Uri.of_string uri in
           begin match Uri.scheme uri' with
           | Some "nbd" ->
-            stream_nbd common t s prezeroed
+            stream_nbd common t s prezeroed progress
           | Some x ->
             fail (Failure (Printf.sprintf "Unknown URI scheme %s" x))
           | None ->
@@ -415,7 +476,10 @@ let stream_cmd =
   let prezeroed =
     let doc = "Assume the destination is completely empty." in
     Arg.(value & flag & info [ "prezeroed" ] ~doc) in
-  Term.(ret(pure Impl.stream $ common_options_t $ filename $ format $ output $ prezeroed)),
+  let progress =
+    let doc = "Display a progress bar." in
+    Arg.(value & flag & info ["progress"] ~doc) in
+  Term.(ret(pure Impl.stream $ common_options_t $ filename $ format $ output $ prezeroed $ progress)),
   Term.info "stream" ~sdocs:_common_options ~doc ~man
 
 
