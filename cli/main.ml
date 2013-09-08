@@ -231,7 +231,7 @@ module Impl = struct
     Printf.printf "# end of stream\n";
     return ()
 
-  let stream_nbd common t s =
+  let stream_nbd common t s prezeroed =
     let sock = Lwt_unix.socket Unix.PF_UNIX Unix.SOCK_STREAM 0 in
     let sockaddr = Lwt_unix.ADDR_UNIX "socket" in
     lwt () = Lwt_unix.connect sock sockaddr in
@@ -263,7 +263,7 @@ module Impl = struct
     lwt () = Lwt_unix.close sock in
     return ()
 
-  let stream common filename format output =
+  let stream common filename format output prezeroed =
     try
       let filename = require "filename" filename in
       let format = require "format" format in
@@ -282,7 +282,7 @@ module Impl = struct
           let uri' = Uri.of_string uri in
           begin match Uri.scheme uri' with
           | Some "nbd" ->
-            stream_nbd common t s
+            stream_nbd common t s prezeroed
           | Some x ->
             fail (Failure (Printf.sprintf "Unknown URI scheme %s" x))
           | None ->
@@ -362,6 +362,8 @@ let stream_cmd =
     `S "OUTPUTS";
     `P "There are 2 currently defined outputs: \"human\" (the default) where the contents are described as a sequence of I/O operations such as \"insert sector 5 from file x.vhd\". The other defined output is a URL which can take the form:";
     `P "  nbd://host:port/";
+    `S "NOTES";
+    `P "When transferring a raw format image onto a medium which is completely empty (i.e. full of zeroes) it is possible to optimise the transfer by avoiding writing empty blocks. The default behaviour is to write zeroes, which is always safe. If you know your media is empty then supply the '--prezeroed' argument.";
   ] @ help in
   let format =
     let doc = "Output format" in
@@ -372,7 +374,10 @@ let stream_cmd =
   let output =
     let doc = "Destination for streamed data." in
     Arg.(value & opt (some string) (Some "human") & info [ "output" ] ~doc) in
-  Term.(ret(pure Impl.stream $ common_options_t $ filename $ format $ output)),
+  let prezeroed =
+    let doc = "Assume the destination is completely empty." in
+    Arg.(value & flag & info [ "prezeroed" ] ~doc) in
+  Term.(ret(pure Impl.stream $ common_options_t $ filename $ format $ output $ prezeroed)),
   Term.info "stream" ~sdocs:_common_options ~doc ~man
 
 
