@@ -124,7 +124,7 @@ module Impl = struct
 
   type field = {
     name: string;
-    get: Vhd_lwt.Vhd_IO.handle Vhd.t -> string Lwt.t;
+    get: Vhd_lwt.handle Vhd.t -> string Lwt.t;
   }
 
   let fields = [
@@ -379,16 +379,20 @@ module Impl = struct
         lwt (t, s) = match input_format, output_format with
           | "vhd", "vhd" ->
             lwt t = Vhd_IO.openfile filename in
-            lwt s = vhd t in
+            lwt s = Vhd_input.vhd t in
             return (t, s)
           | "vhd", "raw" ->
             lwt t = Vhd_IO.openfile filename in
-            lwt s = raw t in
+            lwt s = Vhd_input.raw t in
             return (t, s)
           | "raw", "vhd" ->
-            fail (Failure "convert from raw to vhd")
+            lwt t = openfile filename in
+            lwt s = Raw_input.vhd t in
+            return (t, s)
           | "raw", "raw" ->
-            fail (Failure "convert from raw to raw")
+            lwt t = openfile filename in
+            lwt s = Raw_input.raw t in
+            return (t, s)
           | _, _ -> assert false in
         match output with
         | "human" ->

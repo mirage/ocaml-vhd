@@ -263,9 +263,12 @@ end
 module Make : functor (File : S.IO) -> sig
   open File
 
-  module Vhd_IO : sig
-    type handle
+  type handle
 
+  val openfile : string -> handle t
+  val close : handle -> unit t
+
+  module Vhd_IO : sig
     val openfile : string -> handle Vhd.t t
     (** [openfile filename] reads the vhd metadata from [filename] (and other
         files on the path from [filename] to the root of the tree) *)
@@ -317,11 +320,19 @@ module Make : functor (File : S.IO) -> sig
   (** [fold_left f initial stream] folds [f] across all the elements in
       the [stream] with neutral element [initial] *)
 
-  val raw: Vhd_IO.handle Vhd.t -> File.fd Element.t stream File.t
-  (** [raw t] creates a raw-formatted stream representing the consolidated
-      data present in the virtual disk [t] *)
+  module Vhd_input : sig
+    val raw: handle Vhd.t -> File.fd Element.t stream File.t
+    (** [raw t] creates a raw-formatted stream representing the consolidated
+        data present in the virtual disk [t] *)
 
-  val vhd: Vhd_IO.handle Vhd.t -> File.fd Element.t stream File.t
-  (** [vhd t] creates a vhd-formatted stream representing the consolidated
-      data present in the virtual disk [t] *)
+    val vhd: handle Vhd.t -> File.fd Element.t stream File.t
+    (** [vhd t] creates a vhd-formatted stream representing the consolidated
+        data present in the virtual disk [t] *)
+  end
+
+  module Raw_input : sig
+    val raw : handle -> File.fd Element.t stream File.t
+
+    val vhd : handle -> File.fd Element.t stream File.t
+  end
 end
