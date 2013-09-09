@@ -393,6 +393,17 @@ module Impl = struct
             let headers = Header.init () in
             let k, v = Cookie.Cookie_hdr.serialize [ "chunked", "true" ] in
             let headers = Header.add headers k v in
+            let headers = match Uri.userinfo uri' with
+              | None -> headers
+              | Some x ->
+                begin match Re_str.bounded_split_delim (Re_str.regexp_string ":") x 2 with
+                | [ user; pass ] ->
+                  let b = Cohttp.Auth.(to_string (Basic (user, pass))) in
+                  Header.add headers "authorization" b
+                | _ ->
+                  Printf.fprintf stderr "I don't know how to handle authentication for this URI.\n Try scheme://user:password@host/path\n";
+                  exit 1
+                end in
             let request = Cohttp.Request.make ~meth:`PUT ~version:`HTTP_1_1 ~headers uri' in
             lwt () = Request.write (fun t _ -> return ()) request oc in
             begin match_lwt Response.read ic with
