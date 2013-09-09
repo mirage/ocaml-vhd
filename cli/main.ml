@@ -362,20 +362,20 @@ module Impl = struct
     lwt () = Lwt_unix.close sock in
     return ()
 
-  let stream common filename format output prezeroed progress =
+  let stream common filename output_format output prezeroed progress =
     try
       let filename = require "filename" filename in
-      let format = require "format" format in
+      let output_format = require "output-format" output_format in
       let output = require "output" output in
 
       let thread =      
         lwt t = Vhd_IO.openfile filename in
-        lwt s = match format with
+        lwt s = match output_format with
           | "raw" ->
             raw t
           | "vhd" ->
             vhd t
-          | _ -> fail (Failure (Printf.sprintf "%s is an unsupported output format" format)) in
+          | _ -> fail (Failure (Printf.sprintf "%s is an unsupported output format" output_format)) in
         match output with
         | "human" ->
           stream_human common t s
@@ -503,9 +503,9 @@ let stream_cmd =
     `S "NOTES";
     `P "When transferring a raw format image onto a medium which is completely empty (i.e. full of zeroes) it is possible to optimise the transfer by avoiding writing empty blocks. The default behaviour is to write zeroes, which is always safe. If you know your media is empty then supply the '--prezeroed' argument.";
   ] @ help in
-  let format =
+  let output_format =
     let doc = "Output format" in
-    Arg.(value & opt (some string) (Some "raw") & info [ "format" ] ~doc) in
+    Arg.(value & opt (some string) (Some "raw") & info [ "output-format" ] ~doc) in
   let filename =
     let doc = Printf.sprintf "Path to the vhd to be streamed." in
     Arg.(value & pos 0 (some file) None & info [] ~doc) in
@@ -518,7 +518,7 @@ let stream_cmd =
   let progress =
     let doc = "Display a progress bar." in
     Arg.(value & flag & info ["progress"] ~doc) in
-  Term.(ret(pure Impl.stream $ common_options_t $ filename $ format $ output $ prezeroed $ progress)),
+  Term.(ret(pure Impl.stream $ common_options_t $ filename $ output_format $ output $ prezeroed $ progress)),
   Term.info "stream" ~sdocs:_common_options ~doc ~man
 
 
