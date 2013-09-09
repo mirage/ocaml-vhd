@@ -362,20 +362,34 @@ module Impl = struct
     lwt () = Lwt_unix.close sock in
     return ()
 
-  let stream common filename output_format output prezeroed progress =
+  let stream common filename input_format output_format output prezeroed progress =
     try
       let filename = require "filename" filename in
+      let input_format = require "input-format" input_format in
       let output_format = require "output-format" output_format in
       let output = require "output" output in
 
-      let thread =      
-        lwt t = Vhd_IO.openfile filename in
-        lwt s = match output_format with
-          | "raw" ->
-            raw t
-          | "vhd" ->
-            vhd t
-          | _ -> fail (Failure (Printf.sprintf "%s is an unsupported output format" output_format)) in
+      let supported_formats = [ "raw"; "vhd" ] in
+      if not (List.mem input_format supported_formats)
+      then failwith (Printf.sprintf "%s is not a supported format" input_format);
+      if not (List.mem output_format supported_formats)
+      then failwith (Printf.sprintf "%s is not a supported format" output_format);
+
+      let thread =
+        lwt (t, s) = match input_format, output_format with
+          | "vhd", "vhd" ->
+            lwt t = Vhd_IO.openfile filename in
+            lwt s = vhd t in
+            return (t, s)
+          | "vhd", "raw" ->
+            lwt t = Vhd_IO.openfile filename in
+            lwt s = raw t in
+            return (t, s)
+          | "raw", "vhd" ->
+            fail (Failure "convert from raw to vhd")
+          | "raw", "raw" ->
+            fail (Failure "convert from raw to raw")
+          | _, _ -> assert false in
         match output with
         | "human" ->
           stream_human common t s
@@ -503,6 +517,9 @@ let stream_cmd =
     `S "NOTES";
     `P "When transferring a raw format image onto a medium which is completely empty (i.e. full of zeroes) it is possible to optimise the transfer by avoiding writing empty blocks. The default behaviour is to write zeroes, which is always safe. If you know your media is empty then supply the '--prezeroed' argument.";
   ] @ help in
+  let input_format =
+    let doc = "Input format" in
+    Arg.(value & opt (some string) (Some "raw") & info [ "input-format" ] ~doc) in
   let output_format =
     let doc = "Output format" in
     Arg.(value & opt (some string) (Some "raw") & info [ "output-format" ] ~doc) in
@@ -518,7 +535,7 @@ let stream_cmd =
   let progress =
     let doc = "Display a progress bar." in
     Arg.(value & flag & info ["progress"] ~doc) in
-  Term.(ret(pure Impl.stream $ common_options_t $ filename $ output_format $ output $ prezeroed $ progress)),
+  Term.(ret(pure Impl.stream $ common_options_t $ filename $ input_format $ output_format $ output $ prezeroed $ progress)),
   Term.info "stream" ~sdocs:_common_options ~doc ~man
 
 
