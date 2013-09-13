@@ -61,6 +61,10 @@ module Fd = struct
     let lock = Lwt_mutex.create () in
     return { fd; filename; lock }
 
+  let size_of_file t =
+    lwt s = Lwt_unix.LargeFile.fstat t.fd in
+    return s.Lwt_unix.LargeFile.st_size
+
   let create filename =
     (* First create the file as normal *)
     lwt fd = Lwt_unix.openfile filename [ Unix.O_RDWR; Unix.O_CREAT; Unix.O_TRUNC ] 0o644 in

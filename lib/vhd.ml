@@ -1123,10 +1123,13 @@ module Make = functor(File: S.IO) -> struct
      a 'use after free' style bug *)
   type handle = File.fd option ref
 
-  let rec openfile filename =
-    File.openfile filename >>= fun fd ->
+  let handle fd =
     let handle = ref (Some fd) in
     return handle
+
+  let rec openfile filename =
+    File.openfile filename >>= fun fd ->
+    handle fd
 
   exception Closed
 

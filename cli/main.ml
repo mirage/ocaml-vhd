@@ -288,10 +288,9 @@ module Impl = struct
     with Failure x ->
       `Error(true, x)
 
-  let stream_human common t s =
+  let stream_human common size s =
     (* How much space will we need for the sector numbers? *)
-    let bytes = t.Vhd.footer.Footer.current_size in
-    let sectors = Int64.shift_right bytes sector_shift in
+    let sectors = Int64.shift_right size sector_shift in
     let decimal_digits = int_of_float (ceil (log10 (Int64.to_float sectors))) in
     Printf.printf "# beginning of stream\n";
     Printf.printf "# offset : contents\n";
@@ -306,7 +305,7 @@ module Impl = struct
 
   module P = Progress_bar(Int64)
 
-  let stream_nbd common t s prezeroed progress =
+  let stream_nbd common size s prezeroed progress =
     let sock = Lwt_unix.socket Unix.PF_UNIX Unix.SOCK_STREAM 0 in
     let sockaddr = Lwt_unix.ADDR_UNIX "socket" in
     lwt () = Lwt_unix.connect sock sockaddr in
@@ -323,8 +322,7 @@ module Impl = struct
       b in
 
     (* TODO: we could precompute the actual amount of work in the stream *)
-    let bytes = t.Vhd.footer.Footer.current_size in
-    let p = P.create 80 0L (Int64.div bytes 512L) in
+    let p = P.create 80 0L (Int64.div size 512L) in
 
     lwt _ = fold_left (fun sector x ->
       lwt () = match x with
@@ -376,32 +374,36 @@ module Impl = struct
       then failwith (Printf.sprintf "%s is not a supported format" output_format);
 
       let thread =
-        lwt (t, s) = match input_format, output_format with
+        lwt (size, s) = match input_format, output_format with
           | "vhd", "vhd" ->
             lwt t = Vhd_IO.openfile filename in
             lwt s = Vhd_input.vhd t in
-            return (t, s)
+            return (t.Vhd.footer.Footer.current_size, s)
           | "vhd", "raw" ->
             lwt t = Vhd_IO.openfile filename in
             lwt s = Vhd_input.raw t in
-            return (t, s)
+            return (t.Vhd.footer.Footer.current_size, s)
           | "raw", "vhd" ->
             lwt t = openfile filename in
-            lwt s = Raw_input.vhd t in
-            return (t, s)
+            lwt h = handle t in
+            lwt s = Raw_input.vhd h in
+            lwt size = size_of_file t in
+            return (size, s)
           | "raw", "raw" ->
             lwt t = openfile filename in
-            lwt s = Raw_input.raw t in
-            return (t, s)
+            lwt h = handle t in
+            lwt s = Raw_input.raw h in
+            lwt size = size_of_file t in
+            return (size, s)
           | _, _ -> assert false in
         match output with
         | "human" ->
-          stream_human common t s
+          stream_human common size s
         | uri ->
           let uri' = Uri.of_string uri in
           begin match Uri.scheme uri' with
           | Some "nbd" ->
-            stream_nbd common t s prezeroed progress
+            stream_nbd common size s prezeroed progress
           | Some "http"
           | Some "https" ->
             let open Cohttp in
@@ -435,7 +437,7 @@ module Impl = struct
                   let te = "transfer-encoding" in
                   List.mem_assoc te headers && (List.assoc te headers = "nbd") in
                 if is_nbd
-                then stream_nbd common t s prezeroed progress
+                then stream_nbd common size s prezeroed progress
                 else fail (Failure "non-NBD upload not implemented yet")
               end else fail (Failure (Code.reason_phrase_of_code code))
             end

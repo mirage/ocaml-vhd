@@ -136,9 +136,9 @@ let descr_of_program = function
 let string_of_program p = String.concat "_" (List.map string_of_operation p)
 
 type state = {
-  to_close: Vhd_IO.handle Vhd.t list;
+  to_close: handle Vhd.t list;
   to_unlink: string list;
-  child: Vhd_IO.handle Vhd.t option;
+  child: handle Vhd.t option;
   contents: (int64 * Cstruct.t) list;
 }
 
@@ -203,7 +203,7 @@ let empty_sector = Vhd_lwt.Memory.alloc 512
    If ~allow_empty then we accept sectors which are present (in the bitmap) but
    physically empty. *)
 let check_raw_stream_contents ~allow_empty t expected =
-  lwt stream = raw t in
+  lwt stream = Vhd_input.raw t in
   lwt next_sector = fold_left (fun offset x -> match x with
     | Element.Empty y -> 
      (* all sectors in [offset, offset + y = 1] should not be in the contents list *)
@@ -261,7 +261,7 @@ let verify state = match state.child with
     (* Stream the contents as a fresh vhd *)
     let filename = make_new_filename () in
     lwt fd = Fd.create filename in
-    lwt stream = vhd t in
+    lwt stream = Vhd_input.vhd t in
     lwt _ = fold_left (fun offset x -> match x with
       | Element.Empty y -> return (Int64.(add offset (mul y 512L)))
       | Element.Sectors data ->

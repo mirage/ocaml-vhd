@@ -265,6 +265,8 @@ module Make : functor (File : S.IO) -> sig
 
   type handle
 
+  val handle: File.fd -> handle t
+
   val openfile : string -> handle t
   val close : handle -> unit t
 
