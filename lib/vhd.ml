@@ -1239,6 +1239,10 @@ module Make = functor(File: S.IO) -> struct
       let bat_buffer = File.alloc (BAT.sizeof_bytes header) in
       let bat = BAT.of_buffer header bat_buffer in
       File.create filename >>= fun handle ->
+      (* Re-open the parent file to avoid sharing the underlying file descriptor and
+         having to perform reference counting *)
+      File.openfile parent.Vhd.filename >>= fun parent_handle ->
+      let parent = { parent with handle = parent_handle } in
       let t = { filename; handle; header; footer; parent = Some parent; bat; bitmap_cache = ref None } in
       write t >>= fun t ->
       return t
@@ -1260,10 +1264,10 @@ module Make = functor(File: S.IO) -> struct
     let rec close t =
       (* This is where we could repair the footer if we have chosen not to
          update it for speed. *)
-      File.close t.Vhd.handle (*>>= fun () ->
+      File.close t.Vhd.handle >>= fun () ->
       match t.Vhd.parent with
       | None -> return ()
-      | Some p -> close p*)
+      | Some p -> close p
 
     let rec get_sector_location t sector =
       let open Int64 in
