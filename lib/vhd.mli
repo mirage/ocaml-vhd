@@ -242,24 +242,6 @@ module Vhd : sig
   val check_overlapping_blocks : 'a t -> unit
 end
 
-module Element : sig
-
-  (** A disk can be streamed as a sequence of elements *)
-  type 'a t =
-    | Copy of ('a * int64 * int)
-    (** [Copy (t, offset, len)] copies [len] sectors from sector [offset]
-        from the file [t] *)
-    | Sectors of Cstruct.t
-    (** a new sector (e.g. for metadata) *)
-    | Empty of int64
-    (** empty space in sectors *)
-
-  val to_string: 'a t -> string
-
-  val len: 'a t -> int
-  (** [len t] is the length of [t] in sectors *)
-end
-
 module Make : functor (File : S.IO) -> sig
   open File
 

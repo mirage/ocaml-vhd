@@ -965,33 +965,6 @@ module Vhd = struct
     to_int32 ((next_free_byte ++ 511L) lsr sector_shift)
 end
 
-module Element = struct
-  type 'a t =
-    | Copy of ('a * int64 * int)
-    | Sectors of Cstruct.t
-    | Empty of int64
-
-  let to_string = function
-    | Copy(_, offset, 1) ->
-      Printf.sprintf "1 sector copied starting at offset %Ld" offset
-    | Copy(_, offset, len) ->
-      Printf.sprintf "%d sectors copied starting at offset %Ld" len offset
-    | Sectors x ->
-      let text = String.escaped (Cstruct.to_string (Cstruct.sub x 0 16)) in
-      if Cstruct.len x = sector_size
-      then Printf.sprintf "1 sector \"%s...\"" text
-      else Printf.sprintf "%d sectors \"%s...\"" (Cstruct.len x / sector_size) text
-    | Empty 1L ->
-      "1 empty sector"
-    | Empty x ->
-      Printf.sprintf "%Ld empty sectors" x
-
-  let len = function
-    | Copy(_, _, len) -> len
-    | Sectors x -> Cstruct.len x / sector_size
-    | Empty x -> Int64.to_int x
-end
-
 module Make = functor(File: S.IO) -> struct
   open File
 
