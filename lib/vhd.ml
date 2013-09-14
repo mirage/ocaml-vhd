@@ -1119,31 +1119,6 @@ module Make = functor(File: S.IO) -> struct
       return (Partial bitmap)
   end
 
-  (* We track whether the underlying file has been closed, to avoid
-     a 'use after free' style bug *)
-  type handle = File.fd option ref
-
-  let handle fd =
-    let handle = ref (Some fd) in
-    return handle
-
-  let rec openfile filename =
-    File.openfile filename >>= fun fd ->
-    handle fd
-
-  exception Closed
-
-  let get_handle handle = match !handle with
-    | Some x -> return x
-    | None -> fail Closed
-
-  let close handle = match !handle with
-    | None -> return ()
-    | Some fd ->
-      File.close fd >>= fun () ->
-      handle := None;
-      return ()
-
   module Vhd_IO = struct
     open Vhd
 
@@ -1154,18 +1129,17 @@ module Make = functor(File: S.IO) -> struct
       return ()
     
     let write t =
-      get_handle t.Vhd.handle >>= fun handle ->
       let footer_buf = File.alloc Footer.sizeof in
-      Footer_IO.write footer_buf handle 0L t.Vhd.footer >>= fun footer ->
+      Footer_IO.write footer_buf t.Vhd.handle 0L t.Vhd.footer >>= fun footer ->
       (* This causes the file size to be increased so we can successfully
          read empty blocks in places like the parent locators *)
-      write_trailing_footer footer_buf handle t >>= fun () ->
+      write_trailing_footer footer_buf t.Vhd.handle t >>= fun () ->
       let t ={ t with Vhd.footer } in
       let buf = File.alloc Header.sizeof in
-      Header_IO.write buf handle t.Vhd.footer.Footer.data_offset t.Vhd.header >>= fun header ->
+      Header_IO.write buf t.Vhd.handle t.Vhd.footer.Footer.data_offset t.Vhd.header >>= fun header ->
       let t = { t with Vhd.header } in
       let buf = File.alloc (BAT.sizeof_bytes header) in
-      BAT_IO.write buf handle t.Vhd.header t.Vhd.bat >>= fun () ->
+      BAT_IO.write buf t.Vhd.handle t.Vhd.header t.Vhd.bat >>= fun () ->
       (* Assume the data is there, or will be written later *)
       return t
 
@@ -1212,8 +1186,7 @@ module Make = functor(File: S.IO) -> struct
       } in
       let bat_buffer = File.alloc (BAT.sizeof_bytes header) in
       let bat = BAT.of_buffer header bat_buffer in
-      File.create filename >>= fun fd ->
-      let handle = ref (Some fd) in
+      File.create filename >>= fun handle ->
       let t = { filename; handle; header; footer; parent = None; bat; bitmap_cache = ref None } in
       write t >>= fun t ->
       return t
@@ -1265,19 +1238,16 @@ module Make = functor(File: S.IO) -> struct
       } in
       let bat_buffer = File.alloc (BAT.sizeof_bytes header) in
       let bat = BAT.of_buffer header bat_buffer in
-      File.create filename >>= fun fd ->
-      let handle = ref (Some fd) in
+      File.create filename >>= fun handle ->
       let t = { filename; handle; header; footer; parent = Some parent; bat; bitmap_cache = ref None } in
       write t >>= fun t ->
       return t
 
-    let openfile' = openfile
     let rec openfile filename =
-      openfile' filename >>= fun handle ->
-      get_handle handle >>= fun fd ->
-      Footer_IO.read fd 0L >>= fun footer ->
-      Header_IO.read fd (Int64.of_int Footer.sizeof) >>= fun header ->
-      BAT_IO.read fd header >>= fun bat ->
+      File.openfile filename >>= fun handle ->
+      Footer_IO.read handle 0L >>= fun footer ->
+      Header_IO.read handle (Int64.of_int Footer.sizeof) >>= fun header ->
+      BAT_IO.read handle header >>= fun bat ->
       (match footer.Footer.disk_type with
         | Disk_type.Differencing_hard_disk ->
           Header_IO.get_parent_filename header >>= fun parent_filename ->
@@ -1287,19 +1257,15 @@ module Make = functor(File: S.IO) -> struct
           return None) >>= fun parent ->
       return { filename; handle; header; footer; bat; bitmap_cache = ref None; parent }
 
-    let close t =
+    let rec close t =
       (* This is where we could repair the footer if we have chosen not to
          update it for speed. *)
-      match !(t.Vhd.handle) with
-      | Some x ->
-        File.close x >>= fun () ->
-        t.Vhd.handle := None;
-        return ()
-      | None ->
-        return ()
+      File.close t.Vhd.handle (*>>= fun () ->
+      match t.Vhd.parent with
+      | None -> return ()
+      | Some p -> close p*)
 
     let rec get_sector_location t sector =
-      get_handle t.Vhd.handle >>= fun handle ->
       let open Int64 in
       if sector lsl sector_shift > t.Vhd.footer.Footer.current_size
       then return None (* perhaps elements in the vhd chain have different sizes *)
@@ -1319,7 +1285,7 @@ module Make = functor(File: S.IO) -> struct
           ( match !(t.Vhd.bitmap_cache) with
             | Some (block_num', bitmap) when block_num' = block_num -> return bitmap
             | _ ->
-              Bitmap_IO.read handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
+              Bitmap_IO.read t.Vhd.handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
               t.Vhd.bitmap_cache := Some(block_num, bitmap);
               return bitmap ) >>= fun bitmap ->
           let in_this_bitmap = Bitmap.get bitmap sector_in_block in
@@ -1341,8 +1307,7 @@ module Make = functor(File: S.IO) -> struct
       else get_sector_location t sector >>= function
       | None -> return None
       | Some (t, offset) ->
-        get_handle t.Vhd.handle >>= fun handle ->
-        really_read handle offset sector_size >>= fun data ->
+        really_read t.Vhd.handle offset sector_size >>= fun data ->
         return (Some data)
 
     let constant size v =
@@ -1390,7 +1355,6 @@ module Make = functor(File: S.IO) -> struct
       loop 0
 
     let write_sector t sector data =
-      get_handle t.Vhd.handle >>= fun handle ->
       let block_size_in_sectors = 1 lsl t.Vhd.header.Header.block_size_sectors_shift in
       let open Int64 in
       if sector < 0L || (sector lsl sector_shift >= t.Vhd.footer.Footer.current_size)
@@ -1402,19 +1366,19 @@ module Make = functor(File: S.IO) -> struct
         let update_sector bitmap_sector =
           let bitmap_sector = of_int32 bitmap_sector in
           let data_sector = bitmap_sector ++ (of_int (Header.sizeof_bitmap t.Vhd.header) lsr sector_shift) ++ sector_in_block in
-          Bitmap_IO.read handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
-          really_write handle (data_sector lsl sector_shift) data >>= fun () ->
+          Bitmap_IO.read t.Vhd.handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
+          really_write t.Vhd.handle (data_sector lsl sector_shift) data >>= fun () ->
           match Bitmap.set bitmap sector_in_block with
           | None -> return ()
-          | Some (offset, buf) -> really_write handle ((bitmap_sector lsl sector_shift) ++ offset) buf in
+          | Some (offset, buf) -> really_write t.Vhd.handle ((bitmap_sector lsl sector_shift) ++ offset) buf in
 
         if BAT.get t.Vhd.bat block_num = BAT.unused then begin
           BAT.set t.Vhd.bat block_num (Vhd.get_free_sector t.Vhd.header t.Vhd.bat);
-          write_zero_block handle t block_num >>= fun () ->
+          write_zero_block t.Vhd.handle t block_num >>= fun () ->
           let bat_buffer = File.alloc (BAT.sizeof_bytes t.Vhd.header) in
-          BAT_IO.write bat_buffer handle t.Vhd.header t.Vhd.bat >>= fun () ->
+          BAT_IO.write bat_buffer t.Vhd.handle t.Vhd.header t.Vhd.bat >>= fun () ->
           let footer_buffer = File.alloc Footer.sizeof in
-          write_trailing_footer footer_buffer handle t >>= fun () ->
+          write_trailing_footer footer_buffer t.Vhd.handle t >>= fun () ->
           update_sector (BAT.get t.Vhd.bat block_num)
         end else begin
           update_sector (BAT.get t.Vhd.bat block_num)
@@ -1469,7 +1433,7 @@ module Make = functor(File: S.IO) -> struct
 
   module Vhd_input = struct
 
-  let raw (vhd: handle Vhd.t) =
+  let raw (vhd: fd Vhd.t) =
     let block_size_sectors_shift = vhd.Vhd.header.Header.block_size_sectors_shift in
     let max_table_entries = vhd.Vhd.header.Header.max_table_entries in
     let empty_block = Empty (Int64.shift_left 1L block_size_sectors_shift) in
@@ -1494,15 +1458,14 @@ module Make = functor(File: S.IO) -> struct
               | None ->
                 return (Cons(empty_sector, next_sector))
               | Some (vhd', offset) ->
-                get_handle vhd'.Vhd.handle >>= fun handle ->
-                return (Cons(Copy(handle, Int64.shift_right offset sector_shift, 1), next_sector))
+                return (Cons(Copy(vhd'.Vhd.handle, Int64.shift_right offset sector_shift, 1), next_sector))
             end in
           sector 0
         end
       end in
     coalesce_request None (block 0)
 
-  let vhd (t: handle Vhd.t) =
+  let vhd (t: fd Vhd.t) =
     let block_size_sectors_shift = t.Vhd.header.Header.block_size_sectors_shift in
     let max_table_entries = t.Vhd.header.Header.max_table_entries in
 
@@ -1577,8 +1540,7 @@ module Make = functor(File: S.IO) -> struct
         | None ->
           return (Cons(Empty 1L, next))
         | Some (vhd', offset) ->
-          get_handle vhd'.Vhd.handle >>= fun handle ->
-          return (Cons(Copy(handle, Int64.shift_right offset sector_shift, 1), next)) in
+          return (Cons(Copy(vhd'.Vhd.handle, Int64.shift_right offset sector_shift, 1), next)) in
       if i >= header.Header.max_table_entries
       then andthen ()
       else

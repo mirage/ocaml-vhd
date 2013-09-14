@@ -124,7 +124,7 @@ module Impl = struct
 
   type field = {
     name: string;
-    get: Vhd_lwt.handle Vhd.t -> string Lwt.t;
+    get: File.fd Vhd.t -> string Lwt.t;
   }
 
   let fields = [
@@ -385,14 +385,12 @@ module Impl = struct
             return (t.Vhd.footer.Footer.current_size, s)
           | "raw", "vhd" ->
             lwt t = openfile filename in
-            lwt h = handle t in
-            lwt s = Raw_input.vhd h in
+            lwt s = Raw_input.vhd t in
             lwt size = size_of_file t in
             return (size, s)
           | "raw", "raw" ->
             lwt t = openfile filename in
-            lwt h = handle t in
-            lwt s = Raw_input.raw h in
+            lwt s = Raw_input.raw t in
             lwt size = size_of_file t in
             return (size, s)
           | _, _ -> assert false in

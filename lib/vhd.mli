@@ -263,49 +263,42 @@ end
 module Make : functor (File : S.IO) -> sig
   open File
 
-  type handle
-
-  val handle: File.fd -> handle t
-
-  val openfile : string -> handle t
-  val close : handle -> unit t
-
   module Vhd_IO : sig
-    val openfile : string -> handle Vhd.t t
+    val openfile : string -> fd Vhd.t t
     (** [openfile filename] reads the vhd metadata from [filename] (and other
         files on the path from [filename] to the root of the tree) *)
 
-    val close : handle Vhd.t -> unit t
+    val close : fd Vhd.t -> unit t
     (** [close t] frees all resources associated with [t] *)
 
     val create_dynamic: filename:string -> size:int64
       -> ?uuid:Uuidm.t
       -> ?saved_state:bool
       -> ?features:Feature.t list
-      -> unit -> handle Vhd.t t
+      -> unit -> fd Vhd.t t
     (** [create_dynamic ~filename ~size] creates an empty dynamic vhd with
         virtual size [size] bytes and filename [filename]. *)
 
-    val create_difference: filename:string -> parent:handle Vhd.t
+    val create_difference: filename:string -> parent:fd Vhd.t
       -> ?uuid:Uuidm.t
       -> ?saved_state:bool
       -> ?features:Feature.t list
-      -> unit -> handle Vhd.t t
+      -> unit -> fd Vhd.t t
     (** [create_difference ~filename ~parent] creates an empty differencing vhd
         with filename [filename] backed by parent [parent]. *)
 
-    val get_sector_location : handle Vhd.t -> int64 -> (handle Vhd.t * int64) option t
+    val get_sector_location : fd Vhd.t -> int64 -> (fd Vhd.t * int64) option t
     (** [get_sector_location t sector] returns [Some (t', sector')] if the
         [sector] in the virtual disk resides in physical [sector'] in
         the vhd [t'] (where [t'] may be any vhd on the path from [t] to the
         root of the tree. If no sector is present, this returns [None]. *)
 
-    val read_sector : handle Vhd.t -> int64 -> Cstruct.t option t
+    val read_sector : fd Vhd.t -> int64 -> Cstruct.t option t
     (** [read_sector t sector] returns [Some data] where [data] is the byte
         data stored at [sector] in the virtual disk, if any such data exists.
         If no data is stored at [sector], this returns [None] *)
 
-    val write_sector : handle Vhd.t -> int64 -> Cstruct.t -> unit t
+    val write_sector : fd Vhd.t -> int64 -> Cstruct.t -> unit t
     (** [write_sector t sector data] writes [data] at [sector] in [t] and
         updates all file metadata to preserve consistency. *)
   end
@@ -323,18 +316,18 @@ module Make : functor (File : S.IO) -> sig
       the [stream] with neutral element [initial] *)
 
   module Vhd_input : sig
-    val raw: handle Vhd.t -> File.fd Element.t stream File.t
+    val raw: fd Vhd.t -> fd Element.t stream t
     (** [raw t] creates a raw-formatted stream representing the consolidated
         data present in the virtual disk [t] *)
 
-    val vhd: handle Vhd.t -> File.fd Element.t stream File.t
+    val vhd: fd Vhd.t -> fd Element.t stream t
     (** [vhd t] creates a vhd-formatted stream representing the consolidated
         data present in the virtual disk [t] *)
   end
 
   module Raw_input : sig
-    val raw : handle -> File.fd Element.t stream File.t
+    val raw : fd -> fd Element.t stream t
 
-    val vhd : handle -> File.fd Element.t stream File.t
+    val vhd : fd -> fd Element.t stream t
   end
 end
