@@ -1593,9 +1593,76 @@ module Make = functor(File: S.IO) -> struct
      open Raw
 
      let vhd t =
+       (* The physical disk layout will be:
+          byte 0   - 511:  backup footer
+          byte 512 - 1535: file header
+          ... empty sector-- this is where we'll put the parent locator
+          byte 2048 - ...: BAT *)
 
+       let data_offset = 512L in
+       let table_offset = 2048L in
 
- fail (Failure "unimplemented")
+       File.get_file_size t.filename >>= fun current_size ->
+       let footer = Footer.create ~data_offset ~current_size ~disk_type:Disk_type.Dynamic_hard_disk () in
+       let header = Header.create ~table_offset ~current_size  () in
+       let bat_buffer = File.alloc (BAT.sizeof_bytes header) in
+       let bat = BAT.of_buffer header bat_buffer in
+
+       let sizeof_bat = BAT.sizeof_bytes header in
+
+       let sizeof_bitmap = Header.sizeof_bitmap header in
+       (* We'll always set all bitmap bits *)
+       let bitmap = File.alloc sizeof_bitmap in
+       for i = 0 to sizeof_bitmap - 1 do
+         Cstruct.set_uint8 bitmap i 0xff
+       done;
+
+       let sizeof_data_sectors = 1 lsl header.Header.block_size_sectors_shift in
+       let sizeof_data = 1 lsl (header.Header.block_size_sectors_shift + sector_shift) in
+
+       (* Calculate where the first data block will go. Note the sizeof_bat is already
+          rounded up to the next sector boundary. *)
+       let first_block = Int64.(table_offset ++ (of_int sizeof_bat)) in
+       let next_byte = ref first_block in
+       let blocks = header.Header.max_table_entries in
+       for i = 0 to blocks - 1 do
+         BAT.set bat i (Int64.(to_int32(!next_byte lsr sector_shift)));
+         next_byte := Int64.(!next_byte ++ (of_int sizeof_bitmap) ++ (of_int sizeof_data))
+       done;
+
+       let rec write_sectors buf from andthen =
+         return(Cons(Sectors buf, andthen)) in
+       let rec block i andthen =
+         if i >= blocks
+         then andthen ()
+         else
+           let length = Int64.(shift_left 1L header.Header.block_size_sectors_shift) in
+           let sector = Int64.(shift_left (of_int i) header.Header.block_size_sectors_shift) in
+           return (Cons(Sectors bitmap, fun () -> return (Cons(Copy(t.Raw.handle, sector, length), fun () -> block (i+1) andthen)))) in
+
+       assert(Footer.sizeof = 512);
+       assert(Header.sizeof = 1024);
+
+       let buf = File.alloc (max Footer.sizeof (max Header.sizeof sizeof_bat)) in
+       let (_: Footer.t) = Footer.marshal buf footer in
+       coalesce_request None (return (Cons(Sectors(Cstruct.sub buf 0 Footer.sizeof), fun () ->
+         let (_: Header.t) = Header.marshal buf header in
+         write_sectors (Cstruct.sub buf 0 Header.sizeof) 0 (fun () ->
+           return(Cons(Empty 1L, fun () ->
+             BAT.marshal buf bat;
+             write_sectors (Cstruct.sub buf 0 sizeof_bat) 0 (fun () ->
+               let (_: Footer.t) = Footer.marshal buf footer in
+               block 0 (fun () ->
+                 return(Cons(Sectors(Cstruct.sub buf 0 Footer.sizeof), fun () -> return End))
+               )
+             )
+          ))
+        )
+       ))) >>= fun elements ->
+       let metadata = Int64.of_int ((2 * Footer.sizeof + Header.sizeof + sizeof_bat + sizeof_bitmap * blocks)) in
+       let size = { empty with metadata; copy = current_size } in
+       return { elements; size } 
+
      let raw t =
        File.get_file_size t.filename >>= fun bytes ->
        (* round up to the next full sector *)
