@@ -290,7 +290,7 @@ module Impl = struct
 
   let stream_human common s =
     (* How much space will we need for the sector numbers? *)
-    let sectors = Int64.shift_right s.size.total sector_shift in
+    let sectors = Int64.(shift_right (add s.size.total 511L) sector_shift) in
     let decimal_digits = int_of_float (ceil (log10 (Int64.to_float sectors))) in
     Printf.printf "# stream summary:\n";
     Printf.printf "# size of the final artifact: %Ld\n" s.size.total;

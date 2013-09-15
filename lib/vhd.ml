@@ -1603,8 +1603,9 @@ module Make = functor(File: S.IO) -> struct
        let table_offset = 2048L in
 
        File.get_file_size t.filename >>= fun current_size ->
-       let footer = Footer.create ~data_offset ~current_size ~disk_type:Disk_type.Dynamic_hard_disk () in
        let header = Header.create ~table_offset ~current_size  () in
+       let current_size = Int64.(shift_left (of_int header.Header.max_table_entries) (header.Header.block_size_sectors_shift + sector_shift)) in
+       let footer = Footer.create ~data_offset ~current_size ~disk_type:Disk_type.Dynamic_hard_disk () in
        let bat_buffer = File.alloc (BAT.sizeof_bytes header) in
        let bat = BAT.of_buffer header bat_buffer in
 
@@ -1660,7 +1661,7 @@ module Make = functor(File: S.IO) -> struct
         )
        ))) >>= fun elements ->
        let metadata = Int64.of_int ((2 * Footer.sizeof + Header.sizeof + sizeof_bat + sizeof_bitmap * blocks)) in
-       let size = { empty with metadata; copy = current_size } in
+       let size = { empty with metadata; total = current_size; copy = current_size } in
        return { elements; size } 
 
      let raw t =
