@@ -246,7 +246,7 @@ let check_raw_stream_contents ~allow_empty t expected =
             assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal expected actual;
             loop (Int64.(add offset 1L)) (Cstruct.shift remaining sector_size) in
       loop offset data
-  ) 0L stream in
+  ) 0L stream.elements in
   (* [next_sector] should be higher than the highest sector in the contents list *)
   let highest_sector = List.fold_left max (-1L) (List.map fst expected) in
   assert (next_sector > highest_sector);
@@ -271,7 +271,7 @@ let verify state = match state.child with
         lwt buf = really_read fd' (Int64.mul offset' 512L) (len' * 512) in
         lwt () = Fd.really_write fd offset buf in
         return (Int64.(add offset (of_int (Cstruct.len buf))))
-    ) 0L stream in
+    ) 0L stream.elements in
     lwt () = Fd.close fd in
     (* Check the contents look correct *)
     lwt t' = Vhd_IO.openfile filename in

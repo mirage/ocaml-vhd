@@ -965,6 +965,13 @@ module Vhd = struct
     to_int32 ((next_free_byte ++ 511L) lsr sector_shift)
 end
 
+module Raw = struct
+  type 'a t = {
+    filename: string;
+    handle: 'a;
+  }
+end
+
 module Make = functor(File: S.IO) -> struct
   open File
 
@@ -1362,8 +1369,24 @@ module Make = functor(File: S.IO) -> struct
         end
   end
 
-  type 'a stream =
-    | Cons of 'a * (unit -> 'a stream t)
+  module Raw_IO = struct
+    open Raw
+
+    let openfile filename =
+      File.openfile filename >>= fun handle ->
+      return { filename; handle }
+
+    let close t =
+      File.close t.handle
+
+    let create ~filename ~size () =
+      File.create filename >>= fun handle ->
+      File.really_write handle size (Cstruct.create 0) >>= fun () ->
+      return { filename; handle }
+  end
+
+  type 'a ll =
+    | Cons of 'a * (unit -> 'a ll t)
     | End
 
   let rec iter f = function
@@ -1380,6 +1403,20 @@ module Make = functor(File: S.IO) -> struct
       f initial x >>= fun initial' ->
       rest () >>= fun xs ->
       fold_left f initial' xs
+
+  type size = {
+    total: int64;
+    metadata: int64;
+    empty: int64;
+    copy: int64;
+  }
+
+  let empty = { total = 0L; metadata = 0L; empty = 0L; copy = 0L }
+
+  type 'a stream = {
+    elements: 'a Element.t ll;
+    size: size;
+  }
 
   open Element
 
@@ -1440,7 +1477,18 @@ module Make = functor(File: S.IO) -> struct
           sector 0
         end
       end in
-    coalesce_request None (block 0)
+    (* Note we avoid inspecting the sector bitmaps to avoid unnecessary seeking *)
+    let rec count totals i =
+      if i = max_table_entries
+      then totals
+      else begin
+        if not(in_any_bat vhd i)
+        then count { totals with empty = Int64.(add totals.empty (shift_left 1L block_size_sectors_shift)) } (i + 1)
+        else count { totals with copy  = Int64.(add totals.copy  (shift_left 1L block_size_sectors_shift)) } (i + 1)
+      end in
+    coalesce_request None (block 0) >>= fun elements ->
+    let size = count empty 0 in
+    return { elements; size } 
 
   let vhd (t: fd Vhd.t) =
     let block_size_sectors_shift = t.Vhd.header.Header.block_size_sectors_shift in
@@ -1543,11 +1591,27 @@ module Make = functor(File: S.IO) -> struct
           )
        ))
      )
-    )))
+    ))) >>= fun elements ->
+
+    (* Note we avoid inspecting the sector bitmaps to avoid unnecessary seeking *)
+    let rec count totals i =
+      if i = max_table_entries
+      then totals
+      else begin
+        if not(in_any_bat t i)
+        then count { totals with empty = Int64.(add totals.empty (shift_left 1L block_size_sectors_shift)) } (i + 1)
+        else count { totals with copy  = Int64.(add totals.copy  (shift_left 1L block_size_sectors_shift));
+                                 metadata = Int64.(add totals.metadata (of_int (sizeof_bitmap / sector_size)))  } (i + 1)
+      end in
+    let size = { empty with metadata = Int64.of_int ((2 * Footer.sizeof + Header.sizeof + sizeof_bat) / 512);
+                            empty = 512L } in
+    let size = count size 0 in
+    return { elements; size } 
+
     end
 
    module Raw_input = struct
-     let vhd fd = fail (Failure "unimplemented")
-     let raw fd = fail (Failure "unimplemented")   
+     let vhd t = fail (Failure "unimplemented")
+     let raw t = fail (Failure "unimplemented")   
    end
 end

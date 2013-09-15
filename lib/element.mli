@@ -24,5 +24,5 @@ type 'a t =
 
 val to_string: 'a t -> string
 
-val len: 'a t -> int
+val len: 'a t -> int64
 (** [len t] is the length of [t] in sectors *)

@@ -288,24 +288,28 @@ module Impl = struct
     with Failure x ->
       `Error(true, x)
 
-  let stream_human common size s =
+  let stream_human common s =
     (* How much space will we need for the sector numbers? *)
-    let sectors = Int64.shift_right size sector_shift in
+    let sectors = Int64.shift_right s.size.total sector_shift in
     let decimal_digits = int_of_float (ceil (log10 (Int64.to_float sectors))) in
-    Printf.printf "# beginning of stream\n";
+    Printf.printf "# stream summary:\n";
+    Printf.printf "# size of the final artifact: %Ld\n" s.size.total;
+    Printf.printf "# size of metadata blocks:    %Ld\n" s.size.metadata;
+    Printf.printf "# size of empty space:        %Ld\n" s.size.empty;
+    Printf.printf "# size of referenced blocks:  %Ld\n" s.size.copy;
     Printf.printf "# offset : contents\n";
     lwt _ = fold_left (fun sector x ->
       Printf.printf "%s: %s\n"
-        (padto ' ' decimal_digits (string_of_int sector))
+        (padto ' ' decimal_digits (Int64.to_string sector))
         (Element.to_string x);
-      return (sector + (Element.len x))
-    ) 0 s in
+      return (Int64.add sector (Element.len x))
+    ) 0L s.elements in
     Printf.printf "# end of stream\n";
     return ()
 
   module P = Progress_bar(Int64)
 
-  let stream_nbd common size s prezeroed progress =
+  let stream_nbd common s prezeroed progress =
     let sock = Lwt_unix.socket Unix.PF_UNIX Unix.SOCK_STREAM 0 in
     let sockaddr = Lwt_unix.ADDR_UNIX "socket" in
     lwt () = Lwt_unix.connect sock sockaddr in
@@ -321,11 +325,13 @@ module Impl = struct
       done;
       b in
 
-    (* TODO: we could precompute the actual amount of work in the stream *)
-    let p = P.create 80 0L (Int64.div size 512L) in
+    (* Work to do is: non-zero data to write + empty sectors if the
+       target is not prezeroed *)
+    let total_work = Int64.(add (add s.size.metadata s.size.copy) (if prezeroed then 0L else s.size.empty)) in
+    let p = P.create 80 0L total_work in
 
-    lwt _ = fold_left (fun sector x ->
-      lwt () = match x with
+    lwt _ = fold_left (fun (sector, work_done) x ->
+      lwt work = match x with
       | Element.Copy(h, sector_start, sector_len) ->
         let rec copy sector sector_start sector_len =
           let this = min sector_len twomib_sectors in
@@ -336,11 +342,12 @@ module Impl = struct
           let sector = Int64.(add sector (of_int this)) in
           if progress then P.update p sector;
           if sector_len > 0 then copy sector sector_start sector_len else return () in
-        copy sector sector_start sector_len
+        lwt () = copy sector sector_start sector_len in
+        return Int64.(shift_left (of_int sector_len) sector_shift)
       | Element.Sectors data ->
         lwt () = Nbd_lwt_client.write server data (Int64.mul sector 512L) in
         if progress then P.update p sector;
-        return ()
+        return Int64.(of_int (Cstruct.len data))
       | Element.Empty n ->
         if not prezeroed then begin
           let rec copy sector n =
@@ -351,10 +358,13 @@ module Impl = struct
             let n = Int64.(sub n (of_int this)) in
             if progress then P.update p sector;
             if n > 0L then copy sector n else return () in
-          copy sector n
-        end else return () in
-      return (Int64.(add sector (of_int(Element.len x))))
-    ) 0L s in
+          lwt () = copy sector n in
+          return Int64.(shift_left n sector_shift)
+        end else return 0L in
+      let sector = Int64.add sector (Element.len x) in
+      let work_done = Int64.add work_done work in
+      return (sector, work_done)
+    ) (0L, 0L) s.elements in
     if progress then Printf.printf "\n%!";
 
     lwt () = Lwt_unix.close sock in
@@ -374,34 +384,28 @@ module Impl = struct
       then failwith (Printf.sprintf "%s is not a supported format" output_format);
 
       let thread =
-        lwt (size, s) = match input_format, output_format with
+        lwt s = match input_format, output_format with
           | "vhd", "vhd" ->
             lwt t = Vhd_IO.openfile filename in
-            lwt s = Vhd_input.vhd t in
-            return (t.Vhd.footer.Footer.current_size, s)
+            Vhd_input.vhd t
           | "vhd", "raw" ->
             lwt t = Vhd_IO.openfile filename in
-            lwt s = Vhd_input.raw t in
-            return (t.Vhd.footer.Footer.current_size, s)
+            Vhd_input.raw t
           | "raw", "vhd" ->
-            lwt t = openfile filename in
-            lwt s = Raw_input.vhd t in
-            lwt size = size_of_file t in
-            return (size, s)
+            lwt t = Raw_IO.openfile filename in
+            Raw_input.vhd t
           | "raw", "raw" ->
-            lwt t = openfile filename in
-            lwt s = Raw_input.raw t in
-            lwt size = size_of_file t in
-            return (size, s)
+            lwt t = Raw_IO.openfile filename in
+            Raw_input.raw t
           | _, _ -> assert false in
         match output with
         | "human" ->
-          stream_human common size s
+          stream_human common s
         | uri ->
           let uri' = Uri.of_string uri in
           begin match Uri.scheme uri' with
           | Some "nbd" ->
-            stream_nbd common size s prezeroed progress
+            stream_nbd common s prezeroed progress
           | Some "http"
           | Some "https" ->
             let open Cohttp in
@@ -435,7 +439,7 @@ module Impl = struct
                   let te = "transfer-encoding" in
                   List.mem_assoc te headers && (List.assoc te headers = "nbd") in
                 if is_nbd
-                then stream_nbd common size s prezeroed progress
+                then stream_nbd common s prezeroed progress
                 else fail (Failure "non-NBD upload not implemented yet")
               end else fail (Failure (Code.reason_phrase_of_code code))
             end

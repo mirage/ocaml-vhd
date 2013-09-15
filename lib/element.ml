@@ -35,7 +35,7 @@ let to_string = function
     Printf.sprintf "%Ld empty sectors" x
 
 let len = function
-  | Copy(_, _, len) -> len
-  | Sectors x -> Cstruct.len x / sector_size
-  | Empty x -> Int64.to_int x
+  | Copy(_, _, len) -> Int64.of_int len
+  | Sectors x -> Int64.of_int (Cstruct.len x / sector_size)
+  | Empty x -> x
 

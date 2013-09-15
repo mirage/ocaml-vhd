@@ -242,6 +242,13 @@ module Vhd : sig
   val check_overlapping_blocks : 'a t -> unit
 end
 
+module Raw : sig
+  type 'a t = {
+    filename: string;
+    handle: 'a;
+  }
+end
+
 module Make : functor (File : S.IO) -> sig
   open File
 
@@ -285,31 +292,66 @@ module Make : functor (File : S.IO) -> sig
         updates all file metadata to preserve consistency. *)
   end
 
-  type 'a stream =
-    | Cons of 'a * (unit -> 'a stream t)
-    | End
-  (** a lazy stream *)
+  module Raw_IO : sig
+    val openfile : string -> fd Raw.t t
+    (** [openfile filename] opens a raw-format file [filename] *)
 
-  val iter: ('a -> unit t) -> 'a stream -> unit t
+    val close : fd Raw.t -> unit t
+    (** [close t] frees all resources associated with [t] *)
+
+    val create: filename:string -> size:int64
+      -> unit -> fd Raw.t t
+    (** [create ~filename ~size] creates an empty raw file with
+        virtual size [size] bytes and filename [filename]. *)
+  end
+
+  type 'a ll =
+    | Cons of 'a * (unit -> 'a ll t)
+    | End
+  (** a lazy list *)
+
+  val iter: ('a -> unit t) -> 'a ll -> unit t
   (** [iter f stream] applies each element from [stream] to [f] in order. *)
 
-  val fold_left: ('a -> 'b -> 'a t) -> 'a -> 'b stream -> 'a t
+  val fold_left: ('a -> 'b -> 'a t) -> 'a -> 'b ll -> 'a t
   (** [fold_left f initial stream] folds [f] across all the elements in
       the [stream] with neutral element [initial] *)
 
+  type size = {
+    total: int64;
+    (** size of the final disk, in sectors *)
+
+    metadata: int64;
+    (** number of metadata sectors *)
+
+    empty: int64;
+    (** number of sectors of empty space *)
+
+    copy: int64;
+    (** number of copied sectors *)
+  }
+
+  val empty: size
+
+  type 'a stream = {
+    elements: 'a Element.t ll;
+    size: size;
+  }
+  (** an image of a disk represented as a stream *)
+
   module Vhd_input : sig
-    val raw: fd Vhd.t -> fd Element.t stream t
+    val raw: fd Vhd.t -> fd stream t
     (** [raw t] creates a raw-formatted stream representing the consolidated
         data present in the virtual disk [t] *)
 
-    val vhd: fd Vhd.t -> fd Element.t stream t
+    val vhd: fd Vhd.t -> fd stream t
     (** [vhd t] creates a vhd-formatted stream representing the consolidated
         data present in the virtual disk [t] *)
   end
 
   module Raw_input : sig
-    val raw : fd -> fd Element.t stream t
+    val raw : fd Raw.t -> fd stream t
 
-    val vhd : fd -> fd Element.t stream t
+    val vhd : fd Raw.t -> fd stream t
   end
 end
