@@ -334,16 +334,16 @@ module Impl = struct
       lwt work = match x with
       | Element.Copy(h, sector_start, sector_len) ->
         let rec copy sector sector_start sector_len =
-          let this = min sector_len twomib_sectors in
+          let this = Int64.(to_int (min sector_len (of_int twomib_sectors))) in
           lwt data = Fd.really_read h (Int64.mul sector_start 512L) (this * 512) in
           lwt () = Nbd_lwt_client.write server data (Int64.mul sector 512L) in
-          let sector_len = sector_len - this in
+          let sector_len = Int64.(sub sector_len (of_int this)) in
           let sector_start = Int64.(add sector_start (of_int this)) in
           let sector = Int64.(add sector (of_int this)) in
           if progress then P.update p sector;
-          if sector_len > 0 then copy sector sector_start sector_len else return () in
+          if sector_len > 0L then copy sector sector_start sector_len else return () in
         lwt () = copy sector sector_start sector_len in
-        return Int64.(shift_left (of_int sector_len) sector_shift)
+        return Int64.(shift_left sector_len sector_shift)
       | Element.Sectors data ->
         lwt () = Nbd_lwt_client.write server data (Int64.mul sector 512L) in
         if progress then P.update p sector;

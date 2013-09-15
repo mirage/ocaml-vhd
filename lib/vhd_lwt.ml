@@ -160,8 +160,12 @@ module File = struct
     get_vhd_time time
 
   let get_modification_time x =
-    let st = Unix.stat x in
-    return (get_vhd_time (st.Unix.st_mtime))
+    lwt st = Lwt_unix.LargeFile.stat x in
+    return (get_vhd_time (st.Lwt_unix.LargeFile.st_mtime))
+
+  let get_file_size x =
+    lwt st = Lwt_unix.LargeFile.stat x in
+    return st.Lwt_unix.LargeFile.st_size
 
   include Fd
   include Memory

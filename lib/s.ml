@@ -39,6 +39,7 @@ module type IO = sig
   val openfile: string -> fd t
   val create: string -> fd t
   val close: fd -> unit t
+  val get_file_size: string -> int64 t
   val get_modification_time: string -> int32 t
 
   val really_read: fd -> int64 -> int -> Cstruct.t t

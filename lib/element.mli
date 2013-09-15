@@ -14,7 +14,7 @@
 
 (** A disk can be streamed as a sequence of elements *)
 type 'a t =
-  | Copy of ('a * int64 * int)
+  | Copy of ('a * int64 * int64)
   (** [Copy (t, offset, len)] copies [len] sectors from sector [offset]
       from the file [t] *)
   | Sectors of Cstruct.t

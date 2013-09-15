@@ -1428,20 +1428,21 @@ module Make = functor(File: S.IO) -> struct
     | false, None -> false
 
   let rec coalesce_request acc s =
+    let open Int64 in
     s >>= fun next -> match next, acc with
     | End, None -> return End
     | End, Some x -> return (Cons(x, fun () -> return End))
     | Cons(Sectors s, next), None -> return(Cons(Sectors s, fun () -> coalesce_request None (next ())))
     | Cons(Sectors _, next), Some x -> return(Cons(x, fun () -> coalesce_request None s))
     | Cons(Empty n, next), None -> coalesce_request (Some(Empty n)) (next ())
-    | Cons(Empty n, next), Some(Empty m) -> coalesce_request (Some(Empty (Int64.add n m))) (next ())
+    | Cons(Empty n, next), Some(Empty m) -> coalesce_request (Some(Empty (n ++ m))) (next ())
     | Cons(Empty n, next), Some x -> return (Cons(x, fun () -> coalesce_request None s))
     | Cons(Copy(h, ofs, len), next), None -> coalesce_request (Some (Copy(h, ofs, len))) (next ())
     | Cons(Copy(h, ofs, len), next), Some(Copy(h', ofs', len')) ->
-      if Int64.(add ofs (of_int len)) = ofs' && h == h'
-      then coalesce_request (Some(Copy(h, ofs, len + len'))) (next ())
-      else if Int64.(add ofs' (of_int len')) = ofs && h == h'
-      then coalesce_request (Some(Copy(h, ofs', len + len'))) (next ())
+      if ofs ++ len = ofs' && h == h'
+      then coalesce_request (Some(Copy(h, ofs, len ++ len'))) (next ())
+      else if ofs' ++ len' = ofs && h == h'
+      then coalesce_request (Some(Copy(h, ofs', len ++ len'))) (next ())
       else return (Cons(Copy(h', ofs', len'), fun () -> coalesce_request None s))
     | Cons(Copy(h, ofs, len), next), Some x -> return(Cons(x, fun () -> coalesce_request None s))
 
@@ -1472,7 +1473,7 @@ module Make = functor(File: S.IO) -> struct
               | None ->
                 return (Cons(empty_sector, next_sector))
               | Some (vhd', offset) ->
-                return (Cons(Copy(vhd'.Vhd.handle, Int64.shift_right offset sector_shift, 1), next_sector))
+                return (Cons(Copy(vhd'.Vhd.handle, Int64.shift_right offset sector_shift, 1L), next_sector))
             end in
           sector 0
         end
@@ -1565,7 +1566,7 @@ module Make = functor(File: S.IO) -> struct
         | None ->
           return (Cons(Empty 1L, next))
         | Some (vhd', offset) ->
-          return (Cons(Copy(vhd'.Vhd.handle, Int64.shift_right offset sector_shift, 1), next)) in
+          return (Cons(Copy(vhd'.Vhd.handle, Int64.shift_right offset sector_shift, 1L), next)) in
       if i >= header.Header.max_table_entries
       then andthen ()
       else
@@ -1611,7 +1612,21 @@ module Make = functor(File: S.IO) -> struct
     end
 
    module Raw_input = struct
+     open Raw
+
      let vhd t = fail (Failure "unimplemented")
-     let raw t = fail (Failure "unimplemented")   
+     let raw t =
+       File.get_file_size t.filename >>= fun bytes ->
+       (* round up to the next full sector *)
+       let open Int64 in
+       let bytes = ((bytes ++ (of_int sector_size) -- 1L) lsr sector_shift) lsl sector_shift in
+       let size = {
+         total = bytes;
+         metadata = 0L;
+         empty = 0L;
+         copy = bytes;
+       } in
+       let elements = Cons(Copy(t.handle, 0L, bytes lsr sector_shift), fun () -> return End) in
+       return { size; elements }
    end
 end

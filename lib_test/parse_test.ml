@@ -214,9 +214,10 @@ let check_raw_stream_contents ~allow_empty t expected =
       return (Int64.add offset y)
     | Element.Copy(handle, offset', len) ->
       (* all sectors in [offset, offset + len - 1] should be in the contents list *)
-      lwt data = Vhd_lwt.Fd.really_read handle (Int64.(mul offset' 512L)) (len * 512) in
+      (* XXX: this won't cope with very large copy requests *)
+      lwt data = Vhd_lwt.Fd.really_read handle (Int64.(mul offset' 512L)) (Int64.to_int len * 512) in
       let rec check i =
-        if i >= len then ()
+        if i >= (Int64.to_int len) then ()
         else
           let sector = Int64.(add offset (of_int i)) in
           let actual = Cstruct.sub data (i * 512) 512 in
@@ -231,7 +232,7 @@ let check_raw_stream_contents ~allow_empty t expected =
           end;
           check (i + 1) in
       check 0;
-      return (Int64.(add offset (of_int len)))
+      return (Int64.(add offset len))
     | Element.Sectors data ->
       let rec loop offset remaining =
         if Cstruct.len remaining = 0
@@ -268,7 +269,7 @@ let verify state = match state.child with
         lwt () = Fd.really_write fd offset data in
         return (Int64.(add offset (of_int (Cstruct.len data))))
       | Element.Copy(fd', offset', len') ->
-        lwt buf = really_read fd' (Int64.mul offset' 512L) (len' * 512) in
+        lwt buf = really_read fd' (Int64.mul offset' 512L) (Int64.to_int len' * 512) in
         lwt () = Fd.really_write fd offset buf in
         return (Int64.(add offset (of_int (Cstruct.len buf))))
     ) 0L stream.elements in
