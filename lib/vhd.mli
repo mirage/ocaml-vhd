@@ -100,6 +100,19 @@ module Footer: sig
     (** true if the virtual machine is in a saved (suspended) state *)
   }
 
+  val create : ?features:Feature.t list ->
+    data_offset:int64 ->
+    ?time_stamp:int32 ->
+    ?creator_application:string ->
+    ?creator_version:int32 ->
+    ?creator_host_os:Host_OS.t ->
+    current_size:int64 ->
+    ?original_size:int64 ->
+    disk_type:Disk_type.t ->
+    ?uid: Uuidm.t ->
+    ?saved_state:bool ->
+    unit -> t
+
   val compute_checksum: t -> int32
   (** compute the expected checksum value *)
 
@@ -172,6 +185,16 @@ module Header : sig
     parent_locators : Parent_locator.t array;
     (** up to 8 different pointers to the parent disk image *)
   }
+
+  val create : table_offset:int64 ->
+    current_size:int64 ->
+    ?block_size_sectors_shift:int ->
+    ?checksum:int32 ->
+    ?parent_unique_id:Uuidm.t ->
+    ?parent_time_stamp:int32 ->
+    ?parent_unicode_name:int array ->
+    ?parent_locators:Parent_locator.t array ->
+    unit -> t
 
   val equal: t -> t -> bool
 

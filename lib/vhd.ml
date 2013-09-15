@@ -314,6 +314,25 @@ module Footer = struct
     saved_state : bool
   }
 
+  let default_creator_application = "caml"
+  let default_creator_version = 0x00000001l
+
+  let create ?(features=[]) ~data_offset ?(time_stamp=0l)
+    ?(creator_application = default_creator_application)
+    ?(creator_version = default_creator_version)
+    ?(creator_host_os = Host_OS.Other 0l)
+    ~current_size ?original_size
+    ~disk_type
+    ?(uid = Uuidm.create `V4) ?(saved_state = false) () =
+  let original_size = match original_size with
+    | None -> current_size
+    | Some x -> x in
+  let geometry = Geometry.of_sectors Int64.(current_size lsr sector_shift) in
+  let checksum = 0l in
+  { features; data_offset; time_stamp; creator_application;
+    creator_version; creator_host_os; original_size;
+    current_size; geometry; disk_type; checksum; uid; saved_state }
+
   let to_string t = Printf.sprintf "{ features = [ %s ]; data_offset = %Lx; time_stamp = %lx; creator_application = %s; creator_version = %lx; creator_host_os = %s; original_size = %Ld; current_size = %Ld; geometry = %s; disk_type = %s; checksum = %ld; uid = %s; saved_state = %b }"
     (String.concat "; " (List.map Feature.to_string t.features)) t.data_offset t.time_stamp
     t.creator_application t.creator_version (Host_OS.to_string t.creator_host_os)
@@ -323,9 +342,6 @@ module Footer = struct
   let magic = "conectix"
 
   let expected_version = 0x00010000l
-
-  let default_creator_application = "caml"
-  let default_creator_version = 0x00000001l
 
   let dump t =
     Printf.printf "VHD FOOTER\n";
@@ -597,6 +613,21 @@ module Header = struct
     parent_locators : Parent_locator.t array;
   }
 
+  let default_block_size_sectors_shift = 12 (* 1 lsl 12 = 4096 sectors = 2 MiB *)
+
+  let create ~table_offset ~current_size
+    ?(block_size_sectors_shift = default_block_size_sectors_shift)
+    ?(checksum = 0l)
+    ?(parent_unique_id = blank_uuid)
+    ?(parent_time_stamp = 0l)
+    ?(parent_unicode_name = [| |])
+    ?(parent_locators = Array.make 8 Parent_locator.null) () =
+    let open Int64 in
+    let max_table_entries = to_int (current_size lsr (block_size_sectors_shift + sector_shift)) in
+    { table_offset; max_table_entries; block_size_sectors_shift;
+      checksum; parent_unique_id; parent_time_stamp; parent_unicode_name;
+      parent_locators }
+
   let to_string t =
     Printf.sprintf "{ table_offset = %Ld; max_table_entries = %d; block_size_sectors_shift = %d; checksum = %ld; parent_unique_id = %s; parent_time_stamp = %ld parent_unicode_name = %s; parent_locators = [| %s |]"
       t.table_offset t.max_table_entries t.block_size_sectors_shift t.checksum
@@ -630,7 +661,6 @@ module Header = struct
 
   let expected_version = 0x00010000l
 
-  let default_block_size_sectors_shift = 12 (* 1 lsl 12 = 4096 sectors = 2 MiB *)
   let default_block_size = 1 lsl (default_block_size_sectors_shift + sector_shift)
 
   let dump t =
@@ -1134,9 +1164,6 @@ module Make = functor(File: S.IO) -> struct
          ... empty sector-- this is where we'll put the parent locator
          byte 2048 - ...: BAT *)
 
-      (* Use the default 2 MiB block size *)
-      let block_size_sectors_shift = Header.default_block_size_sectors_shift in
-
       let data_offset = 512L in
       let table_offset = 2048L in
 
@@ -1144,26 +1171,8 @@ module Make = functor(File: S.IO) -> struct
 
       (* Round the size up to the nearest 2 MiB block *)
       let size = ((size ++ mib ++ mib -- 1L) lsr (1 + mib_shift)) lsl (1 + mib_shift) in
-      let geometry = Geometry.of_sectors (size lsr sector_shift) in
-      let creator_application = Footer.default_creator_application in
-      let creator_version = Footer.default_creator_version in
-      let footer = {
-        Footer.features; data_offset; time_stamp = 0l; creator_application; creator_version;
-        creator_host_os = Host_OS.Other 0l; original_size = size; current_size = size;
-        geometry; disk_type = Disk_type.Dynamic_hard_disk;
-        checksum = 0l; (* Filled in later *)
-        uid = uuid; saved_state;
-      } in
-      let header = {
-        Header.table_offset;
-        max_table_entries = to_int (size lsr (block_size_sectors_shift + sector_shift));
-        block_size_sectors_shift;
-        checksum = 0l;
-        parent_unique_id = blank_uuid;
-        parent_time_stamp = 0l;
-        parent_unicode_name = [| |];
-        parent_locators = Array.make 8 Parent_locator.null
-      } in
+      let footer = Footer.create ~features ~data_offset ~current_size:size ~disk_type:Disk_type.Dynamic_hard_disk ~uid:uuid ~saved_state () in
+      let header = Header.create ~table_offset ~current_size:size () in
       let bat_buffer = File.alloc (BAT.sizeof_bytes header) in
       let bat = BAT.of_buffer header bat_buffer in
       File.create filename >>= fun handle ->
@@ -1180,18 +1189,10 @@ module Make = functor(File: S.IO) -> struct
 
       let data_offset = 512L in
       let table_offset = 2048L in
-      let creator_application = Footer.default_creator_application in
-      let creator_version = Footer.default_creator_version in
-      let footer = {
-        Footer.features; data_offset;
-        time_stamp = File.now ();
-        creator_application; creator_version;
-        creator_host_os = Host_OS.Other 0l;
-        original_size = parent.Vhd.footer.Footer.current_size;
-        current_size = parent.Vhd.footer.Footer.current_size;
-        geometry = parent.Vhd.footer.Footer.geometry;
-        disk_type = Disk_type.Differencing_hard_disk;
-        checksum = 0l; uid = uuid; saved_state = saved_state; } in
+      let footer = Footer.create ~features ~data_offset ~time_stamp:(File.now ())
+        ~current_size:parent.Vhd.footer.Footer.current_size
+        ~disk_type:Disk_type.Differencing_hard_disk
+        ~uid:uuid ~saved_state () in
       let locator0 = 
         let uri = "file://./" ^ parent.Vhd.filename in
         let platform_data = Cstruct.create (String.length uri) in
@@ -1205,17 +1206,14 @@ module Make = functor(File: S.IO) -> struct
           platform_data;
         } in
       File.get_modification_time parent.Vhd.filename >>= fun parent_time_stamp ->
-      let header = {
-        Header.table_offset;
-        max_table_entries = parent.Vhd.header.Header.max_table_entries;
-        block_size_sectors_shift = parent.Vhd.header.Header.block_size_sectors_shift;
-        checksum = 0l;
-        parent_unique_id = parent.Vhd.footer.Footer.uid;
-        parent_time_stamp;
-        parent_unicode_name = UTF16.of_utf8 parent.Vhd.filename;
-        parent_locators = [| locator0; Parent_locator.null; Parent_locator.null; Parent_locator.null;
-                             Parent_locator.null; Parent_locator.null; Parent_locator.null; Parent_locator.null; |];
-      } in
+      let header = Header.create ~table_offset
+        ~current_size:parent.Vhd.footer.Footer.current_size
+        ~block_size_sectors_shift:parent.Vhd.header.Header.block_size_sectors_shift
+        ~parent_unique_id:parent.Vhd.footer.Footer.uid
+        ~parent_time_stamp
+        ~parent_unicode_name:(UTF16.of_utf8 parent.Vhd.filename)
+        ~parent_locators:[| locator0; Parent_locator.null; Parent_locator.null; Parent_locator.null;
+                            Parent_locator.null; Parent_locator.null; Parent_locator.null; Parent_locator.null; |] () in
       let bat_buffer = File.alloc (BAT.sizeof_bytes header) in
       let bat = BAT.of_buffer header bat_buffer in
       File.create filename >>= fun handle ->
@@ -1505,31 +1503,8 @@ module Make = functor(File: S.IO) -> struct
     let table_offset = 2048L in
 
     let size = t.Vhd.footer.Footer.current_size in
-    let geometry = Geometry.of_sectors (Int64.shift_right_logical size sector_shift) in
-    let creator_application = Footer.default_creator_application in
-    let creator_version = Footer.default_creator_version in
-    let uuid = Uuidm.create `V4 in
-
-    let footer = {
-      Footer.features = [];
-      data_offset;
-      time_stamp = 0l; creator_application; creator_version;
-      creator_host_os = Host_OS.Other 0l;
-      original_size = size; current_size = size;
-      geometry; disk_type = Disk_type.Dynamic_hard_disk;
-      checksum = 0l; (* Filled in later *)
-      uid = uuid; saved_state = false;
-    } in
-
-    let header = {
-      Header.table_offset; max_table_entries; block_size_sectors_shift;
-      checksum = 0l;
-      parent_unique_id = blank_uuid;
-      parent_time_stamp = 0l;
-      parent_unicode_name = [| |];
-      parent_locators = [| Parent_locator.null; Parent_locator.null; Parent_locator.null; Parent_locator.null;
-                           Parent_locator.null; Parent_locator.null; Parent_locator.null; Parent_locator.null; |];
-    } in
+    let footer = Footer.create ~data_offset ~current_size:size ~disk_type:Disk_type.Dynamic_hard_disk () in
+    let header = Header.create ~table_offset ~current_size:size ~block_size_sectors_shift () in
     let bat_buffer = File.alloc (BAT.sizeof_bytes header) in
     let bat = BAT.of_buffer header bat_buffer in
 
@@ -1614,7 +1589,10 @@ module Make = functor(File: S.IO) -> struct
    module Raw_input = struct
      open Raw
 
-     let vhd t = fail (Failure "unimplemented")
+     let vhd t =
+
+
+ fail (Failure "unimplemented")
      let raw t =
        File.get_file_size t.filename >>= fun bytes ->
        (* round up to the next full sector *)
