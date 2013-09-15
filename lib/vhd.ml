@@ -623,7 +623,10 @@ module Header = struct
     ?(parent_unicode_name = [| |])
     ?(parent_locators = Array.make 8 Parent_locator.null) () =
     let open Int64 in
-    let max_table_entries = to_int (current_size lsr (block_size_sectors_shift + sector_shift)) in
+    (* Round up the size to the next block *)
+    let shift = block_size_sectors_shift + sector_shift in
+    let current_size = ((current_size ++ (1L lsl shift -- 1L)) lsr shift) lsl shift in
+    let max_table_entries = to_int (current_size lsr shift) in
     { table_offset; max_table_entries; block_size_sectors_shift;
       checksum; parent_unique_id; parent_time_stamp; parent_unicode_name;
       parent_locators }
@@ -1169,10 +1172,10 @@ module Make = functor(File: S.IO) -> struct
 
       let open Int64 in
 
-      (* Round the size up to the nearest 2 MiB block *)
-      let size = ((size ++ mib ++ mib -- 1L) lsr (1 + mib_shift)) lsl (1 + mib_shift) in
-      let footer = Footer.create ~features ~data_offset ~current_size:size ~disk_type:Disk_type.Dynamic_hard_disk ~uid:uuid ~saved_state () in
       let header = Header.create ~table_offset ~current_size:size () in
+      let size = (of_int header.Header.max_table_entries) lsl (header.Header.block_size_sectors_shift + sector_shift) in
+      let footer = Footer.create ~features ~data_offset ~current_size:size ~disk_type:Disk_type.Dynamic_hard_disk ~uid:uuid ~saved_state () in
+
       let bat_buffer = File.alloc (BAT.sizeof_bytes header) in
       let bat = BAT.of_buffer header bat_buffer in
       File.create filename >>= fun handle ->

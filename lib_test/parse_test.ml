@@ -256,6 +256,12 @@ let check_raw_stream_contents ~allow_empty t expected =
 let verify state = match state.child with
   | None -> return ()
   | Some t ->
+    let capacity = Int64.(shift_left (of_int t.Vhd.header.Header.max_table_entries) (t.Vhd.header.Header.block_size_sectors_shift + sector_shift)) in
+    lwt () =
+      if capacity < t.Vhd.footer.Footer.current_size
+      then fail (Failure (Printf.sprintf "insufficient capacity in vhd: max table entries = %d; capacity = %Ld; current_size = %Ld" t.Vhd.header.Header.max_table_entries capacity t.Vhd.footer.Footer.current_size))
+      else return () in
+
     lwt () = check_written_sectors t state.contents in
     lwt () = check_raw_stream_contents ~allow_empty:false t state.contents in
 
