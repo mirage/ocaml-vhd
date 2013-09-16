@@ -1457,6 +1457,34 @@ module Make = functor(File: S.IO) -> struct
       else return (Cons(Copy(h', ofs', len'), fun () -> coalesce_request None s))
     | Cons(Copy(h, ofs, len), next), Some x -> return(Cons(x, fun () -> coalesce_request None s))
 
+  let rec expand_empty_elements s =
+    let open Int64 in
+    let twomib_bytes = 2 * 1024 * 1024 in
+    let twomib_sectors = twomib_bytes / 512 in
+    let twomib_empty =
+      let b = Cstruct.create twomib_bytes in
+      for i = 0 to twomib_bytes - 1 do
+        Cstruct.set_uint8 b i 0
+      done;
+      b in
+    s >>= function
+    | End -> return End
+    | Cons(Empty n, next) ->
+        let rec copy n =
+          let this = Int64.(to_int (min n (of_int twomib_sectors))) in
+          let block = Cstruct.sub twomib_empty 0 (this * 512) in
+          let n = Int64.(sub n (of_int this)) in
+          let next () = if n > 0L then copy n else expand_empty_elements (next ()) in
+          return (Cons(Sectors block, next)) in
+        copy n
+    | Cons(x, next) -> return (Cons(x, fun () -> expand_empty_elements (next ())))
+
+  let expand_empty s =
+    let open Int64 in
+    let size = { s.size with empty = 0L; metadata = s.size.metadata ++ s.size.empty } in
+    expand_empty_elements (return s.elements) >>= fun elements ->
+    return { elements; size }
+
   module Vhd_input = struct
 
     (* If we're streaming a fully consolidated disk (where from = None) then we include

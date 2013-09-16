@@ -386,6 +386,9 @@ module Make : functor (File : S.IO) -> sig
   }
   (** an image of a disk represented as a stream *)
 
+  val expand_empty: 'a stream -> 'a stream t
+  (** replaces 'Empty' elements with explicit writes of zeroes *)
+
   module Vhd_input : sig
     val raw: ?from: fd Vhd.t -> fd Vhd.t -> fd stream t
     (** [raw t] creates a raw-formatted stream representing the consolidated
