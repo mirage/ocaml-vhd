@@ -1021,6 +1021,44 @@ module Raw = struct
   }
 end
 
+type size = {
+  total: int64;
+  metadata: int64;
+  empty: int64;
+  copy: int64;
+}
+
+let empty = { total = 0L; metadata = 0L; empty = 0L; copy = 0L }
+
+module Stream = functor(A: S.ASYNC) -> struct
+  open A
+
+  type 'a ll =
+    | Cons of 'a * (unit -> 'a ll t)
+    | End
+
+  let rec iter f = function
+    | Cons(x, rest) ->
+      f x >>= fun () ->
+      rest () >>= fun x ->
+      iter f x
+    | End ->
+      return ()
+
+  let rec fold_left f initial xs = match xs with
+    | End -> return initial
+    | Cons (x, rest) ->
+      f initial x >>= fun initial' ->
+      rest () >>= fun xs ->
+      fold_left f initial' xs
+
+  type 'a stream = {
+    elements: 'a Element.t ll;
+    size: size;
+  }
+
+end
+
 module Make = functor(File: S.IO) -> struct
   open File
 
@@ -1390,39 +1428,7 @@ module Make = functor(File: S.IO) -> struct
       return { filename; handle }
   end
 
-  type 'a ll =
-    | Cons of 'a * (unit -> 'a ll t)
-    | End
-
-  let rec iter f = function
-    | Cons(x, rest) ->
-      f x >>= fun () ->
-      rest () >>= fun x ->
-      iter f x
-    | End ->
-      return ()
-
-  let rec fold_left f initial xs = match xs with
-    | End -> return initial
-    | Cons (x, rest) ->
-      f initial x >>= fun initial' ->
-      rest () >>= fun xs ->
-      fold_left f initial' xs
-
-  type size = {
-    total: int64;
-    metadata: int64;
-    empty: int64;
-    copy: int64;
-  }
-
-  let empty = { total = 0L; metadata = 0L; empty = 0L; copy = 0L }
-
-  type 'a stream = {
-    elements: 'a Element.t ll;
-    size: size;
-  }
-
+  include Stream(File)
   open Element
 
   (* Test whether a block is in any BAT in the path to the root. If so then we will

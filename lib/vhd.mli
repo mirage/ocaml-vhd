@@ -272,6 +272,46 @@ module Raw : sig
   }
 end
 
+type size = {
+  total: int64;
+  (** size of the final disk, in sectors *)
+
+  metadata: int64;
+  (** number of metadata sectors *)
+
+  empty: int64;
+  (** number of sectors of empty space *)
+
+  copy: int64;
+  (** number of copied sectors *)
+}
+(** The amount of data contained in a stream, broken down by type *)
+
+val empty: size
+
+module Stream : functor(A: S.ASYNC) -> sig
+  open A
+
+  type 'a ll =
+    | Cons of 'a * (unit -> 'a ll t)
+    | End
+  (** a lazy list *)
+
+  val iter: ('a -> unit t) -> 'a ll -> unit t
+  (** [iter f stream] applies each element from [stream] to [f] in order. *)
+
+  val fold_left: ('a -> 'b -> 'a t) -> 'a -> 'b ll -> 'a t
+  (** [fold_left f initial stream] folds [f] across all the elements in
+      the [stream] with neutral element [initial] *)
+
+  type 'a stream = {
+    elements: 'a Element.t ll;
+    size: size;
+  }
+  (** an image of a disk represented as a stream *)
+
+end
+
 module Make : functor (File : S.IO) -> sig
   open File
 
@@ -340,23 +380,6 @@ module Make : functor (File : S.IO) -> sig
   (** [fold_left f initial stream] folds [f] across all the elements in
       the [stream] with neutral element [initial] *)
 
-  type size = {
-    total: int64;
-    (** size of the final disk, in sectors *)
-
-    metadata: int64;
-    (** number of metadata sectors *)
-
-    empty: int64;
-    (** number of sectors of empty space *)
-
-    copy: int64;
-    (** number of copied sectors *)
-  }
-  (** The amount of data contained in a stream, broken down by type *)
-
-  val empty: size
-
   type 'a stream = {
     elements: 'a Element.t ll;
     size: size;
@@ -382,4 +405,6 @@ module Make : functor (File : S.IO) -> sig
 
     val vhd : fd Raw.t -> fd stream t
   end
+
 end
+

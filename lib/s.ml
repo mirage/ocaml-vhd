@@ -28,12 +28,20 @@ module type MEMORY = sig
   val alloc: int -> Cstruct.t
 end
 
-module type IO = sig
+module type RW = sig
   include ASYNC
+
+  type handle 
+
+  val really_read: handle -> int64 -> int -> Cstruct.t t
+  val really_write: handle -> int64 -> Cstruct.t -> unit t
+end
+
+module type IO = sig
   include TIME
   include MEMORY
-
   type fd
+  include RW with type handle := fd
 
   val exists: string -> bool t
   val openfile: string -> fd t
@@ -42,7 +50,5 @@ module type IO = sig
   val get_file_size: string -> int64 t
   val get_modification_time: string -> int32 t
 
-  val really_read: fd -> int64 -> int -> Cstruct.t t
-  val really_write: fd -> int64 -> Cstruct.t -> unit t
 end
 

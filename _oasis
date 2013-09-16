@@ -31,6 +31,14 @@ Executable vhdtool
   Install:            false
   BuildDepends:       lwt, lwt.unix, vhd-format, vhd-format.lwt, cmdliner, nbd, nbd.lwt, uri, cohttp, cohttp.lwt
 
+#Executable sparse_dd
+#  CompiledObject:     best
+#  Path:               cli
+#  MainIs:             sparse_dd.ml
+#  Custom:             true
+#  Install:            false
+#  BuildDepends:       lwt, lwt.unix, vhd-format, vhd-format.lwt, cmdliner, nbd, nbd.lwt, uri, cohttp, cohttp.lwt
+
 Executable disk_to_ocaml
   CompiledObject:     best
   Path:               lib_test
