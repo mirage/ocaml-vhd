@@ -353,6 +353,7 @@ module Make : functor (File : S.IO) -> sig
     copy: int64;
     (** number of copied sectors *)
   }
+  (** The amount of data contained in a stream, broken down by type *)
 
   val empty: size
 
@@ -363,13 +364,17 @@ module Make : functor (File : S.IO) -> sig
   (** an image of a disk represented as a stream *)
 
   module Vhd_input : sig
-    val raw: fd Vhd.t -> fd stream t
+    val raw: ?from: fd Vhd.t -> fd Vhd.t -> fd stream t
     (** [raw t] creates a raw-formatted stream representing the consolidated
-        data present in the virtual disk [t] *)
+        data present in the virtual disk [t]. If [from] is provided then
+        the stream will contain the vhd differencing disk needed to transform
+        [from] into [t]. *)
 
-    val vhd: fd Vhd.t -> fd stream t
+    val vhd: ?from: fd Vhd.t -> fd Vhd.t -> fd stream t
     (** [vhd t] creates a vhd-formatted stream representing the consolidated
-        data present in the virtual disk [t] *)
+        data present in the virtual disk [t]. If [from] is provided then
+        the stream will contain the vhd differencing disk needed to transform
+        [from] into [t]. *)
   end
 
   module Raw_input : sig

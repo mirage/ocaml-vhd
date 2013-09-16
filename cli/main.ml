@@ -370,7 +370,7 @@ module Impl = struct
     lwt () = Lwt_unix.close sock in
     return ()
 
-  let stream common filename input_format output_format output prezeroed progress =
+  let stream common filename relative_to input_format output_format output prezeroed progress =
     try
       let filename = require "filename" filename in
       let input_format = require "input-format" input_format in
@@ -387,10 +387,12 @@ module Impl = struct
         lwt s = match input_format, output_format with
           | "vhd", "vhd" ->
             lwt t = Vhd_IO.openfile filename in
-            Vhd_input.vhd t
+            lwt from = match relative_to with None -> return None | Some f -> lwt t = Vhd_IO.openfile f in return (Some t) in
+            Vhd_input.vhd ?from t
           | "vhd", "raw" ->
             lwt t = Vhd_IO.openfile filename in
-            Vhd_input.raw t
+            lwt from = match relative_to with None -> return None | Some f -> lwt t = Vhd_IO.openfile f in return (Some t) in
+            Vhd_input.raw ?from t
           | "raw", "vhd" ->
             lwt t = Raw_IO.openfile filename in
             Raw_input.vhd t
@@ -516,11 +518,12 @@ let stream_cmd =
   let doc = "stream the contents of a vhd disk" in
   let man = [
     `S "DESCRIPTION";
-    `P "Stream the contents of a virtual disk defined by the given vhd filename and all of its parents, using the specified format and written to the specified output.";
+    `P "Read the contents of a virtual disk defined by the given filename and input format, and write it to the specified destination in the specified output format.";
     `S "FORMATS";
-    `P "The default streaming format is \"raw\" which means no encoding. The other supported format is  \"vhd\" where the output is written as a single coalesced vhd.";
-    `S "OUTPUTS";
-    `P "There are 2 currently defined outputs: \"human\" (the default) where the contents are described as a sequence of I/O operations such as \"insert sector 5 from file x.vhd\". The other defined output is a URL which can take the form:";
+    `P "The input format and the output format are specified separately: this allows easy format conversion during the streaming process.";
+    `P "The \"raw\" format means no encoding: virtual disk data is read and/or written as-is. The other supported format is \"vhd\" where the virtual disk data is interleaved with vhd metadata. If the output format is \"vhd\" then by default, a fully-consolidated disk will be output. If the optional argument \"--relative-to\" is provided then the output will be a \"differencing disk\" containing only the differences between the reference disk and the disk to be streamed. This set of differences acts like an incremental backup: if one first restores the reference disk, and the re-applies the differences on top, the resulting disk data is identical to the original input disk.";
+    `S "DESTINATIONS";
+    `P "There are 2 currently defined destinations: \"human\" (the default) where the contents are described as a sequence of I/O operations such as \"insert sector 5 from file x.vhd\". The other defined output is a URL which can take the form:";
     `P "  nbd://host:port/";
     `S "NOTES";
     `P "When transferring a raw format image onto a medium which is completely empty (i.e. full of zeroes) it is possible to optimise the transfer by avoiding writing empty blocks. The default behaviour is to write zeroes, which is always safe. If you know your media is empty then supply the '--prezeroed' argument.";
@@ -534,16 +537,19 @@ let stream_cmd =
   let filename =
     let doc = Printf.sprintf "Path to the vhd to be streamed." in
     Arg.(value & pos 0 (some file) None & info [] ~doc) in
+  let relative_to =
+    let doc = "Output only differences from the given reference disk" in
+    Arg.(value & opt (some file) None & info [ "relative-to" ] ~doc) in
   let output =
     let doc = "Destination for streamed data." in
-    Arg.(value & opt (some string) (Some "human") & info [ "output" ] ~doc) in
+    Arg.(value & opt (some string) (Some "human") & info [ "destination" ] ~doc) in
   let prezeroed =
     let doc = "Assume the destination is completely empty." in
     Arg.(value & flag & info [ "prezeroed" ] ~doc) in
   let progress =
     let doc = "Display a progress bar." in
     Arg.(value & flag & info ["progress"] ~doc) in
-  Term.(ret(pure Impl.stream $ common_options_t $ filename $ input_format $ output_format $ output $ prezeroed $ progress)),
+  Term.(ret(pure Impl.stream $ common_options_t $ filename $ relative_to $ input_format $ output_format $ output $ prezeroed $ progress)),
   Term.info "stream" ~sdocs:_common_options ~doc ~man
 
 

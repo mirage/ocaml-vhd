@@ -595,6 +595,22 @@ module Parent_locator = struct
     return { platform_code; platform_data_space_original; platform_data_space;
       platform_data_length; platform_data_offset;
       platform_data = Cstruct.create 0 }
+
+  let from_filename filename =
+    (* Convenience function when creating simple vhds which have only
+       one parent locator in the standard place (offset 1536 bytes) *)
+    let uri = "file://./" ^ filename in
+    let platform_data = Cstruct.create (String.length uri) in
+    Cstruct.blit_from_string uri 0 platform_data 0 (String.length uri);
+    let locator0 = {
+      platform_code = Platform_code.MacX;
+      platform_data_space = 512l;      (* bytes *)
+      platform_data_space_original=1l; (* sector *)
+      platform_data_length = Int32.of_int (String.length uri);
+      platform_data_offset = 1536L;
+      platform_data;
+    } in
+    [| locator0; null; null; null; null; null; null; null; |] 
 end
 
 module Header = struct
@@ -1196,18 +1212,7 @@ module Make = functor(File: S.IO) -> struct
         ~current_size:parent.Vhd.footer.Footer.current_size
         ~disk_type:Disk_type.Differencing_hard_disk
         ~uid:uuid ~saved_state () in
-      let locator0 = 
-        let uri = "file://./" ^ parent.Vhd.filename in
-        let platform_data = Cstruct.create (String.length uri) in
-        Cstruct.blit_from_string uri 0 platform_data 0 (String.length uri);
-        {
-          Parent_locator.platform_code = Platform_code.MacX;
-          platform_data_space = 512l;      (* bytes *)
-          platform_data_space_original=1l; (* sector *)
-          platform_data_length = Int32.of_int (String.length uri);
-          platform_data_offset = 1536L;
-          platform_data;
-        } in
+      let parent_locators = Parent_locator.from_filename parent.Vhd.filename in
       File.get_modification_time parent.Vhd.filename >>= fun parent_time_stamp ->
       let header = Header.create ~table_offset
         ~current_size:parent.Vhd.footer.Footer.current_size
@@ -1215,8 +1220,7 @@ module Make = functor(File: S.IO) -> struct
         ~parent_unique_id:parent.Vhd.footer.Footer.uid
         ~parent_time_stamp
         ~parent_unicode_name:(UTF16.of_utf8 parent.Vhd.filename)
-        ~parent_locators:[| locator0; Parent_locator.null; Parent_locator.null; Parent_locator.null;
-                            Parent_locator.null; Parent_locator.null; Parent_locator.null; Parent_locator.null; |] () in
+        ~parent_locators () in
       let bat_buffer = File.alloc (BAT.sizeof_bytes header) in
       let bat = BAT.of_buffer header bat_buffer in
       File.create filename >>= fun handle ->
@@ -1449,18 +1453,44 @@ module Make = functor(File: S.IO) -> struct
 
   module Vhd_input = struct
 
-  let raw (vhd: fd Vhd.t) =
+    (* If we're streaming a fully consolidated disk (where from = None) then we include
+       blocks if they're in any BAT on the path to the tree root. If from = Some from
+       then we must take the two paths to the tree root:
+          t, from : vhd list
+       and include blocks where
+          x | x \in (from - t)    "we must revert changes specific to the 'from' branch"
+       and
+          x | x \in (t - from)    "we must include changes specific to the 't' branch"
+    *)
+    let include_block from t = match from with
+      | None -> in_any_bat t
+      | Some from ->
+        let module BATS = Set.Make(struct type t = (string * BAT.t) let compare x y = compare (fst x) (fst y) end) in
+        let rec make t =
+          let rest = match t.Vhd.parent with
+            | None -> BATS.empty
+            | Some x -> make x in
+          BATS.add (t.Vhd.filename, t.Vhd.bat) rest in
+        let t_branch = make t in
+        let from_branch = make from in
+        let to_include = BATS.(union (diff t_branch from_branch) (diff from_branch t_branch)) in
+        fun i ->
+          BATS.fold (fun (_, bat) acc -> acc || (BAT.get bat i <> BAT.unused)) to_include false
+
+  let raw ?from (vhd: fd Vhd.t) =
     let block_size_sectors_shift = vhd.Vhd.header.Header.block_size_sectors_shift in
     let max_table_entries = vhd.Vhd.header.Header.max_table_entries in
     let empty_block = Empty (Int64.shift_left 1L block_size_sectors_shift) in
     let empty_sector = Empty 1L in
+
+    let include_block = include_block from vhd in
 
     let rec block i =
       let next_block () = block (i + 1) in
       if i = max_table_entries
       then return End
       else begin
-        if not(in_any_bat vhd i)
+        if not(include_block i)
         then return (Cons(empty_block, next_block))
         else begin
           let absolute_block_start = Int64.(shift_left (of_int i) block_size_sectors_shift) in
@@ -1492,7 +1522,7 @@ module Make = functor(File: S.IO) -> struct
     let size = count empty 0 in
     return { elements; size } 
 
-  let vhd (t: fd Vhd.t) =
+  let vhd ?from (t: fd Vhd.t) =
     let block_size_sectors_shift = t.Vhd.header.Header.block_size_sectors_shift in
     let max_table_entries = t.Vhd.header.Header.max_table_entries in
 
@@ -1506,8 +1536,22 @@ module Make = functor(File: S.IO) -> struct
     let table_offset = 2048L in
 
     let size = t.Vhd.footer.Footer.current_size in
-    let footer = Footer.create ~data_offset ~current_size:size ~disk_type:Disk_type.Dynamic_hard_disk () in
-    let header = Header.create ~table_offset ~current_size:size ~block_size_sectors_shift () in
+    let disk_type = match from with
+      | None -> Disk_type.Dynamic_hard_disk
+      | Some _ -> Disk_type.Differencing_hard_disk in
+    let footer = Footer.create ~data_offset ~current_size:size ~disk_type () in
+    ( match from with
+      | None -> return (Header.create ~table_offset ~current_size:size ~block_size_sectors_shift ())
+      | Some from ->
+        let parent_locators = Parent_locator.from_filename from.Vhd.filename in
+        File.get_modification_time from.Vhd.filename >>= fun parent_time_stamp ->
+        let h = Header.create ~table_offset ~current_size:size ~block_size_sectors_shift
+          ~parent_unique_id:from.Vhd.footer.Footer.uid
+          ~parent_time_stamp
+          ~parent_unicode_name:(UTF16.of_utf8 from.Vhd.filename)
+          ~parent_locators () in
+        return h ) >>= fun header ->
+
     let bat_buffer = File.alloc (BAT.sizeof_bytes header) in
     let bat = BAT.of_buffer header bat_buffer in
 
@@ -1522,12 +1566,14 @@ module Make = functor(File: S.IO) -> struct
     let sizeof_data_sectors = 1 lsl block_size_sectors_shift in
     let sizeof_data = 1 lsl (block_size_sectors_shift + sector_shift) in
 
+    let include_block = include_block from t in
+
     (* Calculate where the first data block will go. Note the sizeof_bat is already
        rounded up to the next sector boundary. *)
     let first_block = Int64.(table_offset ++ (of_int sizeof_bat)) in
     let next_byte = ref first_block in
     for i = 0 to max_table_entries - 1 do
-      if in_any_bat t i then begin
+      if include_block i then begin
         BAT.set bat i (Int64.(to_int32(!next_byte lsr sector_shift)));
         next_byte := Int64.(!next_byte ++ (of_int sizeof_bitmap) ++ (of_int sizeof_data))
       end
@@ -1548,7 +1594,7 @@ module Make = functor(File: S.IO) -> struct
       if i >= header.Header.max_table_entries
       then andthen ()
       else
-        if BAT.get bat i <> BAT.unused
+        if include_block i
         then return(Cons(Sectors bitmap, fun () -> sector 0))
         else block (i + 1) andthen in
 
