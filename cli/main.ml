@@ -316,51 +316,24 @@ module Impl = struct
 
     lwt (server, size, flags) = Nbd_lwt_client.negotiate sock in
 
-    let twomib_bytes = 2 * 1024 * 1024 in
-    let twomib_sectors = twomib_bytes / 512 in
-    let twomib_empty =
-      let b = Cstruct.create twomib_bytes in
-      for i = 0 to twomib_bytes - 1 do
-        Cstruct.set_uint8 b i 0
-      done;
-      b in
-
     (* Work to do is: non-zero data to write + empty sectors if the
        target is not prezeroed *)
     let total_work = Int64.(add (add s.size.metadata s.size.copy) (if prezeroed then 0L else s.size.empty)) in
     let p = P.create 80 0L total_work in
 
+    lwt s = if not prezeroed then expand_empty s else return s in
+    lwt s = expand_copy s in
+
     lwt _ = fold_left (fun (sector, work_done) x ->
       lwt work = match x with
-      | Element.Copy(h, sector_start, sector_len) ->
-        let rec copy sector sector_start sector_len =
-          let this = Int64.(to_int (min sector_len (of_int twomib_sectors))) in
-          lwt data = Fd.really_read h (Int64.mul sector_start 512L) (this * 512) in
-          lwt () = Nbd_lwt_client.write server data (Int64.mul sector 512L) in
-          let sector_len = Int64.(sub sector_len (of_int this)) in
-          let sector_start = Int64.(add sector_start (of_int this)) in
-          let sector = Int64.(add sector (of_int this)) in
-          if progress then P.update p sector;
-          if sector_len > 0L then copy sector sector_start sector_len else return () in
-        lwt () = copy sector sector_start sector_len in
-        return Int64.(shift_left sector_len sector_shift)
       | Element.Sectors data ->
         lwt () = Nbd_lwt_client.write server data (Int64.mul sector 512L) in
         if progress then P.update p sector;
         return Int64.(of_int (Cstruct.len data))
-      | Element.Empty n ->
-        if not prezeroed then begin
-          let rec copy sector n =
-            let this = Int64.(to_int (min n (of_int twomib_sectors))) in
-            let block = Cstruct.sub twomib_empty 0 (this * 512) in
-            lwt () = Nbd_lwt_client.write server block (Int64.mul sector 512L) in
-            let sector = Int64.(add sector (of_int this)) in
-            let n = Int64.(sub n (of_int this)) in
-            if progress then P.update p sector;
-            if n > 0L then copy sector n else return () in
-          lwt () = copy sector n in
-          return Int64.(shift_left n sector_shift)
-        end else return 0L in
+      | Element.Empty n -> (* must be prezeroed *)
+        assert prezeroed;
+        return 0L
+      | _ -> fail (Failure (Printf.sprintf "unexpected stream element: %s" (Element.to_string x))) in
       let sector = Int64.add sector (Element.len x) in
       let work_done = Int64.add work_done work in
       return (sector, work_done)
