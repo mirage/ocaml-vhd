@@ -1457,10 +1457,11 @@ module Make = functor(File: S.IO) -> struct
       else return (Cons(Copy(h', ofs', len'), fun () -> coalesce_request None s))
     | Cons(Copy(h, ofs, len), next), Some x -> return(Cons(x, fun () -> coalesce_request None s))
 
+  let twomib_bytes = 2 * 1024 * 1024
+  let twomib_sectors = twomib_bytes / 512
+
   let rec expand_empty_elements s =
     let open Int64 in
-    let twomib_bytes = 2 * 1024 * 1024 in
-    let twomib_sectors = twomib_bytes / 512 in
     let twomib_empty =
       let b = Cstruct.create twomib_bytes in
       for i = 0 to twomib_bytes - 1 do
@@ -1471,9 +1472,9 @@ module Make = functor(File: S.IO) -> struct
     | End -> return End
     | Cons(Empty n, next) ->
         let rec copy n =
-          let this = Int64.(to_int (min n (of_int twomib_sectors))) in
+          let this = to_int (min n (of_int twomib_sectors)) in
           let block = Cstruct.sub twomib_empty 0 (this * 512) in
-          let n = Int64.(sub n (of_int this)) in
+          let n = n -- (of_int this) in
           let next () = if n > 0L then copy n else expand_empty_elements (next ()) in
           return (Cons(Sectors block, next)) in
         copy n
@@ -1483,6 +1484,27 @@ module Make = functor(File: S.IO) -> struct
     let open Int64 in
     let size = { s.size with empty = 0L; metadata = s.size.metadata ++ s.size.empty } in
     expand_empty_elements (return s.elements) >>= fun elements ->
+    return { elements; size }
+
+  let rec expand_copy_elements s =
+    let open Int64 in
+    s >>= function
+    | End -> return End
+    | Cons(Element.Copy(h, sector_start, sector_len), next) ->
+        let rec copy sector_start sector_len =
+          let this = to_int (min sector_len (of_int twomib_sectors)) in
+          really_read h (sector_start ** 512L) (this * 512) >>= fun data ->
+          let sector_start = sector_start ++ (of_int this) in
+          let sector_len = sector_len -- (of_int this) in
+          let next () = if sector_len > 0L then copy sector_start sector_len else expand_copy_elements (next ()) in
+          return (Cons(Sectors data, next)) in
+        copy sector_start sector_len
+    | Cons(x, next) -> return (Cons(x, fun () -> expand_copy_elements (next ())))
+
+  let expand_copy s =
+    let open Int64 in
+    let size = { s.size with copy = 0L; metadata = s.size.metadata ++ s.size.copy } in
+    expand_copy_elements (return s.elements) >>= fun elements ->
     return { elements; size }
 
   module Vhd_input = struct

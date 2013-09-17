@@ -389,6 +389,9 @@ module Make : functor (File : S.IO) -> sig
   val expand_empty: 'a stream -> 'a stream t
   (** replaces 'Empty' elements with explicit writes of zeroes *)
 
+  val expand_copy: fd stream -> fd stream t
+  (** replaces 'Copy' elements with explicit writes of data *)
+
   module Vhd_input : sig
     val raw: ?from: fd Vhd.t -> fd Vhd.t -> fd stream t
     (** [raw t] creates a raw-formatted stream representing the consolidated
