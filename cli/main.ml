@@ -309,11 +309,7 @@ module Impl = struct
 
   module P = Progress_bar(Int64)
 
-  let stream_nbd common s prezeroed progress =
-    let sock = Lwt_unix.socket Unix.PF_UNIX Unix.SOCK_STREAM 0 in
-    let sockaddr = Lwt_unix.ADDR_UNIX "socket" in
-    lwt () = Lwt_unix.connect sock sockaddr in
-
+  let stream_nbd common sock s prezeroed progress =
     lwt (server, size, flags) = Nbd_lwt_client.negotiate sock in
 
     (* Work to do is: non-zero data to write + empty sectors if the
@@ -342,6 +338,9 @@ module Impl = struct
 
     lwt () = Lwt_unix.close sock in
     return ()
+
+  let stream_chunked common sock s prezeroed progress =
+    fail (Failure "stream_chunked not implemented")
 
   let stream common filename relative_to input_format output_format output prezeroed progress =
     try
@@ -380,11 +379,33 @@ module Impl = struct
           let uri' = Uri.of_string uri in
           begin match Uri.scheme uri' with
           | Some "nbd" ->
-            stream_nbd common s prezeroed progress
+            let host = match Uri.host uri' with None -> failwith "Please supply a host in the URI" | Some host -> host in
+            let port = match Uri.port uri' with None -> 10809 | Some p -> p in
+            let sock = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+            lwt host_entry = Lwt_unix.gethostbyname host in
+            let sockaddr = Lwt_unix.ADDR_INET(host_entry.Lwt_unix.h_addr_list.(0), port) in
+            lwt () = Lwt_unix.connect sock sockaddr in
+            stream_nbd common sock s prezeroed progress
+          | Some "file" ->
+            let path = Uri.path uri' in
+            let sock = Lwt_unix.socket Unix.PF_UNIX Unix.SOCK_STREAM 0 in
+            let sockaddr = Lwt_unix.ADDR_UNIX(path) in
+            lwt () = Lwt_unix.connect sock sockaddr in
+            stream_nbd common sock s prezeroed progress
           | Some "http"
           | Some "https" ->
+            (* TODO: https is not currently implemented *)
+            let port = match Uri.port uri' with None -> 80 | Some port -> port in
+            let host = match Uri.host uri' with None -> failwith "Please supply a host in the URI" | Some host -> host in
+            lwt host_entry = Lwt_unix.gethostbyname host in
+            let sockaddr = Lwt_unix.ADDR_INET(host_entry.Lwt_unix.h_addr_list.(0), port) in
+            let sock = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+            lwt () = Lwt_unix.connect sock sockaddr in
+
             let open Cohttp in
-            lwt ic, oc = Cohttp_lwt_unix_net.connect_uri uri' in
+            let ic = Lwt_io.of_fd ~mode:Lwt_io.input sock in
+            let oc = Lwt_io.of_fd ~mode:Lwt_io.output sock in
+            
             let module Request = Request.Make(Cohttp_lwt_unix_io) in
             let module Response = Response.Make(Cohttp_lwt_unix_io) in
             let headers = Header.init () in
@@ -414,8 +435,8 @@ module Impl = struct
                   let te = "transfer-encoding" in
                   List.mem_assoc te headers && (List.assoc te headers = "nbd") in
                 if is_nbd
-                then stream_nbd common s prezeroed progress
-                else fail (Failure "non-NBD upload not implemented yet")
+                then stream_nbd common sock s prezeroed progress
+                else stream_chunked common sock s prezeroed progress
               end else fail (Failure (Code.reason_phrase_of_code code))
             end
           | Some x ->
