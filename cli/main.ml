@@ -387,11 +387,36 @@ Printf.fprintf stderr "writing header (offset = %Ld)\n%!" t.Chunked.offset;
     ) (0L, 0L) s.elements in
     if progress then Printf.printf "\n%!";
 
+    (* Send the end-of-stream marker *)
+    Chunked.marshal header { Chunked.offset = 0L; data = Cstruct.create 0 };
+    lwt () = really_write sock header in
+
     lwt () = Lwt_unix.close sock in
     return ()
 
-  let stream_raw common sock s prezeroed progress =
-    fail (Failure "not implemented")
+  let stream_raw common sock s _ progress =
+    (* Work to do is: non-zero data to write + empty sectors *)
+    let total_work = Int64.(add (add s.size.metadata s.size.copy) s.size.empty) in
+    let p = P.create 80 0L total_work in
+
+    lwt s = expand_empty s in
+    lwt s = expand_copy s in
+
+    lwt _ = fold_left (fun(sector, work_done) x ->
+      lwt work = match x with
+      | Element.Sectors data ->
+        lwt () = really_write sock data in
+        if progress then P.update p sector;
+        return Int64.(of_int (Cstruct.len data))
+      | _ -> fail (Failure (Printf.sprintf "unexpected stream element: %s" (Element.to_string x))) in
+      let sector = Int64.add sector (Element.len x) in
+      let work_done = Int64.add work_done work in
+      return (sector, work_done)
+    ) (0L, 0L) s.elements in
+    if progress then Printf.printf "\n%!";
+
+    lwt () = Lwt_unix.close sock in
+    return ()
 
   type transport = Nbd | Chunked | Human | Put
   let transport_of_string = function
