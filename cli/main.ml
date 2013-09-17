@@ -339,8 +339,55 @@ module Impl = struct
     lwt () = Lwt_unix.close sock in
     return ()
 
+  (* Suitable for writing over the network because it doesn't lseek. Should
+     merge this with Vhd_lwt.Fd.really_write *)
+  let really_write fd buffer =
+    let ofs = buffer.Cstruct.off in
+    let len = buffer.Cstruct.len in
+    let buf = buffer.Cstruct.buffer in
+    let rec rwrite acc fd buf ofs len =
+      lwt n = Lwt_bytes.write fd buf ofs len in
+      let len = len - n in
+      let acc = acc + n in
+      if len = 0 || n = 0
+      then return acc
+      else rwrite acc fd buf (ofs + n) len in
+    lwt written = rwrite 0 fd buf ofs len in
+    if written = 0 && len <> 0
+    then fail End_of_file
+    else return ()
+
   let stream_chunked common sock s prezeroed progress =
-    fail (Failure "stream_chunked not implemented")
+    (* Work to do is: non-zero data to write + empty sectors if the
+       target is not prezeroed *)
+    let total_work = Int64.(add (add s.size.metadata s.size.copy) (if prezeroed then 0L else s.size.empty)) in
+    let p = P.create 80 0L total_work in
+
+    lwt s = if not prezeroed then expand_empty s else return s in
+    lwt s = expand_copy s in
+
+    let header = Cstruct.create Chunked.sizeof in
+    lwt _ = fold_left (fun(sector, work_done) x ->
+      lwt work = match x with
+      | Element.Sectors data ->
+        let t = { Chunked.offset = Int64.(mul sector 512L); data } in
+        Chunked.marshal header t;
+        lwt () = really_write sock header in
+        lwt () = really_write sock data in
+        if progress then P.update p sector;
+        return Int64.(of_int (Cstruct.len data))
+      | Element.Empty n -> (* must be prezeroed *)
+        assert prezeroed;
+        return 0L
+      | _ -> fail (Failure (Printf.sprintf "unexpected stream element: %s" (Element.to_string x))) in
+      let sector = Int64.add sector (Element.len x) in
+      let work_done = Int64.add work_done work in
+      return (sector, work_done)
+    ) (0L, 0L) s.elements in
+    if progress then Printf.printf "\n%!";
+
+    lwt () = Lwt_unix.close sock in
+    return ()
 
   let stream common filename relative_to input_format output_format output prezeroed progress =
     try

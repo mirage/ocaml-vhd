@@ -16,7 +16,7 @@ cstruct t {
   uint64_t offset;
   uint32_t len
   (* data *)
-} as little_endian;
+} as little_endian
 
 let sizeof = sizeof_t
 
