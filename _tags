@@ -1,5 +1,5 @@
 # OASIS_START
-# DO NOT EDIT (digest: 7889148188d86b64f89e2b2c4afcce3d)
+# DO NOT EDIT (digest: c8284b7fce320f0016f98ef28e25060e)
 # Ignore VCS directories, you can use the same kind of rule outside 
 # OASIS_START/STOP if you want to exclude directories that contains 
 # useless stuff for the build process
@@ -37,6 +37,27 @@
 <cli/main.{native,byte}>: pkg_cohttp
 <cli/main.{native,byte}>: pkg_cohttp.lwt
 <cli/main.{native,byte}>: pkg_uuidm
+<cli/main.{native,byte}>: custom
+# Executable sparse_dd
+<cli/sparse_dd.{native,byte}>: use_vhd
+<cli/sparse_dd.{native,byte}>: use_vhd_lwt
+<cli/sparse_dd.{native,byte}>: pkg_lwt
+<cli/sparse_dd.{native,byte}>: pkg_lwt.unix
+<cli/sparse_dd.{native,byte}>: pkg_cstruct
+<cli/sparse_dd.{native,byte}>: pkg_cmdliner
+<cli/sparse_dd.{native,byte}>: pkg_nbd
+<cli/sparse_dd.{native,byte}>: pkg_nbd.lwt
+<cli/sparse_dd.{native,byte}>: pkg_uri
+<cli/sparse_dd.{native,byte}>: pkg_cohttp
+<cli/sparse_dd.{native,byte}>: pkg_cohttp.lwt
+<cli/sparse_dd.{native,byte}>: pkg_xenstore
+<cli/sparse_dd.{native,byte}>: pkg_xenstore.client
+<cli/sparse_dd.{native,byte}>: pkg_xenstore.unix
+<cli/sparse_dd.{native,byte}>: pkg_xenstore_transport
+<cli/sparse_dd.{native,byte}>: pkg_xenstore_transport.unix
+<cli/sparse_dd.{native,byte}>: pkg_threads
+<cli/sparse_dd.{native,byte}>: pkg_tapctl
+<cli/sparse_dd.{native,byte}>: pkg_uuidm
 <cli/*.ml{,i}>: use_vhd
 <cli/*.ml{,i}>: use_vhd_lwt
 <cli/*.ml{,i}>: pkg_lwt
@@ -48,8 +69,15 @@
 <cli/*.ml{,i}>: pkg_uri
 <cli/*.ml{,i}>: pkg_cohttp
 <cli/*.ml{,i}>: pkg_cohttp.lwt
+<cli/*.ml{,i}>: pkg_xenstore
+<cli/*.ml{,i}>: pkg_xenstore.client
+<cli/*.ml{,i}>: pkg_xenstore.unix
+<cli/*.ml{,i}>: pkg_xenstore_transport
+<cli/*.ml{,i}>: pkg_xenstore_transport.unix
+<cli/*.ml{,i}>: pkg_threads
+<cli/*.ml{,i}>: pkg_tapctl
 <cli/*.ml{,i}>: pkg_uuidm
-<cli/main.{native,byte}>: custom
+<cli/sparse_dd.{native,byte}>: custom
 # Executable disk_to_ocaml
 <lib_test/disk_to_ocaml.{native,byte}>: use_vhd
 <lib_test/disk_to_ocaml.{native,byte}>: use_vhd_lwt
