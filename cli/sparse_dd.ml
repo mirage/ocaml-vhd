@@ -147,7 +147,7 @@ let progress_cb =
 		last_percent := new_percent
 
 let _ =
-	let base = ref None and src = ref None and dest = ref None and size = ref (-1L) and prezeroed = ref false and test = ref false in
+	let base = ref None and src = ref None and dest = ref None and size = ref (-1L) and prezeroed = ref false in
 	Arg.parse [ "-base", Arg.String (fun x -> base := Some x), "base disk to search for differences from (default: None)";
 		    "-src", Arg.String (fun x -> src := Some x), "source disk";
 		    "-dest", Arg.String (fun x -> dest := Some x), "destination disk";
@@ -211,8 +211,6 @@ let _ =
 	debug "src_vhd = %s; dest_vhd = %s; base_vhd = %s" (Opt.default "None" src_vhd) (Opt.default "None" dest_vhd) (Opt.default "None" base_vhd);
 
 	progress_cb 0.;
-	let erase = not !prezeroed in
-	let write_zeroes = not !prezeroed || base <> None in
 (*	let stats = file_dd ~progress_cb ?size ?bat erase write_zeroes (Opt.unbox !src) (Opt.unbox !dest) in
 *)	let time = Unix.gettimeofday () -. start in
 	debug "Time: %.2f seconds" time

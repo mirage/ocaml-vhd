@@ -1721,7 +1721,6 @@ module Make = functor(File: S.IO) -> struct
          Cstruct.set_uint8 bitmap i 0xff
        done;
 
-       let sizeof_data_sectors = 1 lsl header.Header.block_size_sectors_shift in
        let sizeof_data = 1 lsl (header.Header.block_size_sectors_shift + sector_shift) in
 
        (* Calculate where the first data block will go. Note the sizeof_bat is already
