@@ -185,17 +185,34 @@ let _ =
 			      "     to /dev/xvdb."; ]);
 	if !logging_mode = Buffer then set_logging_mode Human;
 
-	if !src = None || !dest = None || !size = (-1L) then begin
-		debug "Must have -src -dest and -size arguments\n";
-		exit 1;
+	let src = match !src with
+		| None ->
+			debug "Must have -src argument\n";
+			exit 1
+		| Some x -> x in
+	let dest = match !dest with
+		| None ->
+			debug "Must have -dest argument\n";
+			exit 1
+		| Some x -> x in
+	if !size = (-1L) then begin
+		debug "Must have -size argument\n";
+		exit 1
 	end;
+	let size = !size in
+	let base = !base in
 
-	debug "src = %s; dest = %s; base = %s; size = %Ld" (Opt.default "None" !src) (Opt.default "None" !dest) (Opt.default "None" !base) !size;
-	let size = Some !size in
+	debug "src = %s; dest = %s; base = %s; size = %Ld" src dest (Opt.default "None" base) size;
+	let src_vhd = vhd_of_device src in
+	let dest_vhd = vhd_of_device dest in
+	let base_vhd = match base with
+		| None -> None
+		| Some x -> vhd_of_device x in
+	debug "src_vhd = %s; dest_vhd = %s; base_vhd = %s" (Opt.default "None" src_vhd) (Opt.default "None" dest_vhd) (Opt.default "None" base_vhd);
 
 	progress_cb 0.;
 	let erase = not !prezeroed in
-	let write_zeroes = not !prezeroed || !base <> None in
+	let write_zeroes = not !prezeroed || base <> None in
 (*	let stats = file_dd ~progress_cb ?size ?bat erase write_zeroes (Opt.unbox !src) (Opt.unbox !dest) in
 *)	let time = Unix.gettimeofday () -. start in
 	debug "Time: %.2f seconds" time
