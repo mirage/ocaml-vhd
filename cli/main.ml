@@ -455,11 +455,12 @@ module Impl = struct
       let filename = require "filename" filename in
       let input_format = require "input-format" input_format in
       let output_format = require "output-format" output_format in
-      let transport = require "transport" transport in
       let destination = require "destination" destination in
 
       let supported_formats = [ "raw"; "vhd" ] in
-      let transport = transport_of_string transport in
+      let transport = match transport with
+        | None -> None
+        | Some x -> Some (transport_of_string x) in
       if not (List.mem input_format supported_formats)
       then failwith (Printf.sprintf "%s is not a supported format" input_format);
       if not (List.mem output_format supported_formats)
@@ -495,13 +496,13 @@ module Impl = struct
             lwt host_entry = Lwt_unix.gethostbyname host in
             let sockaddr = Lwt_unix.ADDR_INET(host_entry.Lwt_unix.h_addr_list.(0), port) in
             lwt () = Lwt_unix.connect sock sockaddr in
-            return (sock, [ Put; Nbd; Chunked; Human ])
+            return (sock, [ Nbd; Put; Chunked; Human ])
           | Some "file" ->
             let path = Uri.path uri' in
             let sock = Lwt_unix.socket Unix.PF_UNIX Unix.SOCK_STREAM 0 in
             let sockaddr = Lwt_unix.ADDR_UNIX(path) in
             lwt () = Lwt_unix.connect sock sockaddr in
-            return (sock, [ Put; Nbd; Chunked; Human ])
+            return (sock, [ Nbd; Put; Chunked; Human ])
           | Some "http"
           | Some "https" ->
             (* TODO: https is not currently implemented *)
@@ -554,6 +555,12 @@ module Impl = struct
           | None ->
             fail (Failure (Printf.sprintf "Failed to parse URI: %s" uri))
           end in
+        let transport = match transport with
+          | Some x -> x
+          | None ->
+            let t = List.hd possible_transports in
+            Printf.fprintf stderr "Using transport: %s\n%!" (string_of_transport t);
+            t in
         if not(List.mem transport possible_transports)
         then fail(Failure(Printf.sprintf "this destination only supports transports: [ %s ]" (String.concat "; " (List.map string_of_transport possible_transports))))
         else
@@ -673,6 +680,7 @@ let stream_cmd =
     `P "  chunked: the XenServer chunked disk upload protocol";
     `P "  put: unencoded write";
     `P "  human: human-readable description of the contents";
+    `P "The default behaviour is to auto-detect based on the destination.";
     `S "OTHER OPTIONS";
     `P "When transferring a raw format image onto a medium which is completely empty (i.e. full of zeroes) it is possible to optimise the transfer by avoiding writing empty blocks. The default behaviour is to write zeroes, which is always safe. If you know your media is empty then supply the '--prezeroed' argument.";
     `S "NOTES";
@@ -697,7 +705,7 @@ let stream_cmd =
     Arg.(value & opt (some string) (Some "stdout:") & info [ "destination" ] ~doc) in
   let transport =
     let doc = "Transport protocol for the streamed data." in
-    Arg.(value & opt (some string) (Some "human") & info [ "transport" ] ~doc) in
+    Arg.(value & opt (some string) None & info [ "transport" ] ~doc) in
   let prezeroed =
     let doc = "Assume the destination is completely empty." in
     Arg.(value & flag & info [ "prezeroed" ] ~doc) in
