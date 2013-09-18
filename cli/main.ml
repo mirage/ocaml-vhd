@@ -67,6 +67,12 @@ module type Floatable = sig
   val to_float: t -> float
 end
 
+let hms secs =
+    let h = secs / 3600 in
+    let m = (secs mod 3600) / 60 in
+    let s = secs mod 60 in
+    Printf.sprintf "%02d:%02d:%02d" h m s
+
 module Progress_bar(T: Floatable) = struct
   type t = {
     max_value: T.t;
@@ -101,10 +107,7 @@ module Progress_bar(T: Floatable) = struct
     let time_so_far = Unix.gettimeofday () -. t.start_time in
     let total_time = T.(to_float t.max_value /. (to_float t.current_value)) *. time_so_far in
     let remaining = int_of_float (total_time -. time_so_far) in
-    let h = remaining / 3600 in
-    let m = (remaining mod 3600) / 60 in
-    let s = remaining mod 60 in
-    Printf.sprintf "%02d:%02d:%02d" h m s
+    hms remaining
 
   let print_bar t =
     let w = bar_width t t.current_value in
@@ -125,7 +128,11 @@ module Progress_bar(T: Floatable) = struct
     let old_bar = bar_width t t.current_value in
     let new_bar = bar_width t new_value in
     t.current_value <- new_value;
-    if new_bar <> old_bar then print_bar t
+    new_bar <> old_bar
+
+  let average_rate t =
+    let time_so_far = Unix.gettimeofday () -. t.start_time in
+    T.to_float t.current_value /. time_so_far
 end
 
 module Impl = struct
@@ -320,7 +327,7 @@ module Impl = struct
       return (Int64.add sector (Element.len x))
     ) 0L s.elements in
     Printf.printf "# end of stream\n";
-    return ()
+    return None
 
   module P = Progress_bar(Int64)
 
@@ -339,7 +346,6 @@ module Impl = struct
       lwt work = match x with
       | Element.Sectors data ->
         lwt () = Nbd_lwt_client.write server data (Int64.mul sector 512L) in
-        if progress then P.update p sector;
         return Int64.(of_int (Cstruct.len data))
       | Element.Empty n -> (* must be prezeroed *)
         assert prezeroed;
@@ -347,12 +353,14 @@ module Impl = struct
       | _ -> fail (Failure (Printf.sprintf "unexpected stream element: %s" (Element.to_string x))) in
       let sector = Int64.add sector (Element.len x) in
       let work_done = Int64.add work_done work in
+      let progress_updated = P.update p work_done in
+      if progress && progress_updated then P.print_bar p;
       return (sector, work_done)
     ) (0L, 0L) s.elements in
     if progress then Printf.printf "\n%!";
 
     lwt () = Lwt_unix.close sock in
-    return ()
+    return (Some p)
 
   (* Suitable for writing over the network because it doesn't lseek. Should
      merge this with Vhd_lwt.Fd.really_write *)
@@ -389,7 +397,6 @@ module Impl = struct
         Chunked.marshal header t;
         lwt () = really_write sock header in
         lwt () = really_write sock data in
-        if progress then P.update p sector;
         return Int64.(of_int (Cstruct.len data))
       | Element.Empty n -> (* must be prezeroed *)
         assert prezeroed;
@@ -397,6 +404,9 @@ module Impl = struct
       | _ -> fail (Failure (Printf.sprintf "unexpected stream element: %s" (Element.to_string x))) in
       let sector = Int64.add sector (Element.len x) in
       let work_done = Int64.add work_done work in
+      let progress_updated = P.update p work_done in
+      if progress && progress_updated then P.print_bar p;
+
       return (sector, work_done)
     ) (0L, 0L) s.elements in
     if progress then Printf.printf "\n%!";
@@ -406,7 +416,7 @@ module Impl = struct
     lwt () = really_write sock header in
 
     lwt () = Lwt_unix.close sock in
-    return ()
+    return (Some p)
 
   let stream_raw common sock s _ progress =
     (* Work to do is: non-zero data to write + empty sectors *)
@@ -420,17 +430,18 @@ module Impl = struct
       lwt work = match x with
       | Element.Sectors data ->
         lwt () = really_write sock data in
-        if progress then P.update p sector;
         return Int64.(of_int (Cstruct.len data))
       | _ -> fail (Failure (Printf.sprintf "unexpected stream element: %s" (Element.to_string x))) in
       let sector = Int64.add sector (Element.len x) in
       let work_done = Int64.add work_done work in
+      let progress_updated = P.update p work_done in
+      if progress && progress_updated then P.print_bar p;
       return (sector, work_done)
     ) (0L, 0L) s.elements in
     if progress then Printf.printf "\n%!";
 
     lwt () = Lwt_unix.close sock in
-    return ()
+    return (Some p)
 
   type transport = Nbd | Chunked | Human | Put
   let transport_of_string = function
@@ -545,11 +556,35 @@ module Impl = struct
           end in
         if not(List.mem transport possible_transports)
         then fail(Failure(Printf.sprintf "this destination only supports transports: [ %s ]" (String.concat "; " (List.map string_of_transport possible_transports))))
-        else (match transport with
+        else
+          lwt p = (match transport with
               | Nbd -> stream_nbd
               | Human -> stream_human
               | Chunked -> stream_chunked
               | Put -> stream_raw) common sock s prezeroed progress in
+          match p with
+          | Some p ->
+            if progress then begin
+              let add_unit x =
+                let kib = 1024. in
+                let mib = kib *. 1024. in
+                let gib = mib *. 1024. in
+                let tib = gib *. 1024. in
+                if x /. tib > 1. then Printf.sprintf "%.1f TiB" (x /. tib)
+                else if x /. gib > 1. then Printf.sprintf "%.1f GiB" (x /. gib)
+                else if x /. mib > 1. then Printf.sprintf "%.1f MiB" (x /. mib)
+                else if x /. kib > 1. then Printf.sprintf "%.1f KiB" (x /. kib)
+                else Printf.sprintf "%.1f B" x in
+
+              Printf.printf "Time taken: %s\n" (hms (int_of_float (Unix.gettimeofday () -. p.P.start_time)));
+              let physical_rate = P.average_rate p in
+              Printf.printf "Physical data rate: %s/sec\n" (add_unit physical_rate);
+              let speedup = Int64.(to_float s.size.total /. (to_float p.P.max_value)) in
+              Printf.printf "Speedup: %.1f\n" speedup;
+              Printf.printf "Virtual data rate: %s/sec\n" (add_unit (physical_rate *. speedup));
+            end;
+            return ()
+          | None -> return () in
 
       Lwt_main.run thread;
       `Ok ()
