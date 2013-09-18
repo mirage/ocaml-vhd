@@ -107,6 +107,7 @@ module Progress_bar(T: Floatable) = struct
     Printf.printf "\r%s%!" t.line
 
   let update t new_value =
+    let new_value = min new_value t.max_value in
     let old_bar = bar_width t t.current_value in
     let new_bar = bar_width t new_value in
     t.current_value <- new_value;
