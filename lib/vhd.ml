@@ -1023,7 +1023,7 @@ end
 
 type size = {
   total: int64;
-  metadata: int64;
+  metadata: int64; (* TODO: rename to 'data' *)
   empty: int64;
   copy: int64;
 }
@@ -1571,11 +1571,11 @@ module Make = functor(File: S.IO) -> struct
       then totals
       else begin
         if not(in_any_bat vhd i)
-        then count { totals with empty = Int64.(add totals.empty (shift_left 1L block_size_sectors_shift)) } (i + 1)
-        else count { totals with copy  = Int64.(add totals.copy  (shift_left 1L block_size_sectors_shift)) } (i + 1)
+        then count { totals with empty = Int64.(add totals.empty (shift_left 1L (block_size_sectors_shift + sector_shift))) } (i + 1)
+        else count { totals with copy  = Int64.(add totals.copy  (shift_left 1L (block_size_sectors_shift + sector_shift))) } (i + 1)
       end in
     coalesce_request None (block 0) >>= fun elements ->
-    let size = count empty 0 in
+    let size = count { empty with total = vhd.Vhd.footer.Footer.current_size } 0 in
     return { elements; size } 
 
   let vhd ?from (t: fd Vhd.t) =
@@ -1680,12 +1680,13 @@ module Make = functor(File: S.IO) -> struct
       then totals
       else begin
         if not(in_any_bat t i)
-        then count { totals with empty = Int64.(add totals.empty (shift_left 1L block_size_sectors_shift)) } (i + 1)
-        else count { totals with copy  = Int64.(add totals.copy  (shift_left 1L block_size_sectors_shift));
-                                 metadata = Int64.(add totals.metadata (of_int (sizeof_bitmap / sector_size)))  } (i + 1)
+        then count { totals with empty = Int64.(add totals.empty (shift_left 1L (block_size_sectors_shift + sector_shift))) } (i + 1)
+        else count { totals with copy  = Int64.(add totals.copy  (shift_left 1L (block_size_sectors_shift + sector_shift)));
+                                 metadata = Int64.(add totals.metadata (of_int sizeof_bitmap))  } (i + 1)
       end in
     let size = { empty with metadata = Int64.of_int ((2 * Footer.sizeof + Header.sizeof + sizeof_bat) / 512);
-                            empty = 512L } in
+                            empty = 512L;
+                            total = t.Vhd.footer.Footer.current_size } in
     let size = count size 0 in
     return { elements; size } 
 
