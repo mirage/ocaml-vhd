@@ -443,49 +443,46 @@ module Impl = struct
     lwt () = Lwt_unix.close sock in
     return (Some p)
 
-  type transport = Nbd | Chunked | Human | Put
-  let transport_of_string = function
-    | "nbd" -> Nbd | "chunked" -> Chunked | "human" -> Human | "put" -> Put
-    | x -> failwith (Printf.sprintf "Unsupported transport: %s" x)
-  let string_of_transport = function
-    | Nbd -> "nbd" | Chunked -> "chunked" | Human -> "human" | Put -> "put"
+  type protocol = Nbd | Chunked | Human | NoProtocol
+  let protocol_of_string = function
+    | "nbd" -> Nbd | "chunked" -> Chunked | "human" -> Human | "none" -> NoProtocol
+    | x -> failwith (Printf.sprintf "Unsupported protocol: %s" x)
+  let string_of_protocol = function
+    | Nbd -> "nbd" | Chunked -> "chunked" | Human -> "human" | NoProtocol -> "none"
 
-  let stream common filename relative_to input_format output_format destination transport prezeroed progress =
+  let stream common (source: string) (relative_to: string option) (source_format: string) (destination_format: string) (destination: string) (source_protocol: string option) (destination_protocol: string option) prezeroed progress =
     try
-      let filename = require "filename" filename in
-      let input_format = require "input-format" input_format in
-      let output_format = require "output-format" output_format in
-      let destination = require "destination" destination in
+      let source_protocol = require "source-protocol" source_protocol in
 
       let supported_formats = [ "raw"; "vhd" ] in
-      let transport = match transport with
+      let destination_protocol = match destination_protocol with
         | None -> None
-        | Some x -> Some (transport_of_string x) in
-      if not (List.mem input_format supported_formats)
-      then failwith (Printf.sprintf "%s is not a supported format" input_format);
-      if not (List.mem output_format supported_formats)
-      then failwith (Printf.sprintf "%s is not a supported format" output_format);
+        | Some x -> Some (protocol_of_string x) in
+      if not (List.mem source_format supported_formats)
+      then failwith (Printf.sprintf "%s is not a supported format" source_format);
+      if not (List.mem source_format supported_formats)
+      then failwith (Printf.sprintf "%s is not a supported format" destination_format);
 
       let thread =
-        lwt s = match input_format, output_format with
+        lwt s = match source_format, destination_format with
           | "vhd", "vhd" ->
-            lwt t = Vhd_IO.openfile filename in
+            lwt t = Vhd_IO.openfile source in
             lwt from = match relative_to with None -> return None | Some f -> lwt t = Vhd_IO.openfile f in return (Some t) in
             Vhd_input.vhd ?from t
           | "vhd", "raw" ->
-            lwt t = Vhd_IO.openfile filename in
+            lwt t = Vhd_IO.openfile source in
             lwt from = match relative_to with None -> return None | Some f -> lwt t = Vhd_IO.openfile f in return (Some t) in
             Vhd_input.raw ?from t
           | "raw", "vhd" ->
-            lwt t = Raw_IO.openfile filename in
+            lwt t = Raw_IO.openfile source in
             Raw_input.vhd t
           | "raw", "raw" ->
-            lwt t = Raw_IO.openfile filename in
+            lwt t = Raw_IO.openfile source in
             Raw_input.raw t
           | _, _ -> assert false in
-        lwt (sock, possible_transports) = match destination with
+        lwt (sock, possible_protocols) = match destination with
         | "stdout:" ->
-          return (Lwt_unix.of_unix_file_descr Unix.stdout, [ Put; Chunked; Human ])
+          return (Lwt_unix.of_unix_file_descr Unix.stdout, [ NoProtocol; Chunked; Human ])
         | uri ->
           let uri' = Uri.of_string uri in
           begin match Uri.scheme uri' with
@@ -496,13 +493,13 @@ module Impl = struct
             lwt host_entry = Lwt_unix.gethostbyname host in
             let sockaddr = Lwt_unix.ADDR_INET(host_entry.Lwt_unix.h_addr_list.(0), port) in
             lwt () = Lwt_unix.connect sock sockaddr in
-            return (sock, [ Nbd; Put; Chunked; Human ])
+            return (sock, [ Nbd; NoProtocol; Chunked; Human ])
           | Some "file" ->
             let path = Uri.path uri' in
             let sock = Lwt_unix.socket Unix.PF_UNIX Unix.SOCK_STREAM 0 in
             let sockaddr = Lwt_unix.ADDR_UNIX(path) in
             lwt () = Lwt_unix.connect sock sockaddr in
-            return (sock, [ Nbd; Put; Chunked; Human ])
+            return (sock, [ Nbd; NoProtocol; Chunked; Human ])
           | Some "http"
           | Some "https" ->
             (* TODO: https is not currently implemented *)
@@ -547,7 +544,7 @@ module Impl = struct
                   List.mem_assoc te headers && (List.assoc te headers = "nbd") in
                 if advertises_nbd
                 then return(sock, [ Nbd ])
-                else return(sock, [ Chunked; Put ])
+                else return(sock, [ Chunked; NoProtocol ])
               end else fail (Failure (Code.reason_phrase_of_code code))
             end
           | Some x ->
@@ -555,20 +552,20 @@ module Impl = struct
           | None ->
             fail (Failure (Printf.sprintf "Failed to parse URI: %s" uri))
           end in
-        let transport = match transport with
+        let destination_protocol = match destination_protocol with
           | Some x -> x
           | None ->
-            let t = List.hd possible_transports in
-            Printf.fprintf stderr "Using transport: %s\n%!" (string_of_transport t);
+            let t = List.hd possible_protocols in
+            Printf.fprintf stderr "Using protocol: %s\n%!" (string_of_protocol t);
             t in
-        if not(List.mem transport possible_transports)
-        then fail(Failure(Printf.sprintf "this destination only supports transports: [ %s ]" (String.concat "; " (List.map string_of_transport possible_transports))))
+        if not(List.mem destination_protocol possible_protocols)
+        then fail(Failure(Printf.sprintf "this destination only supports protocols: [ %s ]" (String.concat "; " (List.map string_of_protocol possible_protocols))))
         else
-          lwt p = (match transport with
+          lwt p = (match destination_protocol with
               | Nbd -> stream_nbd
               | Human -> stream_human
               | Chunked -> stream_chunked
-              | Put -> stream_raw) common sock s prezeroed progress in
+              | NoProtocol -> stream_raw) common sock s prezeroed progress in
           match p with
           | Some p ->
             if progress then begin
@@ -660,59 +657,69 @@ let stream_cmd =
   let doc = "stream the contents of a vhd disk" in
   let man = [
     `S "DESCRIPTION";
-    `P "Read the contents of a virtual disk defined by the given filename and input format, and write it to the specified destination in the specified output format.";
+    `P "Read the contents of a virtual disk from a source using (format, protocol) and write it out to a destination using another (format, protocol). This command allows disks to be uploaded, downloaded and format-converted in a space-efficient manner.";
     `S "FORMATS";
-    `P "The input format and the output format are specified separately: this allows easy format conversion during the streaming process.";
-    `P "The \"raw\" format means no encoding: virtual disk data is read and/or written as-is. The other supported format is \"vhd\" where the virtual disk data is interleaved with vhd metadata. If the output format is \"vhd\" then by default, a fully-consolidated disk will be output. If the optional argument \"--relative-to\" is provided then the output will be a \"differencing disk\" containing only the differences between the reference disk and the disk to be streamed. This set of differences acts like an incremental backup: if one first restores the reference disk, and the re-applies the differences on top, the resulting disk data is identical to the original input disk.";
-    `S "DESTINATIONS";
-    `P "The following destinations are defined:";
+    `P "The input format and the output format are specified separately: this allows easy format conversion during the streaming process. The following formats are defined:";
+    `P "  raw: a single flat image";
+    `P "  vhd: the Virtual Hard Disk format used in XenServer";
+    `P "Note: the vhd format supports both self-contained single file images and also \"differencing disks\" containing only the differences between two disks. To input only the differences between two disks, specify the reference disk with the \"--relative-to\" argument.";
+    `S "PROTOCOLS";
+    `P "Protocols are the means by which a disk image in a particular format is written to a particular destination. The following protocols are supported:";
+    `P "  nbd:     the Network Block Device protocol";
+    `P "  chunked: the XenServer chunked disk upload protocol";
+    `P "  none:    unencoded write";
+    `P "  human:   human-readable description of the contents";
+    `P "The default behaviour is to auto-detect based on the destination.";
+    `S "SOURCES and DESTINATIONS";
+    `P "The source describes where the disk data comes from. The destination describes where the disk data is written to. The following are defined:";
+    `P "  stdin:";
+    `P "    read from standard input (input only)";
     `P "  stdout:";
-    `P "    to write to standard output";
-    `P "  file:///foo";
-    `P "    to connect to Unix domain socket /foo";
+    `P "    write to standard output (destination only)";
+    `P "  <filename>";
+    `P "    read from or write to the file <filename>";
+    `P "  unix://<path>";
+    `P "    connect to the Unix domain socket";
+    `P "  tcp://server:port/path";
+    `P "    to issue an HTTP PUT to server:port/path";
     `P "  tcp://host:port/";
     `P "    to connect to TCP port 'port' on host 'host'";
-    `P "  http://server:port/path";
-    `P "    to issue an HTTP PUT to server:port/path";
-    `S "TRANSPORTS";
-    `P "Four block transports are defined:";
-    `P "  nbd: the Network Block Device protocol";
-    `P "  chunked: the XenServer chunked disk upload protocol";
-    `P "  put: unencoded write";
-    `P "  human: human-readable description of the contents";
-    `P "The default behaviour is to auto-detect based on the destination.";
     `S "OTHER OPTIONS";
     `P "When transferring a raw format image onto a medium which is completely empty (i.e. full of zeroes) it is possible to optimise the transfer by avoiding writing empty blocks. The default behaviour is to write zeroes, which is always safe. If you know your media is empty then supply the '--prezeroed' argument.";
+    `P "When running interactively, the --progress argument will cause a progress bar and summary statistics to be printed.";
     `S "NOTES";
-    `P "Not all transports can be used with all destinations. For example the NBD transport needs the ability to read (responses) and write (requests); it therefore will not work with the stdout: destination";
+    `P "Not all protocols can be used with all destinations. For example the NBD protocol needs the ability to read (responses) and write (requests); it therefore will not work with the stdout: destination";
     `S "EXAMPLES";
-    `P "  $(tname) stream --input-format=vhd --output-format=raw --transport=chunked --destination=http://user:password@xenserver/import_raw_vdi?vdi=<uuid>";
+    `P "  $(tname) stream --source=foo.vhd --source-format=vhd --destination-format=raw --destination=http://user:password@xenserver/import_raw_vdi?vdi=<uuid>";
   ] @ help in
-  let input_format =
-    let doc = "Input format" in
-    Arg.(value & opt (some string) (Some "raw") & info [ "input-format" ] ~doc) in
-  let output_format =
-    let doc = "Output format" in
-    Arg.(value & opt (some string) (Some "raw") & info [ "output-format" ] ~doc) in
-  let filename =
-    let doc = Printf.sprintf "Path to the vhd to be streamed." in
-    Arg.(value & pos 0 (some file) None & info [] ~doc) in
+  let source_format =
+    let doc = "Source format" in
+    Arg.(value & opt string "raw" & info [ "source-format" ] ~doc) in
+  let destination_format =
+    let doc = "Destination format" in
+    Arg.(value & opt string "raw" & info [ "destination-format" ] ~doc) in
+  let source =
+    let doc = Printf.sprintf "The disk to be streamed" in
+    Arg.(value & opt string "stdin:" & info [ "source" ] ~doc) in
   let relative_to =
     let doc = "Output only differences from the given reference disk" in
     Arg.(value & opt (some file) None & info [ "relative-to" ] ~doc) in
   let destination =
     let doc = "Destination for streamed data." in
-    Arg.(value & opt (some string) (Some "stdout:") & info [ "destination" ] ~doc) in
-  let transport =
-    let doc = "Transport protocol for the streamed data." in
-    Arg.(value & opt (some string) None & info [ "transport" ] ~doc) in
+    Arg.(value & opt string "stdout:" & info [ "destination" ] ~doc) in
+  let source_protocol =
+    let doc = "Transport protocol for the source data." in
+    Arg.(value & opt (some string) None & info [ "source-protocol" ] ~doc) in
+  let destination_protocol =
+    let doc = "Transport protocol for the destination data." in
+    Arg.(value & opt (some string) None & info [ "destination-protocol" ] ~doc) in
   let prezeroed =
     let doc = "Assume the destination is completely empty." in
     Arg.(value & flag & info [ "prezeroed" ] ~doc) in
   let progress =
     let doc = "Display a progress bar." in
     Arg.(value & flag & info ["progress"] ~doc) in
-  Term.(ret(pure Impl.stream $ common_options_t $ filename $ relative_to $ input_format $ output_format $ destination $ transport $ prezeroed $ progress)),
+  Term.(ret(pure Impl.stream $ common_options_t $ source $ relative_to $ source_format $ destination_format $ destination $ source_protocol $ destination_protocol $ prezeroed $ progress)),
   Term.info "stream" ~sdocs:_common_options ~doc ~man
 
 
