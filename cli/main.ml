@@ -372,7 +372,6 @@ module Impl = struct
       | Element.Sectors data ->
         let t = { Chunked.offset = Int64.(mul sector 512L); data } in
         Chunked.marshal header t;
-Printf.fprintf stderr "writing header (offset = %Ld)\n%!" t.Chunked.offset;
         lwt () = really_write sock header in
         lwt () = really_write sock data in
         if progress then P.update p sector;
