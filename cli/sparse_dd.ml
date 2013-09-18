@@ -40,6 +40,7 @@ let buffer = ref []
 let debug_m = Mutex.create ()
 
 let debug (fmt: ('a , unit, string, unit) format4) =
+	let header = Cstruct.create Chunked.sizeof in
 	Mutex.execute debug_m
 		(fun () ->
 			Printf.kprintf
@@ -48,15 +49,12 @@ let debug (fmt: ('a , unit, string, unit) format4) =
 						| Buffer ->
 							buffer := s :: !buffer
 						| Human ->
-							Printf.printf "%s\n" s;
-							flush stdout
+							Printf.printf "%s\n%!" s
 						| Machine ->
-							(* FIXME *)
-							failwith "debug"
-(*
-							let x = { Chunk.start = 0L; data = s } in
-							Chunk.marshal Unix.stdout x
-*)
+							let data = Cstruct.create (String.length s) in
+							Cstruct.blit_from_string s 0 data 0 (String.length s);
+							Chunked.marshal header { Chunked.offset = 0L; data };
+							Printf.printf "%s%s%!" (Cstruct.to_string header) s
 				) fmt
 		)
 
