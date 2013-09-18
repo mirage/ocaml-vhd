@@ -74,11 +74,12 @@ module Progress_bar(T: Floatable) = struct
     width: int;
     line: string;
     mutable spin_index: int;
+    start_time: float;
   }
 
   let prefix_s = "[*] "
   let prefix = String.length prefix_s
-  let suffix_s = "  (   %)"
+  let suffix_s = "  (   % ETA   :  :  )"
   let suffix = String.length suffix_s
 
   let spinner = [| '-'; '\\'; '|'; '/' |]
@@ -88,12 +89,22 @@ module Progress_bar(T: Floatable) = struct
     String.blit prefix_s 0 line 0 prefix;
     String.blit suffix_s 0 line (width - suffix - 1) suffix;
     let spin_index = 0 in
-    { max_value; current_value; width; line; spin_index }
+    let start_time = Unix.gettimeofday () in
+    { max_value; current_value; width; line; spin_index; start_time }
 
   let percent t = int_of_float (T.(to_float t.current_value /. (to_float t.max_value) *. 100.))
 
   let bar_width t value =
     int_of_float (T.(to_float value /. (to_float t.max_value) *. (float_of_int (t.width - prefix - suffix))))
+
+  let eta t =
+    let time_so_far = Unix.gettimeofday () -. t.start_time in
+    let total_time = T.(to_float t.max_value /. (to_float t.current_value)) *. time_so_far in
+    let remaining = int_of_float (total_time -. time_so_far) in
+    let h = remaining / 3600 in
+    let m = (remaining mod 3600) / 60 in
+    let s = remaining mod 60 in
+    Printf.sprintf "%02d:%02d:%02d" h m s
 
   let print_bar t =
     let w = bar_width t t.current_value in
@@ -103,7 +114,10 @@ module Progress_bar(T: Floatable) = struct
       t.line.[prefix + i] <- (if i = w - 1 then '>' else '#')
     done;
     let percent = Printf.sprintf "%3d" (percent t) in
-    String.blit percent 0 t.line (t.width - 6) 3;
+    String.blit percent 0 t.line (t.width - 19) 3;
+    let eta = eta t in
+    String.blit eta 0 t.line (t.width - 10) (String.length eta);
+    
     Printf.printf "\r%s%!" t.line
 
   let update t new_value =
