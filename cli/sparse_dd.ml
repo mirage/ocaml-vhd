@@ -210,6 +210,15 @@ let _ =
 		| Some x -> vhd_of_device x in
 	debug "src_vhd = %s; dest_vhd = %s; base_vhd = %s" (Opt.default "None" src_vhd) (Opt.default "None" dest_vhd) (Opt.default "None" base_vhd);
 
+	let source, source_format = match src, src_vhd with
+	| _, Some vhd -> vhd, "vhd"
+	| device, None -> device, "raw" in
+	let destination, destination_format = match dest, dest_vhd with
+	| _, Some vhd -> vhd, "vhd"
+	| device, None -> device, "raw" in
+	let relative_to = base_vhd in
+
+
 	progress_cb 0.;
 (*	let stats = file_dd ~progress_cb ?size ?bat erase write_zeroes (Opt.unbox !src) (Opt.unbox !dest) in
 *)	let time = Unix.gettimeofday () -. start in
