@@ -218,8 +218,13 @@ let _ =
 	| device, None -> device, "raw" in
 	let relative_to = base_vhd in
 
+	let common = Common.make false false true in
 
 	progress_cb 0.;
-(*	let stats = file_dd ~progress_cb ?size ?bat erase write_zeroes (Opt.unbox !src) (Opt.unbox !dest) in
-*)	let time = Unix.gettimeofday () -. start in
+	begin match Impl.stream common source relative_to source_format destination_format destination (Some "none") None !prezeroed true with
+        | `Error(_, e) ->
+          error "streaming failed: %s" e
+        | `Ok () -> ()
+        end;
+	let time = Unix.gettimeofday () -. start in
 	debug "Time: %.2f seconds" time
