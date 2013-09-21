@@ -221,16 +221,10 @@ let _ =
 	let common = Common.make false false true in
 
 	progress_cb 0.;
-        let cmd = "/usr/sbin/vhd-tool" in
-        let args = [
-          "stream";
-          "--source"; source;
-          "--source-protocol"; "none";
-          "--source-format"; source_format;
-          "--destination"; destination;
-          "--destination-format"; destination_format;
-          "--destination-protocol"; "chunked";
-          "--direct"
-        ] @ (if !prezeroed then [ "--prezeroed" ] else []) in
-        Printf.fprintf stderr "%s\n%!" (String.concat "" args);
-        Unix.execv cmd (Array.of_list (cmd :: args))
+	begin match Impl.stream common source relative_to source_format destination_format destination (Some "none") None !prezeroed true with
+        | `Error(_, e) ->
+          error "streaming failed: %s" e
+        | `Ok () -> ()
+        end;
+	let time = Unix.gettimeofday () -. start in
+	debug "Time: %.2f seconds" time
