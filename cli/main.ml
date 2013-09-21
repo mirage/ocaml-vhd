@@ -97,6 +97,33 @@ let check_cmd =
   Term.(ret(pure Impl.check $ common_options_t $ filename)),
   Term.info "check" ~sdocs:_common_options ~doc ~man
 
+let source =
+  let doc = Printf.sprintf "The disk to be streamed" in
+  Arg.(value & opt string "stdin:" & info [ "source" ] ~doc)
+
+let source_protocol =
+  let doc = "Transport protocol for the source data." in
+  Arg.(value & opt (some string) None & info [ "source-protocol" ] ~doc)
+
+let destination =
+  let doc = "Destination for streamed data." in
+  Arg.(value & opt string "stdout:" & info [ "destination" ] ~doc)
+
+let destination_format =
+  let doc = "Destination format" in
+  Arg.(value & opt string "raw" & info [ "destination-format" ] ~doc)
+
+let serve_cmd =
+  let doc = "serve the contents of a disk" in
+  let man = [
+    `S "DESCRIPTION";
+    `P "Allow the contents of a disk to be read or written over a network protocol";
+    `P "EXAMPLES";
+    `P " vhd-tool serve --source fd:5 --source-protocol=chunked --destination file:///foo.raw --destination-format raw";
+  ] in
+  Term.(ret(pure Impl.serve $ common_options_t $ source $ source_protocol $ destination $ destination_format)),
+  Term.info "serve" ~sdocs:_common_options ~doc ~man
+
 let stream_cmd =
   let doc = "stream the contents of a vhd disk" in
   let man = [
@@ -141,21 +168,12 @@ let stream_cmd =
   let source_format =
     let doc = "Source format" in
     Arg.(value & opt string "raw" & info [ "source-format" ] ~doc) in
-  let destination_format =
-    let doc = "Destination format" in
-    Arg.(value & opt string "raw" & info [ "destination-format" ] ~doc) in
   let source =
     let doc = Printf.sprintf "The disk to be streamed" in
     Arg.(value & opt string "stdin:" & info [ "source" ] ~doc) in
   let relative_to =
     let doc = "Output only differences from the given reference disk" in
     Arg.(value & opt (some file) None & info [ "relative-to" ] ~doc) in
-  let destination =
-    let doc = "Destination for streamed data." in
-    Arg.(value & opt string "stdout:" & info [ "destination" ] ~doc) in
-  let source_protocol =
-    let doc = "Transport protocol for the source data." in
-    Arg.(value & opt (some string) None & info [ "source-protocol" ] ~doc) in
   let destination_protocol =
     let doc = "Transport protocol for the destination data." in
     Arg.(value & opt (some string) None & info [ "destination-protocol" ] ~doc) in
@@ -175,7 +193,7 @@ let default_cmd =
   Term.(ret (pure (fun _ -> `Help (`Pager, None)) $ common_options_t)),
   Term.info "vhd-tool" ~version:"1.0.0" ~sdocs:_common_options ~doc ~man
        
-let cmds = [info_cmd; get_cmd; create_cmd; check_cmd; stream_cmd]
+let cmds = [info_cmd; get_cmd; create_cmd; check_cmd; serve_cmd; stream_cmd]
 
 let _ =
   match Term.eval_choice default_cmd cmds with 

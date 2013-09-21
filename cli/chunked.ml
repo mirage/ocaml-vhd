@@ -28,3 +28,9 @@ type t = {
 let marshal (buf: Cstruct.t) t =
   set_t_offset buf t.offset;
   set_t_len buf (Int32.of_int (Cstruct.len t.data))
+
+let is_last_chunk (buf: Cstruct.t) =
+  get_t_offset buf = 0L && (get_t_len buf = 0l)
+
+let get_offset = get_t_offset
+let get_len = get_t_len

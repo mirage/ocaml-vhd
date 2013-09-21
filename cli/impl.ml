@@ -357,6 +357,17 @@ let really_write fd buffer =
   then fail End_of_file
   else return ()
 
+let really_read fd buf' = 
+  let ofs = buf'.Cstruct.off in
+  let len = buf'.Cstruct.len in
+  let buf = buf'.Cstruct.buffer in
+  let rec rread fd buf ofs len = 
+    lwt n = Lwt_bytes.read fd buf ofs len in
+    if n = 0 then raise End_of_file;
+    if n < len then rread fd buf (ofs + n) (len - n) else return () in
+  lwt () = rread fd buf ofs len in
+  return ()
+
 let stream_chunked common sock s prezeroed progress =
   (* Work to do is: non-zero data to write + empty sectors if the
      target is not prezeroed *)
@@ -427,6 +438,40 @@ let protocol_of_string = function
 let string_of_protocol = function
   | Nbd -> "nbd" | Chunked -> "chunked" | Human -> "human" | NoProtocol -> "none"
 
+type endpoint =
+  | Stdout
+  | File_descr of Lwt_unix.file_descr
+  | Sockaddr of Lwt_unix.sockaddr
+  | File of string
+  | Http of Uri.t
+  | Https of Uri.t
+
+let endpoint_of_string = function
+  | "stdout:" -> return Stdout
+  | uri ->
+    let uri' = Uri.of_string uri in
+    begin match Uri.scheme uri' with
+    | Some "fd" ->
+      return (File_descr (Uri.path uri' |> int_of_string |> file_descr_of_int |> Lwt_unix.of_unix_file_descr))
+    | Some "tcp" ->
+      let host = match Uri.host uri' with None -> failwith "Please supply a host in the URI" | Some host -> host in
+      let port = match Uri.port uri' with None -> failwith "Please supply a port in the URI" | Some port -> port in
+      lwt host_entry = Lwt_unix.gethostbyname host in
+      return (Sockaddr(Lwt_unix.ADDR_INET(host_entry.Lwt_unix.h_addr_list.(0), port)))
+    | Some "unix" ->
+      return (Sockaddr(Lwt_unix.ADDR_UNIX(Uri.path uri')))
+    | Some "file" ->
+      return (File(Uri.path uri'))
+    | Some "http" ->
+      return (Http uri')
+    | Some "https" ->
+      return (Https uri')
+    | Some x ->
+      fail (Failure (Printf.sprintf "Unknown URI scheme: %s" x))
+    | None ->
+      fail (Failure (Printf.sprintf "Failed to parse URI: %s" uri))
+    end
+
 let stream common (source: string) (relative_to: string option) (source_format: string) (destination_format: string) (destination: string) (source_protocol: string option) (destination_protocol: string option) prezeroed progress =
   try
     let source_protocol = require "source-protocol" source_protocol in
@@ -437,7 +482,7 @@ let stream common (source: string) (relative_to: string option) (source_format: 
       | Some x -> Some (protocol_of_string x) in
     if not (List.mem source_format supported_formats)
     then failwith (Printf.sprintf "%s is not a supported format" source_format);
-    if not (List.mem source_format supported_formats)
+    if not (List.mem destination_format supported_formats)
     then failwith (Printf.sprintf "%s is not a supported format" destination_format);
 
     let thread =
@@ -457,80 +502,68 @@ let stream common (source: string) (relative_to: string option) (source_format: 
           lwt t = Raw_IO.openfile source in
           Raw_input.raw t
         | _, _ -> assert false in
-      lwt (sock, possible_protocols) = match destination with
-      | "stdout:" ->
-        return (Lwt_unix.of_unix_file_descr Unix.stdout, [ NoProtocol; Chunked; Human ])
-      | uri ->
-        let uri' = Uri.of_string uri in
-        begin match Uri.scheme uri' with
-        | Some "fd" ->
-          let fd = Uri.path uri' |> int_of_string |> file_descr_of_int |> Lwt_unix.of_unix_file_descr in
-          return (fd, [ Nbd; NoProtocol; Chunked; Human ])
-        | Some "tcp" ->
-          let host = match Uri.host uri' with None -> failwith "Please supply a host in the URI" | Some host -> host in
-          let port = match Uri.port uri' with None -> failwith "Please supply a port in the URI" | Some port -> port in
-          let sock = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
-          lwt host_entry = Lwt_unix.gethostbyname host in
-          let sockaddr = Lwt_unix.ADDR_INET(host_entry.Lwt_unix.h_addr_list.(0), port) in
-          lwt () = Lwt_unix.connect sock sockaddr in
-          return (sock, [ Nbd; NoProtocol; Chunked; Human ])
-        | Some "file" ->
-          let path = Uri.path uri' in
-          let sock = Lwt_unix.socket Unix.PF_UNIX Unix.SOCK_STREAM 0 in
-          let sockaddr = Lwt_unix.ADDR_UNIX(path) in
-          lwt () = Lwt_unix.connect sock sockaddr in
-          return (sock, [ Nbd; NoProtocol; Chunked; Human ])
-        | Some "http"
-        | Some "https" ->
-          (* TODO: https is not currently implemented *)
-          let port = match Uri.port uri' with None -> 80 | Some port -> port in
-          let host = match Uri.host uri' with None -> failwith "Please supply a host in the URI" | Some host -> host in
-          lwt host_entry = Lwt_unix.gethostbyname host in
-          let sockaddr = Lwt_unix.ADDR_INET(host_entry.Lwt_unix.h_addr_list.(0), port) in
-          let sock = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
-          lwt () = Lwt_unix.connect sock sockaddr in
+      lwt endpoint = endpoint_of_string destination in
 
-          let open Cohttp in
-          let ic = Lwt_io.of_fd ~mode:Lwt_io.input sock in
-          let oc = Lwt_io.of_fd ~mode:Lwt_io.output sock in
+      let socket sockaddr =
+        let family = match sockaddr with
+        | Lwt_unix.ADDR_INET(_, _) -> Unix.PF_INET
+        | Lwt_unix.ADDR_UNIX _ -> Unix.PF_UNIX
+        | _ -> failwith "unsupported sockaddr type" in
+        Lwt_unix.socket family Unix.SOCK_STREAM 0 in
+
+      lwt (sock, possible_protocols) = match endpoint with
+      | File_descr fd ->
+        return (fd, [ Nbd; NoProtocol; Chunked; Human ])
+      | Sockaddr sockaddr ->
+        let sock = socket sockaddr in
+        lwt () = Lwt_unix.connect sock sockaddr in
+        return (sock, [ Nbd; NoProtocol; Chunked; Human ])
+      | Http uri'
+      | Https uri' ->
+        (* TODO: https is not currently implemented *)
+        let port = match Uri.port uri' with None -> 80 | Some port -> port in
+        let host = match Uri.host uri' with None -> failwith "Please supply a host in the URI" | Some host -> host in
+        lwt host_entry = Lwt_unix.gethostbyname host in
+        let sockaddr = Lwt_unix.ADDR_INET(host_entry.Lwt_unix.h_addr_list.(0), port) in
+        let sock = socket sockaddr in
+        lwt () = Lwt_unix.connect sock sockaddr in
+
+        let open Cohttp in
+        let ic = Lwt_io.of_fd ~mode:Lwt_io.input sock in
+        let oc = Lwt_io.of_fd ~mode:Lwt_io.output sock in
             
-          let module Request = Request.Make(Cohttp_lwt_unix_io) in
-          let module Response = Response.Make(Cohttp_lwt_unix_io) in
-          let headers = Header.init () in
-          let k, v = Cookie.Cookie_hdr.serialize [ "chunked", "true" ] in
-          let headers = Header.add headers k v in
-          let headers = match Uri.userinfo uri' with
-            | None -> headers
-            | Some x ->
-              begin match Re_str.bounded_split_delim (Re_str.regexp_string ":") x 2 with
-              | [ user; pass ] ->
-                let b = Cohttp.Auth.(to_string (Basic (user, pass))) in
-                Header.add headers "authorization" b
-              | _ ->
-                Printf.fprintf stderr "I don't know how to handle authentication for this URI.\n Try scheme://user:password@host/path\n";
-                exit 1
-              end in
-          let request = Cohttp.Request.make ~meth:`PUT ~version:`HTTP_1_1 ~headers uri' in
-          lwt () = Request.write (fun t _ -> return ()) request oc in
-          begin match_lwt Response.read ic with
-          | None -> fail (Failure "Unable to parse HTTP response from server")
+        let module Request = Request.Make(Cohttp_lwt_unix_io) in
+        let module Response = Response.Make(Cohttp_lwt_unix_io) in
+        let headers = Header.init () in
+        let k, v = Cookie.Cookie_hdr.serialize [ "chunked", "true" ] in
+        let headers = Header.add headers k v in
+        let headers = match Uri.userinfo uri' with
+          | None -> headers
           | Some x ->
-            let code = Code.code_of_status (Cohttp.Response.status x) in
-            if Code.is_success code then begin
-              let advertises_nbd =
-                let headers = Header.to_list (Cohttp.Response.headers x) in
-                let headers = List.map (fun (x, y) -> String.lowercase x, String.lowercase y) headers in
-                let te = "transfer-encoding" in
-                List.mem_assoc te headers && (List.assoc te headers = "nbd") in
-              if advertises_nbd
-              then return(sock, [ Nbd ])
-              else return(sock, [ Chunked; NoProtocol ])
-            end else fail (Failure (Code.reason_phrase_of_code code))
-          end
+            begin match Re_str.bounded_split_delim (Re_str.regexp_string ":") x 2 with
+            | [ user; pass ] ->
+              let b = Cohttp.Auth.(to_string (Basic (user, pass))) in
+              Header.add headers "authorization" b
+            | _ ->
+              Printf.fprintf stderr "I don't know how to handle authentication for this URI.\n Try scheme://user:password@host/path\n";
+              exit 1
+            end in
+        let request = Cohttp.Request.make ~meth:`PUT ~version:`HTTP_1_1 ~headers uri' in
+        lwt () = Request.write (fun t _ -> return ()) request oc in
+        begin match_lwt Response.read ic with
+        | None -> fail (Failure "Unable to parse HTTP response from server")
         | Some x ->
-          fail (Failure (Printf.sprintf "Unknown URI scheme: %s" x))
-        | None ->
-          fail (Failure (Printf.sprintf "Failed to parse URI: %s" uri))
+          let code = Code.code_of_status (Cohttp.Response.status x) in
+          if Code.is_success code then begin
+            let advertises_nbd =
+              let headers = Header.to_list (Cohttp.Response.headers x) in
+              let headers = List.map (fun (x, y) -> String.lowercase x, String.lowercase y) headers in
+              let te = "transfer-encoding" in
+              List.mem_assoc te headers && (List.assoc te headers = "nbd") in
+            if advertises_nbd
+            then return(sock, [ Nbd ])
+            else return(sock, [ Chunked; NoProtocol ])
+          end else fail (Failure (Code.reason_phrase_of_code code))
         end in
       let destination_protocol = match destination_protocol with
         | Some x -> x
@@ -575,3 +608,53 @@ let stream common (source: string) (relative_to: string option) (source_format: 
   with Failure x ->
     `Error(true, x)
 
+let serve_chunked_to_raw source dest =
+  let header = Cstruct.create Chunked.sizeof in
+  let twomib = 2 * 1024 * 1024 in
+  let buffer = Vhd_lwt.Memory.alloc twomib in
+  let rec loop () =
+    lwt () = really_read source header in
+    if Chunked.is_last_chunk header then begin
+      Printf.fprintf stderr "Received last chunk.\n%!";
+      return ()
+    end else begin
+      let rec block offset remaining =
+        let this = Int32.(to_int (min (of_int twomib) remaining)) in
+        let buf = if this < twomib then Cstruct.sub buffer 0 this else buffer in
+        really_read source buf;
+        lwt () = Vhd_lwt.Fd.really_write dest offset buf in
+        let offset = Int64.(add offset (of_int this)) in
+        let remaining = Int32.(sub remaining (of_int this)) in
+        if remaining > 0l
+        then block offset remaining
+        else return () in
+      lwt () = block (Chunked.get_offset header) (Chunked.get_len header) in
+      loop ()
+    end in
+  loop ()
+
+let serve common_options source source_protocol destination destination_format =
+  try
+    let source_protocol = protocol_of_string (require "source-protocol" source_protocol) in
+
+    let supported_formats = [ "raw" ] in
+    if not (List.mem destination_format supported_formats)
+    then failwith (Printf.sprintf "%s is not a supported format" destination_format);
+    let supported_protocols = [ Chunked ] in
+    if not (List.mem source_protocol supported_protocols)
+    then failwith (Printf.sprintf "%s is not a supported source protocol" (string_of_protocol source_protocol));
+
+    let thread =
+      lwt destination_endpoint = endpoint_of_string destination in
+      lwt source_endpoint = endpoint_of_string source in
+      lwt source_sock = match source_endpoint with
+        | File_descr fd -> return fd
+        | _ -> failwith (Printf.sprintf "Not implemented: serving from source %s" source) in
+      lwt destination_fd = match destination_endpoint with
+        | File path -> Vhd_lwt.Fd.openfile path
+        | _ -> failwith (Printf.sprintf "Not implemented: writing to destination %s" destination) in
+      serve_chunked_to_raw source_sock destination_fd in
+    Lwt_main.run thread;
+    `Ok ()
+  with Failure x ->
+  `Error(true, x)
