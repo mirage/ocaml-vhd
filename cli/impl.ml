@@ -623,7 +623,7 @@ let serve_chunked_to_raw source dest =
       let rec block offset remaining =
         let this = Int32.(to_int (min (of_int twomib) remaining)) in
         let buf = if this < twomib then Cstruct.sub buffer 0 this else buffer in
-        really_read source buf;
+        lwt () = really_read source buf in
         lwt () = Vhd_lwt.Fd.really_write dest offset buf in
         let offset = Int64.(add offset (of_int this)) in
         let remaining = Int32.(sub remaining (of_int this)) in
