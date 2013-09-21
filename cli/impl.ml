@@ -635,7 +635,7 @@ let serve_chunked_to_raw source dest =
     end in
   loop ()
 
-let serve common_options source source_protocol destination destination_format =
+let serve common_options source source_fd source_protocol destination destination_format =
   try
     Vhd_lwt.use_odirect := common_options.Common.unbuffered;
 
@@ -650,7 +650,9 @@ let serve common_options source source_protocol destination destination_format =
 
     let thread =
       lwt destination_endpoint = endpoint_of_string destination in
-      lwt source_endpoint = endpoint_of_string source in
+      lwt source_endpoint = match source_fd with
+        | None -> endpoint_of_string source
+        | Some fd -> return (File_descr (Lwt_unix.of_unix_file_descr (file_descr_of_int fd))) in
       lwt source_sock = match source_endpoint with
         | File_descr fd -> return fd
         | Sockaddr s ->

@@ -101,8 +101,12 @@ let check_cmd =
   Term.info "check" ~sdocs:_common_options ~doc ~man
 
 let source =
-  let doc = Printf.sprintf "The disk to be streamed" in
+  let doc = Printf.sprintf "The source disk" in
   Arg.(value & opt string "stdin:" & info [ "source" ] ~doc)
+
+let source_fd =
+  let doc = Printf.sprintf "An open-file descriptor pointing to the source disk" in
+  Arg.(value & opt (some int) None & info [ "source-fd" ] ~doc)
 
 let source_protocol =
   let doc = "Transport protocol for the source data." in
@@ -124,7 +128,7 @@ let serve_cmd =
     `P "EXAMPLES";
     `P " vhd-tool serve --source fd:5 --source-protocol=chunked --destination file:///foo.raw --destination-format raw";
   ] in
-  Term.(ret(pure Impl.serve $ common_options_t $ source $ source_protocol $ destination $ destination_format)),
+  Term.(ret(pure Impl.serve $ common_options_t $ source $ source_fd $ source_protocol $ destination $ destination_format)),
   Term.info "serve" ~sdocs:_common_options ~doc ~man
 
 let stream_cmd =
