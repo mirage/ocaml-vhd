@@ -12,6 +12,11 @@
  * GNU Lesser General Public License for more details.
  *)
 
+(* Keep this in sync with OCaml's Unix.file_descr *)
+let file_descr_of_int (x: int) : Unix.file_descr = Obj.magic x
+
+let ( |> ) a b = b a
+
 let parse_size x =
   let kib = 1024L in
   let mib = Int64.mul kib kib in
@@ -458,6 +463,9 @@ let stream common (source: string) (relative_to: string option) (source_format: 
       | uri ->
         let uri' = Uri.of_string uri in
         begin match Uri.scheme uri' with
+        | Some "fd" ->
+          let fd = Uri.path uri' |> int_of_string |> file_descr_of_int |> Lwt_unix.of_unix_file_descr in
+          return (fd, [ Nbd; NoProtocol; Chunked; Human ])
         | Some "tcp" ->
           let host = match Uri.host uri' with None -> failwith "Please supply a host in the URI" | Some host -> host in
           let port = match Uri.port uri' with None -> failwith "Please supply a port in the URI" | Some port -> port in

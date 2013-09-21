@@ -120,6 +120,8 @@ let stream_cmd =
     `P "    read from standard input (input only)";
     `P "  stdout:";
     `P "    write to standard output (destination only)";
+    `P "  fd:5";
+    `P "    read and write from file descriptor 5";
     `P "  <filename>";
     `P "    read from or write to the file <filename>";
     `P "  unix://<path>";
