@@ -1486,9 +1486,8 @@ module Make = functor(File: S.IO) -> struct
     expand_empty_elements (return s.elements) >>= fun elements ->
     return { elements; size }
 
-  let rec expand_copy_elements s =
+  let rec expand_copy_elements buffer s =
     let open Int64 in
-    let buffer = alloc twomib_bytes in
     s >>= function
     | End -> return End
     | Cons(Element.Copy(h, sector_start, sector_len), next) ->
@@ -1498,15 +1497,16 @@ module Make = functor(File: S.IO) -> struct
           really_read_into h (sector_start ** 512L) data >>= fun data ->
           let sector_start = sector_start ++ (of_int this) in
           let sector_len = sector_len -- (of_int this) in
-          let next () = if sector_len > 0L then copy sector_start sector_len else expand_copy_elements (next ()) in
+          let next () = if sector_len > 0L then copy sector_start sector_len else expand_copy_elements buffer (next ()) in
           return (Cons(Sectors data, next)) in
         copy sector_start sector_len
-    | Cons(x, next) -> return (Cons(x, fun () -> expand_copy_elements (next ())))
+    | Cons(x, next) -> return (Cons(x, fun () -> expand_copy_elements buffer (next ())))
 
   let expand_copy s =
     let open Int64 in
     let size = { s.size with copy = 0L; metadata = s.size.metadata ++ s.size.copy } in
-    expand_copy_elements (return s.elements) >>= fun elements ->
+    let buffer = alloc twomib_bytes in
+    expand_copy_elements buffer (return s.elements) >>= fun elements ->
     return { elements; size }
 
   module Vhd_input = struct
