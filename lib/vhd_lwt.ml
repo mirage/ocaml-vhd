@@ -74,8 +74,10 @@ module Fd = struct
 
   let close t = Lwt_unix.close t.fd
 
-  let really_read { fd; filename; lock } offset (* in file *) n =
-    let buf = Memory.alloc_bigarray n in
+  let really_read_into { fd; filename; lock } offset (* in file *) buf =
+    assert (buf.Cstruct.off = 0);
+    let n = buf.Cstruct.len in
+    let buf = buf.Cstruct.buffer in
     let rec rread acc fd buf ofs len = 
       lwt n = Lwt_bytes.read fd buf ofs len in
       let len = len - n in
@@ -107,6 +109,10 @@ module Fd = struct
           Printf.fprintf stderr "really_read offset = %Ld len = %d: End_of_file\n%!" offset n;
           fail e 
       )
+
+  let really_read fd offset n =
+    let buf = Memory.alloc n in
+    really_read_into fd offset buf
 
   let really_write { fd; filename; lock } offset (* in file *) buffer =
     let ofs = buffer.Cstruct.off in

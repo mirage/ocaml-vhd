@@ -35,6 +35,7 @@ module type RW = sig
 
   val really_read: handle -> int64 -> int -> Cstruct.t t
   val really_write: handle -> int64 -> Cstruct.t -> unit t
+  val really_read_into: handle -> int64 -> Cstruct.t -> Cstruct.t t
 end
 
 module type IO = sig

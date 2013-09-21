@@ -1488,12 +1488,14 @@ module Make = functor(File: S.IO) -> struct
 
   let rec expand_copy_elements s =
     let open Int64 in
+    let buffer = alloc twomib_bytes in
     s >>= function
     | End -> return End
     | Cons(Element.Copy(h, sector_start, sector_len), next) ->
         let rec copy sector_start sector_len =
           let this = to_int (min sector_len (of_int twomib_sectors)) in
-          really_read h (sector_start ** 512L) (this * 512) >>= fun data ->
+          let data = Cstruct.sub buffer 0 (this * 512) in
+          really_read_into h (sector_start ** 512L) data >>= fun data ->
           let sector_start = sector_start ++ (of_int this) in
           let sector_len = sector_len -- (of_int this) in
           let next () = if sector_len > 0L then copy sector_start sector_len else expand_copy_elements (next ()) in
