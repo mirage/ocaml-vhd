@@ -472,6 +472,13 @@ let endpoint_of_string = function
       fail (Failure (Printf.sprintf "Failed to parse URI: %s" uri))
     end
 
+let socket sockaddr =
+  let family = match sockaddr with
+  | Lwt_unix.ADDR_INET(_, _) -> Unix.PF_INET
+  | Lwt_unix.ADDR_UNIX _ -> Unix.PF_UNIX
+  | _ -> failwith "unsupported sockaddr type" in
+  Lwt_unix.socket family Unix.SOCK_STREAM 0
+
 let stream common (source: string) (relative_to: string option) (source_format: string) (destination_format: string) (destination: string) (source_protocol: string option) (destination_protocol: string option) prezeroed progress =
   try
     let source_protocol = require "source-protocol" source_protocol in
@@ -503,13 +510,6 @@ let stream common (source: string) (relative_to: string option) (source_format: 
           Raw_input.raw t
         | _, _ -> assert false in
       lwt endpoint = endpoint_of_string destination in
-
-      let socket sockaddr =
-        let family = match sockaddr with
-        | Lwt_unix.ADDR_INET(_, _) -> Unix.PF_INET
-        | Lwt_unix.ADDR_UNIX _ -> Unix.PF_UNIX
-        | _ -> failwith "unsupported sockaddr type" in
-        Lwt_unix.socket family Unix.SOCK_STREAM 0 in
 
       lwt (sock, possible_protocols) = match endpoint with
       | File_descr fd ->
@@ -649,6 +649,12 @@ let serve common_options source source_protocol destination destination_format =
       lwt source_endpoint = endpoint_of_string source in
       lwt source_sock = match source_endpoint with
         | File_descr fd -> return fd
+        | Sockaddr s ->
+          let sock = socket s in
+          Lwt_unix.bind sock s;
+          Lwt_unix.listen sock 1;
+          lwt (fd, _) = Lwt_unix.accept sock in
+          return fd
         | _ -> failwith (Printf.sprintf "Not implemented: serving from source %s" source) in
       lwt destination_fd = match destination_endpoint with
         | File path -> Vhd_lwt.Fd.openfile path
