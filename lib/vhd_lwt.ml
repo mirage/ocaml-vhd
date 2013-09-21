@@ -61,6 +61,11 @@ module Fd = struct
     let lock = Lwt_mutex.create () in
     return { fd; filename; lock }
 
+  external fsync' : Unix.file_descr -> unit = "stub_fsync"
+  let fsync { fd = fd } =
+    let fd' = Lwt_unix.unix_file_descr fd in
+    fsync' fd'
+
   let size_of_file t =
     lwt s = Lwt_unix.LargeFile.fstat t.fd in
     return s.Lwt_unix.LargeFile.st_size

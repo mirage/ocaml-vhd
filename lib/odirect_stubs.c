@@ -19,6 +19,7 @@
 
 #include <fcntl.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <caml/alloc.h>
 #include <caml/memory.h>
@@ -29,6 +30,7 @@
 
 /* ocaml/ocaml/unixsupport.c */
 extern void uerror(char *cmdname, value cmdarg);
+#define Nothing ((value) 0)
 
 CAMLprim value stub_openfile_direct(value filename, value mode){
   CAMLparam2(filename, mode);
@@ -46,6 +48,14 @@ CAMLprim value stub_openfile_direct(value filename, value mode){
   if (fd == -1) uerror("open", filename);
 
   CAMLreturn(Val_int(fd));
+}
+
+CAMLprim value stub_fsync (value fd)
+{
+  CAMLparam1(fd);
+  int c_fd = Int_val(fd);
+  if (fsync(c_fd) != 0) uerror("fsync", Nothing);
+  CAMLreturn(Val_unit);
 }
 
 /* From mirage:
