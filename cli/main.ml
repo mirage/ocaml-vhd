@@ -38,7 +38,10 @@ let common_options_t =
     let doc = "Give verbose output." in
     let verbose = true, Arg.info ["v"; "verbose"] ~docs ~doc in 
     Arg.(last & vflag_all [false] [verbose]) in 
-  Term.(pure Common.make $ debug $ verb)
+  let unbuffered =
+    let doc = "Use unbuffered I/O." in
+    Arg.(value & flag & info ["unbuffered"; "direct"] ~docs ~doc) in
+  Term.(pure Common.make $ debug $ verb $ unbuffered)
 
 let get_cmd =
   let doc = "query vhd metadata" in
