@@ -15,6 +15,9 @@
 open Common
 open Cmdliner
 open Lwt
+
+module Impl = Vhd.Make(Vhd_lwt)
+open Impl
 open Vhd
 open Vhd_lwt
 
@@ -434,7 +437,7 @@ let serve_chunked_to_raw source dest =
         let this = Int32.(to_int (min (of_int twomib) remaining)) in
         let buf = if this < twomib then Cstruct.sub buffer 0 this else buffer in
         lwt () = really_read source buf in
-        lwt () = Vhd_lwt.Fd.really_write dest offset buf in
+        lwt () = Fd.really_write dest offset buf in
         let offset = Int64.(add offset (of_int this)) in
         let remaining = Int32.(sub remaining (of_int this)) in
         if remaining > 0l
@@ -473,7 +476,7 @@ let serve common_options source source_fd source_protocol destination destinatio
           return fd
         | _ -> failwith (Printf.sprintf "Not implemented: serving from source %s" source) in
       lwt destination_fd = match destination_endpoint with
-        | File path -> Vhd_lwt.Fd.openfile path
+        | File path -> Fd.openfile path
         | _ -> failwith (Printf.sprintf "Not implemented: writing to destination %s" destination) in
       serve_chunked_to_raw source_sock destination_fd in
     Lwt_main.run thread;

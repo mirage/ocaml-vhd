@@ -13,6 +13,9 @@
  *)
 open OUnit
 open Lwt
+
+module Impl = Vhd.Make(Vhd_lwt)
+open Impl
 open Vhd
 open Vhd_lwt
 
@@ -136,9 +139,9 @@ let descr_of_program = function
 let string_of_program p = String.concat "_" (List.map string_of_operation p)
 
 type state = {
-  to_close: IO.fd Vhd.t list;
+  to_close: fd Vhd.t list;
   to_unlink: string list;
-  child: IO.fd Vhd.t option;
+  child: fd Vhd.t option;
   contents: (int64 * Cstruct.t) list;
 }
 
@@ -215,7 +218,7 @@ let check_raw_stream_contents ~allow_empty t expected =
     | Element.Copy(handle, offset', len) ->
       (* all sectors in [offset, offset + len - 1] should be in the contents list *)
       (* XXX: this won't cope with very large copy requests *)
-      lwt data = Vhd_lwt.Fd.really_read handle (Int64.(mul offset' 512L)) (Int64.to_int len * 512) in
+      lwt data = Fd.really_read handle (Int64.(mul offset' 512L)) (Int64.to_int len * 512) in
       let rec check i =
         if i >= (Int64.to_int len) then ()
         else

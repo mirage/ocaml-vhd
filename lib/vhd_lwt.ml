@@ -146,6 +146,4 @@ module IO = struct
   include Memory
 end
 
-module Impl = Vhd.Make(IO)
-include Impl
-include Fd 
+include IO
