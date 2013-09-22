@@ -205,7 +205,10 @@ let _ =
 
 	debug "src = %s; dest = %s; base = %s; size = %Ld" src dest (Opt.default "None" base) size;
 	let src_vhd = vhd_of_device src in
+(* TODO: need to pause and unpause the tapdisk to make use of this
 	let dest_vhd = vhd_of_device dest in
+*)
+	let dest_vhd = None in
 	let base_vhd = match base with
 		| None -> None
 		| Some x -> vhd_of_device x in
