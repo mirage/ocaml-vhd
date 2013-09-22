@@ -84,35 +84,34 @@ module Fd = struct
     let buf = Memory.alloc n in
     really_read_into fd offset buf
 
-  let really_write { fd; filename; lock } offset (* in file *) buffer =
-    let ofs = buffer.Cstruct.off in
-    let len = buffer.Cstruct.len in
-    let buf = buffer.Cstruct.buffer in
-    (* All reads and writes should be sector-aligned *)
-    assert(Int64.(mul(div offset 512L) 512L) = offset);
-    assert(len / 512 * 512 = len);
-
-    let rec rwrite acc fd buf ofs len =
-      lwt n = Lwt_bytes.write fd buf ofs len in
-      let len = len - n in
+  let really_write { fd; filename; lock } offset (* in file *) buf =
+    let rec rwrite acc fd buf =
+      lwt n = Lwt_cstruct.write fd buf in
+      let buf = Cstruct.shift buf n in
       let acc = acc + n in
-      if len = 0 || n = 0
+      if Cstruct.len buf = 0 || n = 0
       then return acc
-      else rwrite acc fd buf (ofs + n) len in
+      else rwrite acc fd buf in
+
+    (* All reads and writes should be sector-aligned *)
+    assert_sector_aligned offset;
+    assert_sector_aligned (Int64.of_int buf.Cstruct.off);
+    assert_sector_aligned (Int64.of_int (Cstruct.len buf));
+
     Lwt_mutex.with_lock lock
       (fun () ->
         try_lwt
           lwt _ = Lwt_unix.LargeFile.lseek fd offset Unix.SEEK_SET in
-          lwt written = rwrite 0 fd buf ofs len in
-          if written = 0 && len <> 0
+          lwt written = rwrite 0 fd buf in
+          if written = 0 && Cstruct.len buf <> 0
           then fail End_of_file
           else return ()
         with
         | Unix.Unix_error(Unix.EINVAL, "write", "") as e ->
-          Printf.fprintf stderr "really_write offset = %Ld len = %d: EINVAL (alignment?)\n%!" offset len;
+          Printf.fprintf stderr "really_write offset = %Ld len = %d: EINVAL (alignment?)\n%!" offset (Cstruct.len buf);
           fail e
         | End_of_file as e ->
-          Printf.fprintf stderr "really_write offset = %Ld len = %d: End_of_file\n%!" offset (Cstruct.len buffer);
+          Printf.fprintf stderr "really_write offset = %Ld len = %d: End_of_file\n%!" offset (Cstruct.len buf);
           fail e 
       )
 end
