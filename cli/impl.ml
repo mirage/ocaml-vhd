@@ -613,7 +613,7 @@ let stream common (source: string) (relative_to: string option) (source_format: 
 let serve_chunked_to_raw source dest =
   let header = Cstruct.create Chunked.sizeof in
   let twomib = 2 * 1024 * 1024 in
-  let buffer = Vhd_lwt.Memory.alloc twomib in
+  let buffer = Memory.alloc twomib in
   let rec loop () =
     lwt () = really_read source header in
     if Chunked.is_last_chunk header then begin

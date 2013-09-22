@@ -87,7 +87,7 @@ let positions = [
 ]
 
 let fill_sector_with pattern =
-  let b = Vhd_lwt.Memory.alloc 512 in
+  let b = Memory.alloc 512 in
   for i = 0 to 511 do
     Cstruct.set_char b i (pattern.[i mod (String.length pattern)])
   done;
@@ -197,7 +197,7 @@ let rec check_written_sectors t expected = match expected with
       return () in
     check_written_sectors t xs
 
-let empty_sector = Vhd_lwt.Memory.alloc 512
+let empty_sector = Memory.alloc 512
 
 (* Verify the raw data stream from [t] contains exactly [expected] and no more.
    If ~allow_empty then we accept sectors which are present (in the bitmap) but
