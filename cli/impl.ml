@@ -30,9 +30,9 @@ let get common filename key =
     let filename = require "filename" filename in
     let key = require "key" key in
     let t =
-      lwt t = Vhd_IO.openfile filename in
+      Vhd_IO.openfile filename >>= fun t ->
       let result = Vhd.Field.get t key in
-      lwt () = Vhd_IO.close t in
+      Vhd_IO.close t >>= fun () ->
       return result in
     match Lwt_main.run t with
     | Some v ->
@@ -49,7 +49,7 @@ let info common filename =
   try
     let filename = require "filename" filename in
     let t =
-      lwt t = Vhd_IO.openfile filename in
+      Vhd_IO.openfile filename >>= fun t ->
       let all = List.map (fun f ->
         match Vhd.Field.get t f with
         | Some v -> [ f; v ]
@@ -70,15 +70,15 @@ let create common filename size parent =
     | None, Some size ->
       let size = parse_size size in
       let t =
-        lwt vhd = Vhd_IO.create_dynamic ~filename ~size () in
+        Vhd_IO.create_dynamic ~filename ~size () >>= fun vhd ->
         Vhd_IO.close vhd in
       Lwt_main.run t
     | Some parent, None ->
       let t =
-        lwt parent = Vhd_IO.openfile parent in
-        lwt vhd = Vhd_IO.create_difference ~filename ~parent () in
-        lwt () = Vhd_IO.close parent in
-        lwt () = Vhd_IO.close vhd in
+        Vhd_IO.openfile parent >>= fun parent ->
+        Vhd_IO.create_difference ~filename ~parent () >>= fun vhd ->
+        Vhd_IO.close parent >>= fun () ->
+        Vhd_IO.close vhd >>= fun () ->
         return () in
       Lwt_main.run t
     | Some parent, Some size ->
@@ -92,7 +92,7 @@ let check common filename =
   try
     let filename = require "filename" filename in
     let t =
-      lwt vhd = Vhd_IO.openfile filename in
+      Vhd_IO.openfile filename >>= fun vhd ->
       Vhd.check_overlapping_blocks vhd;
       return () in
     Lwt_main.run t;
@@ -110,46 +110,46 @@ let stream_human common _ s _ _ =
   Printf.printf "# size of empty space:        %Ld\n" s.size.empty;
   Printf.printf "# size of referenced blocks:  %Ld\n" s.size.copy;
   Printf.printf "# offset : contents\n";
-  lwt _ = fold_left (fun sector x ->
+  fold_left (fun sector x ->
     Printf.printf "%s: %s\n"
       (padto ' ' decimal_digits (Int64.to_string sector))
       (Element.to_string x);
     return (Int64.add sector (Element.len x))
-  ) 0L s.elements in
+  ) 0L s.elements >>= fun _ ->
   Printf.printf "# end of stream\n";
   return None
 
 module P = Progress_bar(Int64)
 
 let stream_nbd common sock s prezeroed progress =
-  lwt (server, size, flags) = Nbd_lwt_client.negotiate sock in
+  Nbd_lwt_client.negotiate sock >>= fun (server, size, flags) ->
 
   (* Work to do is: non-zero data to write + empty sectors if the
      target is not prezeroed *)
   let total_work = Int64.(add (add s.size.metadata s.size.copy) (if prezeroed then 0L else s.size.empty)) in
   let p = P.create 80 0L total_work in
 
-  lwt s = if not prezeroed then expand_empty s else return s in
-  lwt s = expand_copy s in
+  ( if not prezeroed then expand_empty s else return s ) >>= fun s ->
+  expand_copy s >>= fun s ->
 
-  lwt _ = fold_left (fun (sector, work_done) x ->
-    lwt work = match x with
-    | Element.Sectors data ->
-      lwt () = Nbd_lwt_client.write server data (Int64.mul sector 512L) in
-      return Int64.(of_int (Cstruct.len data))
-    | Element.Empty n -> (* must be prezeroed *)
-      assert prezeroed;
-      return 0L
-    | _ -> fail (Failure (Printf.sprintf "unexpected stream element: %s" (Element.to_string x))) in
+  fold_left (fun (sector, work_done) x ->
+    ( match x with
+      | Element.Sectors data ->
+        Nbd_lwt_client.write server data (Int64.mul sector 512L) >>= fun () ->
+        return Int64.(of_int (Cstruct.len data))
+      | Element.Empty n -> (* must be prezeroed *)
+        assert prezeroed;
+        return 0L
+      | _ -> fail (Failure (Printf.sprintf "unexpected stream element: %s" (Element.to_string x))) ) >>= fun work ->
     let sector = Int64.add sector (Element.len x) in
     let work_done = Int64.add work_done work in
     let progress_updated = P.update p work_done in
     if progress && progress_updated then P.print_bar p;
     return (sector, work_done)
-  ) (0L, 0L) s.elements in
+  ) (0L, 0L) s.elements >>= fun _ ->
   if progress then Printf.printf "\n%!";
 
-  lwt () = Lwt_unix.close sock in
+  Lwt_unix.close sock >>= fun () ->
   return (Some p)
 
 (* Suitable for writing over the network because it doesn't lseek. Should
@@ -159,13 +159,13 @@ let really_write fd buffer =
   let len = buffer.Cstruct.len in
   let buf = buffer.Cstruct.buffer in
   let rec rwrite acc fd buf ofs len =
-    lwt n = Lwt_bytes.write fd buf ofs len in
+    Lwt_bytes.write fd buf ofs len >>= fun n ->
     let len = len - n in
     let acc = acc + n in
     if len = 0 || n = 0
     then return acc
     else rwrite acc fd buf (ofs + n) len in
-  lwt written = rwrite 0 fd buf ofs len in
+  rwrite 0 fd buf ofs len >>= fun written ->
   if written = 0 && len <> 0
   then fail End_of_file
   else return ()
@@ -175,11 +175,10 @@ let really_read fd buf' =
   let len = buf'.Cstruct.len in
   let buf = buf'.Cstruct.buffer in
   let rec rread fd buf ofs len = 
-    lwt n = Lwt_bytes.read fd buf ofs len in
+    Lwt_bytes.read fd buf ofs len >>= fun n ->
     if n = 0 then raise End_of_file;
     if n < len then rread fd buf (ofs + n) (len - n) else return () in
-  lwt () = rread fd buf ofs len in
-  return ()
+  rread fd buf ofs len
 
 let stream_chunked common sock s prezeroed progress =
   (* Work to do is: non-zero data to write + empty sectors if the
@@ -187,36 +186,36 @@ let stream_chunked common sock s prezeroed progress =
   let total_work = Int64.(add (add s.size.metadata s.size.copy) (if prezeroed then 0L else s.size.empty)) in
   let p = P.create 80 0L total_work in
 
-  lwt s = if not prezeroed then expand_empty s else return s in
-  lwt s = expand_copy s in
+  ( if not prezeroed then expand_empty s else return s ) >>= fun s ->
+  expand_copy s >>= fun s ->
 
   let header = Cstruct.create Chunked.sizeof in
-  lwt _ = fold_left (fun(sector, work_done) x ->
-    lwt work = match x with
-    | Element.Sectors data ->
-      let t = { Chunked.offset = Int64.(mul sector 512L); data } in
-      Chunked.marshal header t;
-      lwt () = really_write sock header in
-      lwt () = really_write sock data in
-      return Int64.(of_int (Cstruct.len data))
-    | Element.Empty n -> (* must be prezeroed *)
-      assert prezeroed;
-      return 0L
-    | _ -> fail (Failure (Printf.sprintf "unexpected stream element: %s" (Element.to_string x))) in
+  fold_left (fun(sector, work_done) x ->
+    ( match x with
+      | Element.Sectors data ->
+        let t = { Chunked.offset = Int64.(mul sector 512L); data } in
+        Chunked.marshal header t;
+        really_write sock header >>= fun () ->
+        really_write sock data >>= fun () ->
+        return Int64.(of_int (Cstruct.len data))
+      | Element.Empty n -> (* must be prezeroed *)
+        assert prezeroed;
+        return 0L
+      | _ -> fail (Failure (Printf.sprintf "unexpected stream element: %s" (Element.to_string x))) ) >>= fun work ->
     let sector = Int64.add sector (Element.len x) in
     let work_done = Int64.add work_done work in
     let progress_updated = P.update p work_done in
     if progress && progress_updated then P.print_bar p;
 
     return (sector, work_done)
-  ) (0L, 0L) s.elements in
+  ) (0L, 0L) s.elements >>= fun _ ->
   if progress then Printf.printf "\n%!";
 
   (* Send the end-of-stream marker *)
   Chunked.marshal header { Chunked.offset = 0L; data = Cstruct.create 0 };
-  lwt () = really_write sock header in
+  really_write sock header >>= fun () ->
 
-  lwt () = Lwt_unix.close sock in
+  Lwt_unix.close sock >>= fun () ->
   return (Some p)
 
 let stream_raw common sock s _ progress =
@@ -224,24 +223,24 @@ let stream_raw common sock s _ progress =
   let total_work = Int64.(add (add s.size.metadata s.size.copy) s.size.empty) in
   let p = P.create 80 0L total_work in
 
-  lwt s = expand_empty s in
-  lwt s = expand_copy s in
+  expand_empty s >>= fun s ->
+  expand_copy s >>= fun s ->
 
-  lwt _ = fold_left (fun(sector, work_done) x ->
-    lwt work = match x with
-    | Element.Sectors data ->
-      lwt () = really_write sock data in
-      return Int64.(of_int (Cstruct.len data))
-    | _ -> fail (Failure (Printf.sprintf "unexpected stream element: %s" (Element.to_string x))) in
+  fold_left (fun(sector, work_done) x ->
+    (match x with
+      | Element.Sectors data ->
+        really_write sock data >>= fun () ->
+        return Int64.(of_int (Cstruct.len data))
+      | _ -> fail (Failure (Printf.sprintf "unexpected stream element: %s" (Element.to_string x))) ) >>= fun work ->
     let sector = Int64.add sector (Element.len x) in
     let work_done = Int64.add work_done work in
     let progress_updated = P.update p work_done in
     if progress && progress_updated then P.print_bar p;
     return (sector, work_done)
-  ) (0L, 0L) s.elements in
+  ) (0L, 0L) s.elements >>= fun _ ->
   if progress then Printf.printf "\n%!";
 
-  lwt () = Lwt_unix.close sock in
+  Lwt_unix.close sock >>= fun () ->
   return (Some p)
 
 type protocol = Nbd | Chunked | Human | NoProtocol
@@ -269,7 +268,7 @@ let endpoint_of_string = function
     | Some "tcp" ->
       let host = match Uri.host uri' with None -> failwith "Please supply a host in the URI" | Some host -> host in
       let port = match Uri.port uri' with None -> failwith "Please supply a port in the URI" | Some port -> port in
-      lwt host_entry = Lwt_unix.gethostbyname host in
+      Lwt_unix.gethostbyname host >>= fun host_entry ->
       return (Sockaddr(Lwt_unix.ADDR_INET(host_entry.Lwt_unix.h_addr_list.(0), port)))
     | Some "unix" ->
       return (Sockaddr(Lwt_unix.ADDR_UNIX(Uri.path uri')))
@@ -308,40 +307,40 @@ let stream common (source: string) (relative_to: string option) (source_format: 
     then failwith (Printf.sprintf "%s is not a supported format" destination_format);
 
     let thread =
-      lwt s = match source_format, destination_format with
+      ( match source_format, destination_format with
         | "vhd", "vhd" ->
-          lwt t = Vhd_IO.openfile source in
-          lwt from = match relative_to with None -> return None | Some f -> lwt t = Vhd_IO.openfile f in return (Some t) in
+          Vhd_IO.openfile source >>= fun t ->
+          ( match relative_to with None -> return None | Some f -> Vhd_IO.openfile f >>= fun t -> return (Some t) ) >>= fun from ->
           Vhd_input.vhd ?from t
         | "vhd", "raw" ->
-          lwt t = Vhd_IO.openfile source in
-          lwt from = match relative_to with None -> return None | Some f -> lwt t = Vhd_IO.openfile f in return (Some t) in
+          Vhd_IO.openfile source >>= fun t ->
+          ( match relative_to with None -> return None | Some f -> Vhd_IO.openfile f >>= fun t -> return (Some t) ) >>= fun from ->
           Vhd_input.raw ?from t
         | "raw", "vhd" ->
-          lwt t = Raw_IO.openfile source in
+          Raw_IO.openfile source >>= fun t ->
           Raw_input.vhd t
         | "raw", "raw" ->
-          lwt t = Raw_IO.openfile source in
+          Raw_IO.openfile source >>= fun t ->
           Raw_input.raw t
-        | _, _ -> assert false in
-      lwt endpoint = endpoint_of_string destination in
+        | _, _ -> assert false ) >>= fun s ->
+      endpoint_of_string destination >>= fun endpoint ->
 
-      lwt (sock, possible_protocols) = match endpoint with
+      ( match endpoint with
       | File_descr fd ->
         return (fd, [ Nbd; NoProtocol; Chunked; Human ])
       | Sockaddr sockaddr ->
         let sock = socket sockaddr in
-        lwt () = Lwt_unix.connect sock sockaddr in
+        Lwt_unix.connect sock sockaddr >>= fun () ->
         return (sock, [ Nbd; NoProtocol; Chunked; Human ])
       | Http uri'
       | Https uri' ->
         (* TODO: https is not currently implemented *)
         let port = match Uri.port uri' with None -> 80 | Some port -> port in
         let host = match Uri.host uri' with None -> failwith "Please supply a host in the URI" | Some host -> host in
-        lwt host_entry = Lwt_unix.gethostbyname host in
+        Lwt_unix.gethostbyname host >>= fun host_entry ->
         let sockaddr = Lwt_unix.ADDR_INET(host_entry.Lwt_unix.h_addr_list.(0), port) in
         let sock = socket sockaddr in
-        lwt () = Lwt_unix.connect sock sockaddr in
+        Lwt_unix.connect sock sockaddr >>= fun () ->
 
         let open Cohttp in
         let ic = Lwt_io.of_fd ~mode:Lwt_io.input sock in
@@ -364,8 +363,9 @@ let stream common (source: string) (relative_to: string option) (source_format: 
               exit 1
             end in
         let request = Cohttp.Request.make ~meth:`PUT ~version:`HTTP_1_1 ~headers uri' in
-        lwt () = Request.write (fun t _ -> return ()) request oc in
-        begin match_lwt Response.read ic with
+        Request.write (fun t _ -> return ()) request oc >>= fun () ->
+        Response.read ic >>= fun r ->
+        begin match r with
         | None -> fail (Failure "Unable to parse HTTP response from server")
         | Some x ->
           let code = Code.code_of_status (Cohttp.Response.status x) in
@@ -379,7 +379,8 @@ let stream common (source: string) (relative_to: string option) (source_format: 
             then return(sock, [ Nbd ])
             else return(sock, [ Chunked; NoProtocol ])
           end else fail (Failure (Code.reason_phrase_of_code code))
-        end in
+        end
+      ) >>= fun (sock, possible_protocols) ->
       let destination_protocol = match destination_protocol with
         | Some x -> x
         | None ->
@@ -389,11 +390,11 @@ let stream common (source: string) (relative_to: string option) (source_format: 
       if not(List.mem destination_protocol possible_protocols)
       then fail(Failure(Printf.sprintf "this destination only supports protocols: [ %s ]" (String.concat "; " (List.map string_of_protocol possible_protocols))))
       else
-        lwt p = (match destination_protocol with
+        (match destination_protocol with
             | Nbd -> stream_nbd
             | Human -> stream_human
             | Chunked -> stream_chunked
-            | NoProtocol -> stream_raw) common sock s prezeroed progress in
+            | NoProtocol -> stream_raw) common sock s prezeroed progress >>= fun p ->
         match p with
         | Some p ->
           if progress then begin
@@ -428,7 +429,7 @@ let serve_chunked_to_raw source dest =
   let twomib = 2 * 1024 * 1024 in
   let buffer = Memory.alloc twomib in
   let rec loop () =
-    lwt () = really_read source header in
+    really_read source header >>= fun () ->
     if Chunked.is_last_chunk header then begin
       Printf.fprintf stderr "Received last chunk.\n%!";
       return ()
@@ -436,14 +437,14 @@ let serve_chunked_to_raw source dest =
       let rec block offset remaining =
         let this = Int32.(to_int (min (of_int twomib) remaining)) in
         let buf = if this < twomib then Cstruct.sub buffer 0 this else buffer in
-        lwt () = really_read source buf in
-        lwt () = Fd.really_write dest offset buf in
+        really_read source buf >>= fun () ->
+        Fd.really_write dest offset buf >>= fun () ->
         let offset = Int64.(add offset (of_int this)) in
         let remaining = Int32.(sub remaining (of_int this)) in
         if remaining > 0l
         then block offset remaining
         else return () in
-      lwt () = block (Chunked.get_offset header) (Chunked.get_len header) in
+      block (Chunked.get_offset header) (Chunked.get_len header) >>= fun () ->
       loop ()
     end in
   loop ()
@@ -462,22 +463,22 @@ let serve common_options source source_fd source_protocol destination destinatio
     then failwith (Printf.sprintf "%s is not a supported source protocol" (string_of_protocol source_protocol));
 
     let thread =
-      lwt destination_endpoint = endpoint_of_string destination in
-      lwt source_endpoint = match source_fd with
+      endpoint_of_string destination >>= fun destination_endpoint ->
+      ( match source_fd with
         | None -> endpoint_of_string source
-        | Some fd -> return (File_descr (Lwt_unix.of_unix_file_descr (file_descr_of_int fd))) in
-      lwt source_sock = match source_endpoint with
+        | Some fd -> return (File_descr (Lwt_unix.of_unix_file_descr (file_descr_of_int fd))) ) >>= fun source_endpoint ->
+      ( match source_endpoint with
         | File_descr fd -> return fd
         | Sockaddr s ->
           let sock = socket s in
           Lwt_unix.bind sock s;
           Lwt_unix.listen sock 1;
-          lwt (fd, _) = Lwt_unix.accept sock in
+          Lwt_unix.accept sock >>= fun (fd, _) ->
           return fd
-        | _ -> failwith (Printf.sprintf "Not implemented: serving from source %s" source) in
-      lwt destination_fd = match destination_endpoint with
+        | _ -> failwith (Printf.sprintf "Not implemented: serving from source %s" source) ) >>= fun source_sock ->
+      ( match destination_endpoint with
         | File path -> Fd.openfile path
-        | _ -> failwith (Printf.sprintf "Not implemented: writing to destination %s" destination) in
+        | _ -> failwith (Printf.sprintf "Not implemented: writing to destination %s" destination) ) >>= fun destination_fd ->
       serve_chunked_to_raw source_sock destination_fd in
     Lwt_main.run thread;
     `Ok ()

@@ -46,26 +46,26 @@ let sizes = [
 (* Create a dynamic disk, check headers *)
 let check_empty_disk size =
   let filename = make_new_filename () in
-  lwt vhd = Vhd_IO.create_dynamic ~filename ~size () in
-  lwt vhd' = Vhd_IO.openfile filename in
+  Vhd_IO.create_dynamic ~filename ~size () >>= fun vhd ->
+  Vhd_IO.openfile filename >>= fun vhd' ->
   assert_equal ~printer:Header.to_string ~cmp:Header.equal vhd.Vhd.header vhd'.Vhd.header;
   assert_equal ~printer:Footer.to_string vhd.Vhd.footer vhd'.Vhd.footer;
   assert_equal ~printer:BAT.to_string ~cmp:BAT.equal vhd.Vhd.bat vhd'.Vhd.bat;
-  lwt () = Vhd_IO.close vhd' in
+  Vhd_IO.close vhd' >>= fun () ->
   Vhd_IO.close vhd
 
 (* Create a snapshot, check headers *)
 let check_empty_snapshot size =
   let filename = make_new_filename () in
-  lwt vhd = Vhd_IO.create_dynamic ~filename ~size () in
+  Vhd_IO.create_dynamic ~filename ~size () >>= fun vhd ->
   let filename = make_new_filename () in
-  lwt vhd' = Vhd_IO.create_difference ~filename ~parent:vhd () in
-  lwt vhd'' = Vhd_IO.openfile filename in
+  Vhd_IO.create_difference ~filename ~parent:vhd () >>= fun vhd' ->
+  Vhd_IO.openfile filename >>= fun vhd'' ->
   assert_equal ~printer:Header.to_string ~cmp:Header.equal vhd'.Vhd.header vhd''.Vhd.header;
   assert_equal ~printer:Footer.to_string vhd'.Vhd.footer vhd''.Vhd.footer;
   assert_equal ~printer:BAT.to_string ~cmp:BAT.equal vhd'.Vhd.bat vhd''.Vhd.bat;
-  lwt () = Vhd_IO.close vhd'' in
-  lwt () = Vhd_IO.close vhd' in
+  Vhd_IO.close vhd'' >>= fun () ->
+  Vhd_IO.close vhd' >>= fun () ->
   Vhd_IO.close vhd
 
 (* Look for problems reading and writing to edge-cases *)
@@ -155,7 +155,7 @@ let initial = {
 let execute state = function
   | Create size ->
     let filename = make_new_filename () in
-    lwt vhd = Vhd_IO.create_dynamic ~filename ~size () in
+    Vhd_IO.create_dynamic ~filename ~size () >>= fun vhd ->
     return {
       to_close = vhd :: state.to_close;
       to_unlink = filename :: state.to_unlink;
@@ -167,7 +167,7 @@ let execute state = function
     | Some vhd -> vhd
     | None -> failwith "no vhd open" in
     let filename = make_new_filename () in
-    lwt vhd' = Vhd_IO.create_difference ~filename ~parent:vhd () in
+    Vhd_IO.create_difference ~filename ~parent:vhd () >>= fun vhd' ->
     return {
       to_close = vhd' :: state.to_close;
       to_unlink = filename :: state.to_unlink;
@@ -180,7 +180,7 @@ let execute state = function
     | None -> failwith "no vhd open" in
     begin match absolute_sector_of vhd position with
       | Some sector ->
-        lwt () = Vhd_IO.write_sector vhd sector data in
+        Vhd_IO.write_sector vhd sector data >>= fun () ->
         (* Overwrite means we forget any previous contents *)
         let contents = List.filter (fun (x, _) -> x <> sector) state.contents in
         return { state with contents = (sector, data) :: contents }
@@ -192,12 +192,12 @@ let execute state = function
 let rec check_written_sectors t expected = match expected with
   | [] -> return ()
   | (x, data) :: xs ->
-    lwt y = Vhd_IO.read_sector t x in
-    lwt () = match y with
+    Vhd_IO.read_sector t x >>= fun y ->
+    ( match y with
     | None -> fail (Failure "read after write failed")
     | Some y ->
       assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal data y;
-      return () in
+      return () ) >>= fun () ->
     check_written_sectors t xs
 
 let empty_sector = Memory.alloc 512
@@ -206,8 +206,8 @@ let empty_sector = Memory.alloc 512
    If ~allow_empty then we accept sectors which are present (in the bitmap) but
    physically empty. *)
 let check_raw_stream_contents ~allow_empty t expected =
-  lwt stream = Vhd_input.raw t in
-  lwt next_sector = fold_left (fun offset x -> match x with
+  Vhd_input.raw t >>= fun stream ->
+  fold_left (fun offset x -> match x with
     | Element.Empty y -> 
      (* all sectors in [offset, offset + y = 1] should not be in the contents list *)
       List.iter (fun (x, _) ->
@@ -218,7 +218,7 @@ let check_raw_stream_contents ~allow_empty t expected =
     | Element.Copy(handle, offset', len) ->
       (* all sectors in [offset, offset + len - 1] should be in the contents list *)
       (* XXX: this won't cope with very large copy requests *)
-      lwt data = Fd.really_read handle (Int64.(mul offset' 512L)) (Int64.to_int len * 512) in
+      Fd.really_read handle (Int64.(mul offset' 512L)) (Int64.to_int len * 512) >>= fun data ->
       let rec check i =
         if i >= (Int64.to_int len) then ()
         else
@@ -250,7 +250,7 @@ let check_raw_stream_contents ~allow_empty t expected =
             assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal expected actual;
             loop (Int64.(add offset 1L)) (Cstruct.shift remaining sector_size) in
       loop offset data
-  ) 0L stream.elements in
+  ) 0L stream.elements >>= fun next_sector ->
   (* [next_sector] should be higher than the highest sector in the contents list *)
   let highest_sector = List.fold_left max (-1L) (List.map fst expected) in
   assert (next_sector > highest_sector);
@@ -260,35 +260,33 @@ let verify state = match state.child with
   | None -> return ()
   | Some t ->
     let capacity = Int64.(shift_left (of_int t.Vhd.header.Header.max_table_entries) (t.Vhd.header.Header.block_size_sectors_shift + sector_shift)) in
-    lwt () =
-      if capacity < t.Vhd.footer.Footer.current_size
+    ( if capacity < t.Vhd.footer.Footer.current_size
       then fail (Failure (Printf.sprintf "insufficient capacity in vhd: max table entries = %d; capacity = %Ld; current_size = %Ld" t.Vhd.header.Header.max_table_entries capacity t.Vhd.footer.Footer.current_size))
-      else return () in
+      else return () ) >>= fun () ->
 
-    lwt () = check_written_sectors t state.contents in
-    lwt () = check_raw_stream_contents ~allow_empty:false t state.contents in
+    check_written_sectors t state.contents >>= fun () ->
+    check_raw_stream_contents ~allow_empty:false t state.contents >>= fun () ->
 
     (* Stream the contents as a fresh vhd *)
     let filename = make_new_filename () in
-    lwt fd = Fd.create filename in
-    lwt stream = Vhd_input.vhd t in
-    lwt _ = fold_left (fun offset x -> match x with
+    Fd.create filename >>= fun fd ->
+    Vhd_input.vhd t >>= fun stream ->
+    fold_left (fun offset x -> match x with
       | Element.Empty y -> return (Int64.(add offset (mul y 512L)))
       | Element.Sectors data ->
-        lwt () = Fd.really_write fd offset data in
+        Fd.really_write fd offset data >>= fun () ->
         return (Int64.(add offset (of_int (Cstruct.len data))))
       | Element.Copy(fd', offset', len') ->
-        lwt buf = really_read fd' (Int64.mul offset' 512L) (Int64.to_int len' * 512) in
-        lwt () = Fd.really_write fd offset buf in
+        really_read fd' (Int64.mul offset' 512L) (Int64.to_int len' * 512) >>= fun buf ->
+        Fd.really_write fd offset buf >>= fun () ->
         return (Int64.(add offset (of_int (Cstruct.len buf))))
-    ) 0L stream.elements in
-    lwt () = Fd.close fd in
+    ) 0L stream.elements >>= fun _ ->
+    Fd.close fd >>= fun () ->
     (* Check the contents look correct *)
-    lwt t' = Vhd_IO.openfile filename in
-    lwt () = check_written_sectors t' state.contents in
-    lwt () = check_raw_stream_contents ~allow_empty:true t' state.contents in
-    lwt () = Vhd_IO.close t' in
-    return ()
+    Vhd_IO.openfile filename >>= fun t' ->
+    check_written_sectors t' state.contents >>= fun () ->
+    check_raw_stream_contents ~allow_empty:true t' state.contents >>= fun () ->
+    Vhd_IO.close t'
 
 let cleanup state =
   List.iter Unix.unlink state.to_unlink;
@@ -296,10 +294,10 @@ let cleanup state =
 
 let run program =
   let single_instruction state x =
-    lwt state' = execute state x in
-    lwt () = verify state' in
+    execute state x >>= fun state' ->
+    verify state' >>= fun () ->
     return state' in
-  lwt final_state = Lwt_list.fold_left_s single_instruction initial program in
+  Lwt_list.fold_left_s single_instruction initial program >>= fun final_state ->
   cleanup final_state
 
 let rec allpairs xs ys = match xs with
