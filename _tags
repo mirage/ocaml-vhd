@@ -1,5 +1,5 @@
 # OASIS_START
-# DO NOT EDIT (digest: c8284b7fce320f0016f98ef28e25060e)
+# DO NOT EDIT (digest: 60ca1f6c167aa4db589128df47fe61ee)
 # Ignore VCS directories, you can use the same kind of rule outside 
 # OASIS_START/STOP if you want to exclude directories that contains 
 # useless stuff for the build process
@@ -22,8 +22,10 @@
 <lib/vhd_lwt.{cma,cmxa}>: use_libvhd_lwt_stubs
 <lib/*.ml{,i}>: pkg_lwt
 <lib/*.ml{,i}>: pkg_lwt.unix
+<lib/*.ml{,i}>: pkg_cstruct.lwt
 "lib/odirect_stubs.c": pkg_lwt
 "lib/odirect_stubs.c": pkg_lwt.unix
+"lib/odirect_stubs.c": pkg_cstruct.lwt
 # Executable vhdtool
 <cli/main.{native,byte}>: use_vhd
 <cli/main.{native,byte}>: use_vhd_lwt
@@ -36,6 +38,7 @@
 <cli/main.{native,byte}>: pkg_uri
 <cli/main.{native,byte}>: pkg_cohttp
 <cli/main.{native,byte}>: pkg_cohttp.lwt
+<cli/main.{native,byte}>: pkg_cstruct.lwt
 <cli/main.{native,byte}>: pkg_uuidm
 <cli/main.{native,byte}>: custom
 # Executable sparse_dd
@@ -57,6 +60,7 @@
 <cli/sparse_dd.{native,byte}>: pkg_xenstore_transport.unix
 <cli/sparse_dd.{native,byte}>: pkg_threads
 <cli/sparse_dd.{native,byte}>: pkg_tapctl
+<cli/sparse_dd.{native,byte}>: pkg_cstruct.lwt
 <cli/sparse_dd.{native,byte}>: pkg_uuidm
 <cli/*.ml{,i}>: use_vhd
 <cli/*.ml{,i}>: use_vhd_lwt
@@ -76,6 +80,7 @@
 <cli/*.ml{,i}>: pkg_xenstore_transport.unix
 <cli/*.ml{,i}>: pkg_threads
 <cli/*.ml{,i}>: pkg_tapctl
+<cli/*.ml{,i}>: pkg_cstruct.lwt
 <cli/*.ml{,i}>: pkg_uuidm
 <cli/sparse_dd.{native,byte}>: custom
 # Executable disk_to_ocaml
@@ -84,6 +89,7 @@
 <lib_test/disk_to_ocaml.{native,byte}>: pkg_lwt
 <lib_test/disk_to_ocaml.{native,byte}>: pkg_lwt.unix
 <lib_test/disk_to_ocaml.{native,byte}>: pkg_cstruct
+<lib_test/disk_to_ocaml.{native,byte}>: pkg_cstruct.lwt
 <lib_test/disk_to_ocaml.{native,byte}>: pkg_uuidm
 <lib_test/disk_to_ocaml.{native,byte}>: custom
 # Executable parse_test
@@ -93,6 +99,7 @@
 <lib_test/parse_test.{native,byte}>: pkg_lwt.unix
 <lib_test/parse_test.{native,byte}>: pkg_cstruct
 <lib_test/parse_test.{native,byte}>: pkg_oUnit
+<lib_test/parse_test.{native,byte}>: pkg_cstruct.lwt
 <lib_test/parse_test.{native,byte}>: pkg_uuidm
 <lib_test/*.ml{,i}>: use_vhd
 <lib_test/*.ml{,i}>: use_vhd_lwt
@@ -100,6 +107,7 @@
 <lib_test/*.ml{,i}>: pkg_lwt.unix
 <lib_test/*.ml{,i}>: pkg_cstruct
 <lib_test/*.ml{,i}>: pkg_oUnit
+<lib_test/*.ml{,i}>: pkg_cstruct.lwt
 <lib_test/*.ml{,i}>: pkg_uuidm
 <lib_test/parse_test.{native,byte}>: custom
 # OASIS_STOP

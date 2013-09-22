@@ -1,5 +1,5 @@
 # OASIS_START
-# DO NOT EDIT (digest: 62e5bd4ffbb50f6f28a9f0f11be2cced)
+# DO NOT EDIT (digest: 932380835ed661aa3a47ef7d4f4d846f)
 version = "0.0.2"
 description = ".vhd file manipulation"
 requires = "lwt lwt.unix uuidm cstruct"
@@ -11,7 +11,7 @@ exists_if = "vhd.cma"
 package "lwt" (
  version = "0.0.2"
  description = ".vhd file manipulation"
- requires = "lwt lwt.unix"
+ requires = "lwt lwt.unix cstruct.lwt"
  archive(byte) = "vhd_lwt.cma"
  archive(byte, plugin) = "vhd_lwt.cma"
  archive(native) = "vhd_lwt.cmxa"

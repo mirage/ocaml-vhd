@@ -20,7 +20,7 @@ Library vhd_lwt
   Findlibname:        lwt
   Findlibparent:      vhd
   Modules:            Vhd_lwt, Memory, File
-  BuildDepends:       lwt, lwt.unix
+  BuildDepends:       lwt, lwt.unix, cstruct.lwt
   CSources:           odirect_stubs.c
 
 Executable vhdtool

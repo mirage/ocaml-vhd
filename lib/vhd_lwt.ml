@@ -44,39 +44,39 @@ module Fd = struct
 
   let close t = Lwt_unix.close t.fd
 
+  exception Not_sector_aligned of int64
+
+  let assert_sector_aligned n =
+    if Int64.(mul(div n 512L) 512L) <> n then raise (Not_sector_aligned n)
+
   let really_read_into { fd; filename; lock } offset (* in file *) buf =
-    assert (buf.Cstruct.off = 0);
-    let n = buf.Cstruct.len in
-    let buf = buf.Cstruct.buffer in
-    let rec rread acc fd buf ofs len = 
-      lwt n = Lwt_bytes.read fd buf ofs len in
-      let len = len - n in
+    let rec rread acc fd buf =
+      lwt n = Lwt_cstruct.read fd buf in
       let acc = acc + n in
-      if len = 0 || n = 0
+      let buf = Cstruct.shift buf n in
+      if Cstruct.len buf = 0 || n = 0
       then return acc
-      else rread acc fd buf (ofs + n) len in
+      else rread acc fd buf in
+
     (* All reads and writes should be sector-aligned *)
-    assert(Int64.(mul(div offset 512L) 512L) = offset);
-    if (n / 512 * 512 <> n) then begin
-      Printf.fprintf stderr "not sector aligned: %d\n%!" n;
-      assert false
-    end;
-    assert(n / 512 * 512 = n);
+    assert_sector_aligned offset;
+    assert_sector_aligned (Int64.of_int buf.Cstruct.off);
+    assert_sector_aligned (Int64.of_int (Cstruct.len buf));
 
     Lwt_mutex.with_lock lock
       (fun () ->
         try_lwt
           lwt _ = Lwt_unix.LargeFile.lseek fd offset Unix.SEEK_SET in
-          lwt read = rread 0 fd buf 0 n in
-          if read = 0 && n <> 0
+          lwt read = rread 0 fd buf in
+          if read = 0 && (Cstruct.len buf <> 0)
           then fail End_of_file
-          else return (Cstruct.(sub (of_bigarray buf) 0 n))
+          else return (Cstruct.(sub buf 0 read))
         with
         | Unix.Unix_error(Unix.EINVAL, "read", "") as e ->
-          Printf.fprintf stderr "really_read offset = %Ld len = %d: EINVAL (alignment?)\n%!" offset n;
+          Printf.fprintf stderr "really_read offset = %Ld len = %d: EINVAL (alignment?)\n%!" offset (Cstruct.len buf);
           fail e
         | End_of_file as e ->
-          Printf.fprintf stderr "really_read offset = %Ld len = %d: End_of_file\n%!" offset n;
+          Printf.fprintf stderr "really_read offset = %Ld len = %d: End_of_file\n%!" offset (Cstruct.len buf);
           fail e 
       )
 
