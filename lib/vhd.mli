@@ -263,6 +263,11 @@ module Vhd : sig
   }
 
   val check_overlapping_blocks : 'a t -> unit
+
+  module Field : sig
+    val list: string list
+    val get: 'a t -> string -> string option
+  end
 end
 
 module Raw : sig

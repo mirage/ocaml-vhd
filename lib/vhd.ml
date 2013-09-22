@@ -1012,6 +1012,100 @@ module Vhd = struct
     let open Int64 in
     let next_free_byte = get_top_unused_offset header bat in
     to_int32 ((next_free_byte ++ 511L) lsr sector_shift)
+
+  module Field = struct
+    (** Dynamically-typed field-level access *)
+
+    type 'a f = {
+      name: string;
+      get: 'a t -> string;
+    }
+
+    let _features = "features"
+    let _data_offset = "data-offset"
+    let _timestamp = "time-stamp"
+    let _creator_application = "creator-application"
+    let _creator_version = "creator_version"
+    let _creator_host_os = "creator-host-os"
+    let _original_size = "original-size"
+    let _current_size = "current-size"
+    let _geometry = "geometry"
+    let _disk_type = "disk-type"
+    let _footer_checksum = "footer-checksum"
+    let _uuid = "uuid"
+    let _saved_state = "saved-state"
+    let _table_offset = "table-offset"
+    let _max_table_entries = "max-table-entries"
+    let _block_size_sectors_shift = "block-size-sectors-shift"
+    let _header_checksum = "header-checksum"
+    let _parent_uuid = "parent_unique_id"
+    let _parent_time_stamp = "parent-time-stamp"
+    let _parent_unicode_name = "parent-unicode-name"
+    let _parent_locator_prefix = "parent-locator-"
+    let _parent_locator_prefix_len = String.length _parent_locator_prefix
+
+    let list = [ _features; _data_offset; _timestamp; _creator_application;
+      _creator_version; _creator_host_os; _original_size; _current_size;
+      _geometry; _disk_type; _footer_checksum; _uuid; _saved_state;
+      _table_offset; _max_table_entries; _block_size_sectors_shift;
+      _header_checksum; _parent_uuid; _parent_time_stamp; _parent_unicode_name
+    ] @ (List.map (fun x -> _parent_locator_prefix ^ (string_of_int x)) [0; 1; 2; 3; 4; 5; 6;7])
+
+    let startswith prefix x =
+      let prefix' = String.length prefix and x' = String.length x in
+      prefix' <= x' && (String.sub x 0 prefix' = prefix)
+
+    let get t key =
+      if key = _features
+
+      then Some (String.concat ", " (List.map Feature.to_string t.footer.Footer.features))
+      else if key = _data_offset
+      then Some (Int64.to_string t.footer.Footer.data_offset)
+      else if key = _timestamp
+      then Some (Int32.to_string t.footer.Footer.time_stamp)
+      else if key = _creator_application
+      then Some t.footer.Footer.creator_application
+      else if key = _creator_version
+      then Some (Int32.to_string t.footer.Footer.creator_version)
+      else if key = _creator_host_os
+      then Some (Host_OS.to_string t.footer.Footer.creator_host_os)
+      else if key = _original_size
+      then Some (Int64.to_string t.footer.Footer.original_size)
+      else if key = _current_size
+      then Some (Int64.to_string t.footer.Footer.current_size)
+      else if key = _geometry
+      then Some (Geometry.to_string t.footer.Footer.geometry)
+      else if key = _disk_type
+      then Some (Disk_type.to_string t.footer.Footer.disk_type)
+      else if key = _footer_checksum
+      then Some (Int32.to_string t.footer.Footer.checksum)
+      else if key = _uuid
+      then Some (Uuidm.to_string t.footer.Footer.uid)
+      else if key = _saved_state
+      then Some (string_of_bool t.footer.Footer.saved_state)
+      else if key = _table_offset
+      then Some (Int64.to_string t.header.Header.table_offset)
+      else if key = _max_table_entries
+      then Some (string_of_int t.header.Header.max_table_entries)
+      else if key = _block_size_sectors_shift
+      then Some (string_of_int t.header.Header.block_size_sectors_shift)
+      else if key = _header_checksum
+      then Some (Int32.to_string t.header.Header.checksum)
+      else if key = _parent_uuid
+      then Some (Uuidm.to_string t.header.Header.parent_unique_id)
+      else if key = _parent_time_stamp
+      then Some (Int32.to_string t.header.Header.parent_time_stamp)
+      else if key = _parent_unicode_name
+      then Some (UTF16.to_utf8_exn t.header.Header.parent_unicode_name)
+      else if startswith _parent_locator_prefix key then begin
+        try
+          let i = int_of_string (String.sub key _parent_locator_prefix_len (String.length key - _parent_locator_prefix_len)) in
+          Some (Parent_locator.to_string t.header.Header.parent_locators.(i))
+        with _ -> None
+      end else None
+    type 'a t = 'a f
+
+   end
 end
 
 module Raw = struct

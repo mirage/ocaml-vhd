@@ -121,96 +121,25 @@ let require name arg = match arg with
   | None -> failwith (Printf.sprintf "Please supply a %s argument" name)
   | Some x -> x
 
-type field = {
-  name: string;
-  get: IO.fd Vhd.t -> string Lwt.t;
-}
-
-let fields = [
-  {
-    name = "features";
-    get = fun t -> return (String.concat ", " (List.map Feature.to_string t.Vhd.footer.Footer.features));
-  }; {
-    name = "data-offset";
-    get = fun t -> return (Int64.to_string t.Vhd.footer.Footer.data_offset);
-   }; {
-    name = "time-stamp";
-    get = fun t -> return (Int32.to_string t.Vhd.footer.Footer.time_stamp);
-  }; {
-    name = "creator-application";
-    get = fun t -> return t.Vhd.footer.Footer.creator_application;
-  }; {
-    name = "creator-version";
-    get = fun t -> return (Int32.to_string t.Vhd.footer.Footer.creator_version);
-  }; {
-    name = "creator-host-os";
-    get = fun t -> return (Host_OS.to_string t.Vhd.footer.Footer.creator_host_os);
-  }; {
-    name = "original-size";
-    get = fun t -> return (Int64.to_string t.Vhd.footer.Footer.original_size);
-  }; {
-    name = "current-size";
-    get = fun t -> return (Int64.to_string t.Vhd.footer.Footer.current_size);
-  }; {
-    name = "geometry";
-    get = fun t -> return (Geometry.to_string t.Vhd.footer.Footer.geometry);
-  }; {
-    name = "disk-type";
-    get = fun t -> return (Disk_type.to_string t.Vhd.footer.Footer.disk_type);
-  }; {
-    name = "footer-checksum";
-    get = fun t -> return (Int32.to_string t.Vhd.footer.Footer.checksum);
-  }; {
-    name = "uuid";
-    get = fun t -> return (Uuidm.to_string t.Vhd.footer.Footer.uid);
-  }; {
-    name = "saved-state";
-    get = fun t -> return (string_of_bool t.Vhd.footer.Footer.saved_state);
-  }; {
-    name = "table-offset";
-    get = fun t -> return (Int64.to_string t.Vhd.header.Header.table_offset);
-  }; {
-    name = "max-table-entries";
-    get = fun t -> return (string_of_int t.Vhd.header.Header.max_table_entries);
-  }; {
-    name = "block-size-sectors-shift";
-    get = fun t -> return (string_of_int t.Vhd.header.Header.block_size_sectors_shift);
-  }; {
-    name = "header-checksum";
-    get = fun t -> return (Int32.to_string t.Vhd.header.Header.checksum);
-  }; {
-    name = "parent-uuid";
-    get = fun t -> return (Uuidm.to_string t.Vhd.header.Header.parent_unique_id);
-  }; {
-    name = "parent-time-stamp";
-    get = fun t -> return (Int32.to_string t.Vhd.header.Header.parent_time_stamp);
-  }; {
-    name = "parent-unicode-name";
-    get = fun t -> return (UTF16.to_utf8_exn t.Vhd.header.Header.parent_unicode_name);
-  };
-] @ (List.map (fun i ->
-  {
-    name = Printf.sprintf "parent-locator-%d" i;
-    get = fun t -> return (Parent_locator.to_string t.Vhd.header.Header.parent_locators.(i));
-  }) [ 0; 1; 2; 3; 4; 5; 6; 7 ])
-
 let get common filename key =
   try
     let filename = require "filename" filename in
     let key = require "key" key in
-    let field = List.find (fun f -> f.name = key) fields in
     let t =
       lwt t = Vhd_IO.openfile filename in
-      lwt result = field.get t in
-      Printf.printf "%s\n" result;
-      Vhd_IO.close t in
-    Lwt_main.run t;
-    `Ok ()
+      let result = Vhd.Field.get t key in
+      lwt () = Vhd_IO.close t in
+      return result in
+    match Lwt_main.run t with
+    | Some v ->
+      Printf.printf "%s\n" v;
+      `Ok ()
+    | None -> raise Not_found
   with
     | Failure x ->
       `Error(true, x)
     | Not_found ->
-      `Error(true, Printf.sprintf "Unknown key. Known keys are: %s" (String.concat ", " (List.map (fun f -> f.name) fields)))
+      `Error(true, Printf.sprintf "Unknown key. Known keys are: %s" (String.concat ", " Vhd.Field.list))
 
 let padto blank n s =
   let result = String.make n blank in
@@ -238,10 +167,11 @@ let info common filename =
     let filename = require "filename" filename in
     let t =
       lwt t = Vhd_IO.openfile filename in
-      lwt all = Lwt_list.map_s (fun f ->
-        lwt v = f.get t in
-        return [ f.name; v ]
-      ) fields in
+      let all = List.map (fun f ->
+        match Vhd.Field.get t f with
+        | Some v -> [ f; v ]
+        | None -> assert false
+      ) Vhd.Field.list in
       print_table ["field"; "value"] all;
       return () in
     Lwt_main.run t;
