@@ -136,9 +136,9 @@ let descr_of_program = function
 let string_of_program p = String.concat "_" (List.map string_of_operation p)
 
 type state = {
-  to_close: File.fd Vhd.t list;
+  to_close: IO.fd Vhd.t list;
   to_unlink: string list;
-  child: File.fd Vhd.t option;
+  child: IO.fd Vhd.t option;
   contents: (int64 * Cstruct.t) list;
 }
 

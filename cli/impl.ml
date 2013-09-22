@@ -123,7 +123,7 @@ let require name arg = match arg with
 
 type field = {
   name: string;
-  get: File.fd Vhd.t -> string Lwt.t;
+  get: IO.fd Vhd.t -> string Lwt.t;
 }
 
 let fields = [
@@ -481,7 +481,7 @@ let socket sockaddr =
 
 let stream common (source: string) (relative_to: string option) (source_format: string) (destination_format: string) (destination: string) (source_protocol: string option) (destination_protocol: string option) prezeroed progress =
   try
-    Vhd_lwt.use_odirect := common.Common.unbuffered;
+    File.use_unbuffered := common.Common.unbuffered;
 
     let source_protocol = require "source-protocol" source_protocol in
 
@@ -637,7 +637,7 @@ let serve_chunked_to_raw source dest =
 
 let serve common_options source source_fd source_protocol destination destination_format =
   try
-    Vhd_lwt.use_odirect := common_options.Common.unbuffered;
+    File.use_unbuffered := common_options.Common.unbuffered;
 
     let source_protocol = protocol_of_string (require "source-protocol" source_protocol) in
 

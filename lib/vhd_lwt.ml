@@ -12,8 +12,6 @@
  * GNU Lesser General Public License for more details.
  *)
 
-let use_odirect = ref false
-
 module Fd = struct
   open Lwt
 
@@ -23,20 +21,15 @@ module Fd = struct
     lock: Lwt_mutex.t;
   }
 
-  external openfile_direct: string -> int -> Unix.file_descr = "stub_openfile_direct"
-  let openfile_buffered filename mode =
-    Unix.openfile filename [ Unix.O_RDWR ] mode
-
   let openfile filename =
-    let unix_fd = (if !use_odirect then openfile_direct else openfile_buffered) filename 0o644 in
+    let unix_fd = File.openfile filename 0o644 in
     let fd = Lwt_unix.of_unix_file_descr unix_fd in
     let lock = Lwt_mutex.create () in
     return { fd; filename; lock }
 
-  external fsync' : Unix.file_descr -> unit = "stub_fsync"
   let fsync { fd = fd } =
     let fd' = Lwt_unix.unix_file_descr fd in
-    fsync' fd'
+    File.fsync fd'
 
   let size_of_file t =
     lwt s = Lwt_unix.LargeFile.fstat t.fd in
@@ -124,7 +117,7 @@ module Fd = struct
       )
 end
 
-module File = struct
+module IO = struct
   type 'a t = 'a Lwt.t
 
   let (>>=) = Lwt.(>>=)
@@ -154,6 +147,6 @@ module File = struct
   include Memory
 end
 
-module Impl = Vhd.Make(File)
+module Impl = Vhd.Make(IO)
 include Impl
 include Fd 
