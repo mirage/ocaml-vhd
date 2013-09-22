@@ -221,10 +221,10 @@ let _ =
 	let common = Common.make false false true in
 
 	progress_cb 0.;
-	begin match Impl.stream common source relative_to source_format destination_format destination (Some "none") None !prezeroed true with
-        | `Error(_, e) ->
-          error "streaming failed: %s" e
-        | `Ok () -> ()
-        end;
+        let progress total_work work_done =
+          let fraction = Int64.(to_float work_done /. (to_float total_work)) in
+          progress_cb fraction in
+        let t = Impl.stream_t common source relative_to source_format destination_format destination (Some "none") None !prezeroed ~progress () in
+        Lwt_main.run t;
 	let time = Unix.gettimeofday () -. start in
 	debug "Time: %.2f seconds" time
