@@ -147,6 +147,7 @@ let progress_cb =
 		last_percent := new_percent
 
 let _ =
+	File.use_unbuffered := true;
 	let base = ref None and src = ref None and dest = ref None and size = ref (-1L) and prezeroed = ref false in
 	Arg.parse [ "-base", Arg.String (fun x -> base := Some x), "base disk to search for differences from (default: None)";
 		    "-src", Arg.String (fun x -> src := Some x), "source disk";
