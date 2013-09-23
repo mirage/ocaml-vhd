@@ -256,7 +256,7 @@ let _ =
         | _, device_or_url, None ->
 		let uri = Uri.of_string device_or_url in
 		let rewrite_scheme scheme =
-			let uri = Uri.make ~scheme:"http"
+			let uri = Uri.make ~scheme
 				?userinfo:(Uri.userinfo uri)
 				?host:(Uri.host uri)
 				?port:(Uri.port uri)
