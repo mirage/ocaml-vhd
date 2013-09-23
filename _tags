@@ -1,5 +1,5 @@
 # OASIS_START
-# DO NOT EDIT (digest: 60ca1f6c167aa4db589128df47fe61ee)
+# DO NOT EDIT (digest: 4133ed87238a090726851326b93eb2bf)
 # Ignore VCS directories, you can use the same kind of rule outside 
 # OASIS_START/STOP if you want to exclude directories that contains 
 # useless stuff for the build process
@@ -60,6 +60,7 @@
 <cli/sparse_dd.{native,byte}>: pkg_xenstore_transport.unix
 <cli/sparse_dd.{native,byte}>: pkg_threads
 <cli/sparse_dd.{native,byte}>: pkg_tapctl
+<cli/sparse_dd.{native,byte}>: pkg_xcp
 <cli/sparse_dd.{native,byte}>: pkg_cstruct.lwt
 <cli/sparse_dd.{native,byte}>: pkg_uuidm
 <cli/*.ml{,i}>: use_vhd
@@ -80,6 +81,7 @@
 <cli/*.ml{,i}>: pkg_xenstore_transport.unix
 <cli/*.ml{,i}>: pkg_threads
 <cli/*.ml{,i}>: pkg_tapctl
+<cli/*.ml{,i}>: pkg_xcp
 <cli/*.ml{,i}>: pkg_cstruct.lwt
 <cli/*.ml{,i}>: pkg_uuidm
 <cli/sparse_dd.{native,byte}>: custom

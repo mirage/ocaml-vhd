@@ -1,6 +1,30 @@
 (* Utility program which copies between two block devices, using vhd BATs and efficient zero-scanning
    for performance. *)
 
+let config_file = "/etc/sparse_dd.conf"
+let use_https = ref false
+let base = ref None 
+let src = ref None
+let dest = ref None
+let size = ref (-1L)
+let prezeroed = ref false
+let set_machine_logging = ref false
+
+let string_opt = function
+  | None -> "None"
+  | Some x -> x
+
+let options = [
+    "unbuffered", Arg.Bool (fun b -> File.use_unbuffered := b), (fun () -> string_of_bool !File.use_unbuffered), "use unbuffered I/O via O_DIRECT";
+    "https", Arg.Bool (fun b -> use_https := b), (fun () -> string_of_bool !use_https), "always use HTTPS, otherwise always use HTTP";
+    "base", Arg.String (fun x -> base := Some x), (fun () -> string_opt !base), "base disk to search for differences from";
+    "src", Arg.String (fun x -> src := Some x), (fun () -> string_opt !src), "source disk";
+    "dest", Arg.String (fun x -> dest := Some x), (fun () -> string_opt !dest), "destination disk";
+    "size", Arg.String (fun x -> size := Int64.of_string x), (fun () -> Int64.to_string !size), "number of bytes to copy";
+    "prezeroed", Arg.Set prezeroed, (fun () -> string_of_bool !prezeroed), "assume the destination disk has been prezeroed";
+    "machine", Arg.Set set_machine_logging, (fun () -> string_of_bool !set_machine_logging), "emit machine-readable output";
+]
+
 open Xenstore
 
 let ( +* ) = Int64.add
@@ -148,42 +172,8 @@ let progress_cb =
 
 let _ =
 	File.use_unbuffered := true;
-	let base = ref None and src = ref None and dest = ref None and size = ref (-1L) and prezeroed = ref false in
-	Arg.parse [ "-base", Arg.String (fun x -> base := Some x), "base disk to search for differences from (default: None)";
-		    "-src", Arg.String (fun x -> src := Some x), "source disk";
-		    "-dest", Arg.String (fun x -> dest := Some x), "destination disk";
-		    "-size", Arg.String (fun x -> size := Int64.of_string x), "number of bytes to copy";
-		    "-prezeroed", Arg.Set prezeroed, "assume the destination disk has been prezeroed (but not full of zeroes if [-base] is provided)";
-		    "-machine", Arg.Unit (fun () -> set_logging_mode Machine), "emit machine-readable output";
-	]
-	(fun x -> Printf.fprintf stderr "Warning: ignoring unexpected argument %s\n" x)
-	(String.concat "\n" [ "Usage:";
-			      Printf.sprintf "%s [-base x] [-prezeroed] <-src y> <-dest z> <-size s>" Sys.argv.(0);
-			      "  -- copy <s> bytes from <y> to <z>.";
-			      "     <x> and <y> are always interpreted as filenames. If <z> is a URL then the URL";
-			      "     is opened and encoded chunks of data are written directly to it";
-			      "     otherwise <z> is interpreted as a filename.";
-			      "";
-			      "     If <-base x> is specified then only copy differences";
-			      "     between <x> and <y>. If [-base x] is unspecified and [-prezeroed] is unspecified ";
-			      "     then assume the destination must be fully wiped.";
-			      "";
-			      "Examples:";
-			      "";
-			      Printf.sprintf "%s -prezeroed      -src /dev/xvda -dest /dev/xvdb -size 1024" Sys.argv.(0);
-			      "  -- copy 1024 bytes from /dev/xvda to /dev/xvdb assuming that /dev/xvdb is completely";
-			      "     full of zeroes so there's no need to explicitly erase other parts of the disk.";
-			      "";
-			      Printf.sprintf "%s                 -src /dev/xvda -dest /dev/xvdb -size 1024" Sys.argv.(0);
-			      "";
-			      "  -- copy 1024 bytes from /dev/xvda to /dev/xvdb, always explicitly writing zeroes";
-			      "     into /dev/xvdb under the assumption that it contains undefined data.";
-			      "";
-			      Printf.sprintf "%s -base /dev/xvdc -src /dev/xvda -dest /dev/xvdb -size 1024" Sys.argv.(0);
-			      "";
-			      " -- copy up to 1024 bytes of *differences* between /dev/xvdc and /dev/xvda into";
-			      "     into /dev/xvdb under the assumption that /dev/xvdb contains identical data";
-			      "     to /dev/xvdb."; ]);
+	Xcp_service.configure ~options ();
+	if !set_machine_logging then set_logging_mode Machine;
 	if !logging_mode = Buffer then set_logging_mode Human;
 
 	let src = match !src with
@@ -219,7 +209,7 @@ let _ =
 	| device, None -> device, "raw" in
 	let destination, destination_format = match dest, dest_vhd with
 	| _, Some vhd -> vhd, "vhd"
-	| device, None -> device, "raw" in
+	| device_or_url, None -> device_or_url, "raw" in
 	let relative_to = base_vhd in
 
 	let common = Common.make false false true in

@@ -37,7 +37,7 @@ Executable sparse_dd
   MainIs:             sparse_dd.ml
   Custom:             true
   Install:            false
-  BuildDepends:       lwt, lwt.unix, vhd-format, vhd-format.lwt, cmdliner, nbd, nbd.lwt, uri, cohttp, cohttp.lwt, xenstore, xenstore.client, xenstore.unix, xenstore_transport, xenstore_transport.unix, threads, tapctl
+  BuildDepends:       lwt, lwt.unix, vhd-format, vhd-format.lwt, cmdliner, nbd, nbd.lwt, uri, cohttp, cohttp.lwt, xenstore, xenstore.client, xenstore.unix, xenstore_transport, xenstore_transport.unix, threads, tapctl, xcp
 
 Executable disk_to_ocaml
   CompiledObject:     best
