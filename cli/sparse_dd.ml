@@ -2,13 +2,29 @@
    for performance. *)
 
 let config_file = "/etc/sparse_dd.conf"
-let use_https = ref false
+
+type encryption_mode =
+  | Always
+  | Never
+  | User
+let string_of_encryption_mode = function
+  | Always -> "always"
+  | Never -> "never"
+  | User -> "user"
+let encryption_mode_of_string = function
+  | "always" -> Always
+  | "never" -> Never
+  | "user" -> User
+  | x -> failwith (Printf.sprintf "Unknown encryption mode %s. Use always, never or user." x)
+let encryption_mode = ref Never
+
 let base = ref None 
 let src = ref None
 let dest = ref None
 let size = ref (-1L)
 let prezeroed = ref false
 let set_machine_logging = ref false
+let experimental_writes_bypass_tapdisk = ref false
 
 let string_opt = function
   | None -> "None"
@@ -16,7 +32,8 @@ let string_opt = function
 
 let options = [
     "unbuffered", Arg.Bool (fun b -> File.use_unbuffered := b), (fun () -> string_of_bool !File.use_unbuffered), "use unbuffered I/O via O_DIRECT";
-    "https", Arg.Bool (fun b -> use_https := b), (fun () -> string_of_bool !use_https), "always use HTTPS, otherwise always use HTTP";
+    "encryption-mode", Arg.String (fun x -> encryption_mode := encryption_mode_of_string x), (fun () -> string_of_encryption_mode !encryption_mode), "how to use encryption";
+    "experimental-writes-bypass-tapdisk", Arg.Set experimental_writes_bypass_tapdisk, (fun () -> string_of_bool !experimental_writes_bypass_tapdisk), "bypass tapdisk and write directly to the underlying vhd file";
     "base", Arg.String (fun x -> base := Some x), (fun () -> string_opt !base), "base disk to search for differences from";
     "src", Arg.String (fun x -> src := Some x), (fun () -> string_opt !src), "source disk";
     "dest", Arg.String (fun x -> dest := Some x), (fun () -> string_opt !dest), "destination disk";
@@ -61,11 +78,11 @@ let logging_mode = ref Buffer
 
 let buffer = ref []
 
-let debug_m = Mutex.create ()
+let log_m = Mutex.create ()
 
-let debug (fmt: ('a , unit, string, unit) format4) =
+let log (fmt: ('a , unit, string, unit) format4) =
 	let header = Cstruct.create Chunked.sizeof in
-	Mutex.execute debug_m
+	Mutex.execute log_m
 		(fun () ->
 			Printf.kprintf
 				(fun s ->
@@ -81,9 +98,12 @@ let debug (fmt: ('a , unit, string, unit) format4) =
 							Printf.printf "%s%s%!" (Cstruct.to_string header) s
 				) fmt
 		)
+let debug (fmt: ('a , unit, string, unit) format4) = log fmt
+let warn  (fmt: ('a , unit, string, unit) format4) = log fmt
+
 
 let set_logging_mode m =
-	let to_flush = Mutex.execute debug_m
+	let to_flush = Mutex.execute log_m
 		(fun () ->
 			logging_mode := m;
 			match m with
@@ -99,33 +119,35 @@ let startswith prefix x =
 	and x' = String.length x in
 	prefix' <= x' && (String.sub x 0 prefix' = prefix)
 
+(** [find_backend_device path] returns [Some path'] where [path'] is the backend path in
+    the driver domain corresponding to the frontend device [path] in this domain. *)
+let find_backend_device path =
+	try 
+		let open Xenstore in
+		(* If we're looking at a xen frontend device, see if the backend
+		   is in the same domain. If so check if it looks like a .vhd *)
+		let rdev = (Unix.stat path).Unix.st_rdev in
+		let major = rdev / 256 and minor = rdev mod 256 in
+		let link = Unix.readlink (Printf.sprintf "/sys/dev/block/%d:%d/device" major minor) in
+		match List.rev (Re_str.split (Re_str.regexp_string "/") link) with
+		| id :: "xen" :: "devices" :: _ when startswith "vbd-" id ->
+			let id = int_of_string (String.sub id 4 (String.length id - 4)) in
+			with_xs (fun xs -> 
+				let self = xs.Xs.read "domid" in
+				let backend = xs.Xs.read (Printf.sprintf "device/vbd/%d/backend" id) in
+				let params = xs.Xs.read (Printf.sprintf "%s/params" backend) in
+				match Re_str.split (Re_str.regexp_string "/") backend with
+				| "local" :: "domain" :: bedomid :: _ ->
+					assert (self = bedomid);
+					Some params
+				| _ -> raise Not_found
+			)
+		| _ -> raise Not_found
+	with _ -> None
 (** [vhd_of_device path] returns (Some vhd) where 'vhd' is the vhd leaf backing a particular device [path] or None.
     [path] may either be a blktap2 device *or* a blkfront device backed by a blktap2 device. If the latter then
     the script must be run in the same domain as blkback. *)
 let vhd_of_device path =
-	let find_underlying_tapdisk path =
-		try 
-			let open Xenstore in
-		(* If we're looking at a xen frontend device, see if the backend
-		   is in the same domain. If so check if it looks like a .vhd *)
-			let rdev = (Unix.stat path).Unix.st_rdev in
-			let major = rdev / 256 and minor = rdev mod 256 in
-			let link = Unix.readlink (Printf.sprintf "/sys/dev/block/%d:%d/device" major minor) in
-			match List.rev (Re_str.split (Re_str.regexp_string "/") link) with
-			| id :: "xen" :: "devices" :: _ when startswith "vbd-" id ->
-				let id = int_of_string (String.sub id 4 (String.length id - 4)) in
-				with_xs (fun xs -> 
-					let self = xs.Xs.read "domid" in
-					let backend = xs.Xs.read (Printf.sprintf "device/vbd/%d/backend" id) in
-					let params = xs.Xs.read (Printf.sprintf "%s/params" backend) in
-					match Re_str.split (Re_str.regexp_string "/") backend with
-					| "local" :: "domain" :: bedomid :: _ ->
-						assert (self = bedomid);
-						Some params
-					| _ -> raise Not_found
-				)
-			| _ -> raise Not_found
-		with _ -> None in
 	let tapdisk_of_path path =
 		try 
 			match Tapctl.of_device (Tapctl.create ()) path with
@@ -140,7 +162,30 @@ let vhd_of_device path =
 		| _ -> 
 			debug "Device %s has an unknown driver" path;
 			None in
-	find_underlying_tapdisk path |> Opt.default path |> tapdisk_of_path
+	find_backend_device path |> Opt.default path |> tapdisk_of_path
+
+let after f g =
+	try
+		let r = f () in
+		g ();
+		r
+	with e ->
+		g ();
+		raise e
+
+let with_paused_tapdisk path f =
+	let path = find_backend_device path |> Opt.default path in
+
+	let context = Tapctl.create () in
+	match Tapctl.of_device context path with
+	| tapdev, _, (Some (driver, path)) ->
+		debug "pausing tapdisk for %s" path;
+		Tapctl.pause context tapdev;
+		after f (fun () ->
+			debug "unpausing tapdisk for %s" path;
+			Tapctl.unpause context tapdev path Tapctl.Vhd
+		)
+	| _, _, _ -> failwith (Printf.sprintf "Failed to pause tapdisk for %s" path)
 
 let deref_symlinks path = 
 	let rec inner seen_already path = 
@@ -195,10 +240,7 @@ let _ =
 
 	debug "src = %s; dest = %s; base = %s; size = %Ld" src dest (Opt.default "None" base) size;
 	let src_vhd = vhd_of_device src in
-(* TODO: need to pause and unpause the tapdisk to make use of this
 	let dest_vhd = vhd_of_device dest in
-*)
-	let dest_vhd = None in
 	let base_vhd = match base with
 		| None -> None
 		| Some x -> vhd_of_device x in
@@ -207,9 +249,31 @@ let _ =
 	let source, source_format = match src, src_vhd with
 	| _, Some vhd -> vhd, "vhd"
 	| device, None -> device, "raw" in
-	let destination, destination_format = match dest, dest_vhd with
-	| _, Some vhd -> vhd, "vhd"
-	| device_or_url, None -> device_or_url, "raw" in
+	let destination, destination_format = match !experimental_writes_bypass_tapdisk, dest, dest_vhd with
+	| true, _, Some vhd ->
+		warn "experimental_writes_bypass_tapdisk set: this may cause data corruption";
+		vhd, "vhd"
+        | _, device_or_url, None ->
+		let uri = Uri.of_string device_or_url in
+		let rewrite_scheme scheme =
+			let uri = Uri.make ~scheme:"http"
+				?userinfo:(Uri.userinfo uri)
+				?host:(Uri.host uri)
+				?port:(Uri.port uri)
+				~path:(Uri.path uri)
+				~query:(Uri.query uri)
+				?fragment:(Uri.fragment uri)
+				() in
+			Uri.to_string uri in
+		begin match Uri.scheme uri with
+		| Some "https" when !encryption_mode = Never ->
+			warn "turning off encryption for this transfer as requested by config file";
+			rewrite_scheme "http", "raw"
+		| Some "http" when !encryption_mode = Always ->
+			warn "turning on encryption for this transfer as requested by config file";
+			rewrite_scheme "https", "raw"
+		| _ -> device_or_url, "raw"
+		end in
 	let relative_to = base_vhd in
 
 	let common = Common.make false false true in
@@ -219,6 +283,8 @@ let _ =
           let fraction = Int64.(to_float work_done /. (to_float total_work)) in
           progress_cb fraction in
         let t = Impl.stream_t common source relative_to source_format destination_format destination (Some "none") None !prezeroed ~progress () in
-        Lwt_main.run t;
+	if destination_format = "vhd"
+	then with_paused_tapdisk dest (fun () -> Lwt_main.run t)
+	else Lwt_main.run t;
 	let time = Unix.gettimeofday () -. start in
 	debug "Time: %.2f seconds" time
