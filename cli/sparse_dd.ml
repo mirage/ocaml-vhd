@@ -114,6 +114,17 @@ let set_logging_mode m =
 		) in
 	List.iter (fun x -> debug "%s" x) to_flush
 
+let close_output () =
+	Mutex.execute log_m
+		(fun () ->
+			match !logging_mode with
+				| Machine ->
+					let header = Cstruct.create Chunked.sizeof in
+					Chunked.marshal header { Chunked.offset = 0L; data = Cstruct.create 0 };
+					Printf.printf "%s%!" (Cstruct.to_string header)
+				| _ -> ()
+		)
+
 let startswith prefix x =
 	let prefix' = String.length prefix
 	and x' = String.length x in
@@ -287,4 +298,5 @@ let _ =
 	then with_paused_tapdisk dest (fun () -> Lwt_main.run t)
 	else Lwt_main.run t;
 	let time = Unix.gettimeofday () -. start in
-	debug "Time: %.2f seconds" time
+	debug "Time: %.2f seconds" time;
+	close_output ()
