@@ -118,9 +118,10 @@ let complete op fd buffer =
   let rec loop acc fd buf ofs len =
     op fd buf ofs len >>= fun n ->
     let len' = len - n in
+    let acc' = acc + n in
     if len' = 0 || n = 0
-    then return acc
-    else loop (acc + n) fd buf (ofs + n) len' in
+    then return acc'
+    else loop acc' fd buf (ofs + n) len' in
   loop 0 fd buf ofs len >>= fun n ->
   if n = 0 && len <> 0
   then fail End_of_file
