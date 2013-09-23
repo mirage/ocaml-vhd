@@ -46,6 +46,7 @@ module type IO = sig
 
   val exists: string -> bool t
   val openfile: string -> fd t
+  val fsync: fd -> unit
   val create: string -> fd t
   val close: fd -> unit t
   val get_file_size: string -> int64 t

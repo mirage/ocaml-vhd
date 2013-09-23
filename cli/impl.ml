@@ -521,7 +521,8 @@ let serve common_options source source_fd source_protocol destination destinatio
       ( match destination_endpoint with
         | File path -> Fd.openfile path
         | _ -> failwith (Printf.sprintf "Not implemented: writing to destination %s" destination) ) >>= fun destination_fd ->
-      serve_chunked_to_raw source_sock destination_fd in
+      serve_chunked_to_raw source_sock destination_fd >>= fun () ->
+      (try Fd.fsync destination_fd; return () with _ -> fail (Failure "fsync failed")) in
     Lwt_main.run thread;
     `Ok ()
   with Failure x ->
