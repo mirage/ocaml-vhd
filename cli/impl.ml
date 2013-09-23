@@ -111,6 +111,60 @@ let console_progress_bar total_work =
 
 let no_progress_bar _ _ = ()
 
+let complete op fd buffer =
+  let ofs = buffer.Cstruct.off in
+  let len = buffer.Cstruct.len in
+  let buf = buffer.Cstruct.buffer in
+  let rec loop acc fd buf ofs len =
+    op fd buf ofs len >>= fun n ->
+    let len' = len - n in
+    if len' = 0 || n = 0
+    then return acc
+    else loop (acc + n) fd buf (ofs + n) len' in
+  loop 0 fd buf ofs len >>= fun n ->
+  if n = 0 && len <> 0
+  then fail End_of_file
+  else return ()
+
+(* Suitable for writing over the network because it doesn't lseek. Should
+   merge this with Vhd_lwt.Fd.really_write *)
+let really_write = complete Lwt_bytes.write
+let really_read = complete Lwt_bytes.read
+
+module Channels = struct
+  type t = {
+    ic: Lwt_io.input_channel;
+    oc: Lwt_io.output_channel;
+    really_read: Cstruct.t -> unit Lwt.t;
+    really_write: Cstruct.t -> unit Lwt.t;
+    close: unit -> unit Lwt.t
+  }
+  let of_raw_fd fd =
+    let ic = Lwt_io.of_fd ~mode:Lwt_io.input fd in
+    let oc = Lwt_io.of_fd ~mode:Lwt_io.output fd in
+    let really_read = complete Lwt_bytes.read fd in
+    let really_write = complete Lwt_bytes.write fd in
+    let close () =
+      let _ = try_lwt Lwt_io.close oc with _ -> return () in
+      try_lwt Lwt_io.close ic with _ -> return () in
+    return { ic; oc; really_read; really_write; close }
+
+  let sslctx =
+    Ssl.init ();
+    Ssl.create_context Ssl.SSLv23 Ssl.Client_context
+
+  let of_ssl_fd fd =
+    Lwt_ssl.ssl_connect fd sslctx >>= fun sock ->
+    let ic = Lwt_ssl.in_channel_of_descr sock in
+    let oc = Lwt_ssl.out_channel_of_descr sock in
+    let really_read = complete Lwt_ssl.read_bytes sock in
+    let really_write = complete Lwt_ssl.write_bytes sock in
+    let close () =
+      Lwt_chan.flush oc >>= fun () ->
+      Lwt_ssl.close sock in
+    return { ic; oc; really_read; really_write; close }
+end
+
 let stream_human common _ s _ ?(progress = no_progress_bar) () =
   (* How much space will we need for the sector numbers? *)
   let sectors = Int64.(shift_right (add s.size.total 511L) sector_shift) in
@@ -130,8 +184,10 @@ let stream_human common _ s _ ?(progress = no_progress_bar) () =
   Printf.printf "# end of stream\n";
   return None
 
-let stream_nbd common sock s prezeroed ?(progress = no_progress_bar) () =
-  Nbd_lwt_client.negotiate sock >>= fun (server, size, flags) ->
+let stream_nbd common c s prezeroed ?(progress = no_progress_bar) () =
+  let c = { Nbd_lwt_client.read = c.Channels.really_read; write = c.Channels.really_write } in
+
+  Nbd_lwt_client.negotiate c >>= fun (server, size, flags) ->
 
   (* Work to do is: non-zero data to write + empty sectors if the
      target is not prezeroed *)
@@ -157,38 +213,9 @@ let stream_nbd common sock s prezeroed ?(progress = no_progress_bar) () =
   ) (0L, 0L) s.elements >>= fun _ ->
   p total_work;
 
-  Lwt_unix.close sock >>= fun () ->
   return (Some total_work)
 
-(* Suitable for writing over the network because it doesn't lseek. Should
-   merge this with Vhd_lwt.Fd.really_write *)
-let really_write fd buffer =
-  let ofs = buffer.Cstruct.off in
-  let len = buffer.Cstruct.len in
-  let buf = buffer.Cstruct.buffer in
-  let rec rwrite acc fd buf ofs len =
-    Lwt_bytes.write fd buf ofs len >>= fun n ->
-    let len = len - n in
-    let acc = acc + n in
-    if len = 0 || n = 0
-    then return acc
-    else rwrite acc fd buf (ofs + n) len in
-  rwrite 0 fd buf ofs len >>= fun written ->
-  if written = 0 && len <> 0
-  then fail End_of_file
-  else return ()
-
-let really_read fd buf' = 
-  let ofs = buf'.Cstruct.off in
-  let len = buf'.Cstruct.len in
-  let buf = buf'.Cstruct.buffer in
-  let rec rread fd buf ofs len = 
-    Lwt_bytes.read fd buf ofs len >>= fun n ->
-    if n = 0 then raise End_of_file;
-    if n < len then rread fd buf (ofs + n) (len - n) else return () in
-  rread fd buf ofs len
-
-let stream_chunked common sock s prezeroed ?(progress = no_progress_bar) () =
+let stream_chunked common c s prezeroed ?(progress = no_progress_bar) () =
   (* Work to do is: non-zero data to write + empty sectors if the
      target is not prezeroed *)
   let total_work = Int64.(add (add s.size.metadata s.size.copy) (if prezeroed then 0L else s.size.empty)) in
@@ -203,8 +230,8 @@ let stream_chunked common sock s prezeroed ?(progress = no_progress_bar) () =
       | Element.Sectors data ->
         let t = { Chunked.offset = Int64.(mul sector 512L); data } in
         Chunked.marshal header t;
-        really_write sock header >>= fun () ->
-        really_write sock data >>= fun () ->
+        c.Channels.really_write header >>= fun () ->
+        c.Channels.really_write data >>= fun () ->
         return Int64.(of_int (Cstruct.len data))
       | Element.Empty n -> (* must be prezeroed *)
         assert prezeroed;
@@ -219,12 +246,11 @@ let stream_chunked common sock s prezeroed ?(progress = no_progress_bar) () =
 
   (* Send the end-of-stream marker *)
   Chunked.marshal header { Chunked.offset = 0L; data = Cstruct.create 0 };
-  really_write sock header >>= fun () ->
+  c.Channels.really_write header >>= fun () ->
 
-  Lwt_unix.close sock >>= fun () ->
   return (Some total_work)
 
-let stream_raw common sock s _ ?(progress = no_progress_bar) () =
+let stream_raw common c s _ ?(progress = no_progress_bar) () =
   (* Work to do is: non-zero data to write + empty sectors *)
   let total_work = Int64.(add (add s.size.metadata s.size.copy) s.size.empty) in
   let p = progress total_work in
@@ -235,7 +261,7 @@ let stream_raw common sock s _ ?(progress = no_progress_bar) () =
   fold_left (fun(sector, work_done) x ->
     (match x with
       | Element.Sectors data ->
-        really_write sock data >>= fun () ->
+        c.Channels.really_write data >>= fun () ->
         return Int64.(of_int (Cstruct.len data))
       | _ -> fail (Failure (Printf.sprintf "unexpected stream element: %s" (Element.to_string x))) ) >>= fun work ->
     let sector = Int64.add sector (Element.len x) in
@@ -245,7 +271,6 @@ let stream_raw common sock s _ ?(progress = no_progress_bar) () =
   ) (0L, 0L) s.elements >>= fun _ ->
   p total_work;
 
-  Lwt_unix.close sock >>= fun () ->
   return (Some total_work)
 
 type protocol = Nbd | Chunked | Human | NoProtocol
@@ -296,6 +321,8 @@ let socket sockaddr =
   | _ -> failwith "unsupported sockaddr type" in
   Lwt_unix.socket family Unix.SOCK_STREAM 0
 
+
+
 let stream_t common source relative_to source_format destination_format destination source_protocol destination_protocol prezeroed ?(progress = no_progress_bar) () =
   ( match source_format, destination_format with
     | "vhd", "vhd" ->
@@ -313,19 +340,22 @@ let stream_t common source relative_to source_format destination_format destinat
       Raw_IO.openfile source >>= fun t ->
       Raw_input.raw t
     | _, _ -> assert false ) >>= fun s ->
-  endpoint_of_string destination >>= fun endpoint ->
 
+  endpoint_of_string destination >>= fun endpoint ->
+  let use_ssl = match endpoint with Https _ -> true | _ -> false in
   ( match endpoint with
     | File_descr fd ->
-      return (fd, [ Nbd; NoProtocol; Chunked; Human ])
+      Channels.of_raw_fd fd >>= fun c ->
+      return (c, [ Nbd; NoProtocol; Chunked; Human ])
     | Sockaddr sockaddr ->
       let sock = socket sockaddr in
       Lwt_unix.connect sock sockaddr >>= fun () ->
-      return (sock, [ Nbd; NoProtocol; Chunked; Human ])
-    | Http uri'
-    | Https uri' ->
+      Channels.of_raw_fd sock >>= fun c ->
+      return (c, [ Nbd; NoProtocol; Chunked; Human ])
+    | Https uri'
+    | Http uri' ->
       (* TODO: https is not currently implemented *)
-      let port = match Uri.port uri' with None -> 80 | Some port -> port in
+      let port = match Uri.port uri' with None -> (if use_ssl then 443 else 80) | Some port -> port in
       let host = match Uri.host uri' with None -> failwith "Please supply a host in the URI" | Some host -> host in
       Lwt_unix.gethostbyname host >>= fun host_entry ->
       let sockaddr = Lwt_unix.ADDR_INET(host_entry.Lwt_unix.h_addr_list.(0), port) in
@@ -333,9 +363,8 @@ let stream_t common source relative_to source_format destination_format destinat
       Lwt_unix.connect sock sockaddr >>= fun () ->
 
       let open Cohttp in
-      let ic = Lwt_io.of_fd ~mode:Lwt_io.input sock in
-      let oc = Lwt_io.of_fd ~mode:Lwt_io.output sock in
-            
+      ( if use_ssl then Channels.of_ssl_fd sock else Channels.of_raw_fd sock ) >>= fun c ->
+  
       let module Request = Request.Make(Cohttp_lwt_unix_io) in
       let module Response = Response.Make(Cohttp_lwt_unix_io) in
       let headers = Header.init () in
@@ -353,8 +382,8 @@ let stream_t common source relative_to source_format destination_format destinat
             exit 1
           end in
       let request = Cohttp.Request.make ~meth:`PUT ~version:`HTTP_1_1 ~headers uri' in
-      Request.write (fun t _ -> return ()) request oc >>= fun () ->
-      Response.read ic >>= fun r ->
+      Request.write (fun t _ -> return ()) request c.Channels.oc >>= fun () ->
+      Response.read c.Channels.ic >>= fun r ->
       begin match r with
       | None -> fail (Failure "Unable to parse HTTP response from server")
       | Some x ->
@@ -366,11 +395,11 @@ let stream_t common source relative_to source_format destination_format destinat
             let te = "transfer-encoding" in
             List.mem_assoc te headers && (List.assoc te headers = "nbd") in
           if advertises_nbd
-          then return(sock, [ Nbd ])
-          else return(sock, [ Chunked; NoProtocol ])
+          then return(c, [ Nbd ])
+          else return(c, [ Chunked; NoProtocol ])
         end else fail (Failure (Code.reason_phrase_of_code code))
       end
-    ) >>= fun (sock, possible_protocols) ->
+    ) >>= fun (c, possible_protocols) ->
     let destination_protocol = match destination_protocol with
       | Some x -> x
       | None ->
@@ -385,7 +414,8 @@ let stream_t common source relative_to source_format destination_format destinat
           | Nbd -> stream_nbd
           | Human -> stream_human
           | Chunked -> stream_chunked
-          | NoProtocol -> stream_raw) common sock s prezeroed ~progress () >>= fun p ->
+          | NoProtocol -> stream_raw) common c s prezeroed ~progress () >>= fun p ->
+      c.Channels.close () >>= fun () ->
       match p with
       | Some p ->
         let time = Unix.gettimeofday () -. start in
