@@ -251,12 +251,13 @@ let stream_chunked common c s prezeroed ?(progress = no_progress_bar) () =
 
   return (Some total_work)
 
-let stream_raw common c s _ ?(progress = no_progress_bar) () =
-  (* Work to do is: non-zero data to write + empty sectors *)
-  let total_work = Int64.(add (add s.size.metadata s.size.copy) s.size.empty) in
+let stream_raw common c s prezeroed ?(progress = no_progress_bar) () =
+  (* Work to do is: non-zero data to write + empty sectors if the
+     target is not prezeroed *)
+  let total_work = Int64.(add (add s.size.metadata s.size.copy) (if prezeroed then 0L else s.size.empty)) in
   let p = progress total_work in
 
-  expand_empty s >>= fun s ->
+  ( if not prezeroed then expand_empty s else return s ) >>= fun s ->
   expand_copy s >>= fun s ->
 
   fold_left (fun(sector, work_done) x ->
