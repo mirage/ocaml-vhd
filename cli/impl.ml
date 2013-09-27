@@ -253,6 +253,9 @@ let stream_raw common c s prezeroed ?(progress = no_progress_bar) () =
       | Element.Sectors data ->
         c.Channels.really_write data >>= fun () ->
         return Int64.(of_int (Cstruct.len data))
+      | Element.Empty n -> (* must be prezeroed *)
+        assert prezeroed;
+        return 0L
       | _ -> fail (Failure (Printf.sprintf "unexpected stream element: %s" (Element.to_string x))) ) >>= fun work ->
     let sector = Int64.add sector (Element.len x) in
     let work_done = Int64.add work_done work in
