@@ -879,6 +879,57 @@ module BAT = struct
     done
 end
 
+module Batmap = struct
+
+  cstruct header {
+    uint8_t magic[8];
+    uint64_t offset;
+    uint32_t size;
+    uint16_t major_version;
+    uint16_t minor_version;
+    uint32_t checksum;
+    uint8_t marker
+  } as big_endian
+
+  let magic = "tdbatmap"
+
+  let current_major_version = 1
+  let current_minor_version = 3
+
+  let sizeof (x: Header.t) =
+    (1 lsl (x.Header.block_size_sectors_shift + sector_shift) + 7) lsr 3
+
+  type t = {
+    offset: int64;
+    size: int32;
+    major_version: int;
+    minor_version: int;
+    checksum: int32;
+    marker: int
+  }
+
+  let unmarshal (buf: Cstruct.t) =
+    let open Vhd_result in
+    let magic' = copy_header_magic buf in
+    ( if magic' <> magic
+      then fail (Failure (Printf.sprintf "Expected cookie %s, got %s" magic magic'))
+      else return () ) >>= fun () ->
+    let offset = get_header_offset buf in
+    let size = get_header_size buf in
+    let major_version = get_header_major_version buf in
+    let minor_version = get_header_minor_version buf in
+    ( if major_version <> current_major_version || minor_version <> current_minor_version
+      then fail (Failure (Printf.sprintf "Unexpected BATmap version: %d.%d" current_major_version current_minor_version))
+      else return () ) >>= fun () ->
+    let checksum = get_header_checksum buf in
+    let marker = get_header_marker buf in
+    return { offset; size; major_version; minor_version; checksum; marker }
+
+  let offset (x: Header.t) =
+    Int64.(x.Header.table_offset ++ (of_int (BAT.sizeof_bytes x)))
+
+end
+
 module Bitmap = struct
   type t =
     | Full
