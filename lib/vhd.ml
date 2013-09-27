@@ -879,7 +879,7 @@ module BAT = struct
     done
 end
 
-module Batmap = struct
+module Batmap_header = struct
 
   cstruct header {
     uint8_t magic[8];
@@ -896,12 +896,11 @@ module Batmap = struct
   let current_major_version = 1
   let current_minor_version = 3
 
-  let sizeof (x: Header.t) =
-    (1 lsl (x.Header.block_size_sectors_shift + sector_shift) + 7) lsr 3
+  let sizeof = sizeof_header
 
   type t = {
     offset: int64;
-    size: int32;
+    size: int;
     major_version: int;
     minor_version: int;
     checksum: int32;
@@ -915,7 +914,7 @@ module Batmap = struct
       then fail (Failure (Printf.sprintf "Expected cookie %s, got %s" magic magic'))
       else return () ) >>= fun () ->
     let offset = get_header_offset buf in
-    let size = get_header_size buf in
+    let size = Int32.to_int (get_header_size buf) in
     let major_version = get_header_major_version buf in
     let minor_version = get_header_minor_version buf in
     ( if major_version <> current_major_version || minor_version <> current_minor_version
@@ -927,6 +926,22 @@ module Batmap = struct
 
   let offset (x: Header.t) =
     Int64.(x.Header.table_offset ++ (of_int (BAT.sizeof_bytes x)))
+
+end
+
+module Batmap = struct
+  type t = Cstruct.t
+
+  let sizeof (x: Header.t) =
+    (1 lsl (x.Header.block_size_sectors_shift + sector_shift) + 7) lsr 3
+
+  let unmarshal (buf: Cstruct.t) (h: Batmap_header.t) =
+    let open Vhd_result in
+    let checksum = Checksum.of_cstruct buf in
+    ( if checksum <> h.Batmap_header.checksum
+      then fail (Failure (Printf.sprintf "Invalid checksum. Expected %08lx got %08lx" h.Batmap_header.checksum checksum))
+      else return () ) >>= fun () ->
+    return buf
 
 end
 
@@ -986,6 +1001,7 @@ module Vhd = struct
     footer: Footer.t;
     parent: 'a t option;
     bat: BAT.t;
+    batmap: (Batmap_header.t * Batmap.t) option;
     bitmap_cache: (int * Bitmap.t) option ref; (* effective only for streaming *)
   }
 
@@ -1331,6 +1347,17 @@ module Make = functor(File: S.IO) -> struct
       really_write fd header.Header.table_offset buf
   end
 
+  module Batmap_IO = struct
+    open Batmap
+
+    let read fd (header: Header.t) =
+      really_read fd (Batmap_header.offset header) Batmap_header.sizeof >>= fun buf ->
+      Batmap_header.unmarshal buf >>|= fun h ->
+      really_read fd h.Batmap_header.offset h.Batmap_header.size >>= fun batmap ->
+      Batmap.unmarshal batmap h >>|= fun batmap ->
+      return (Some (h, batmap)) 
+  end
+
   module Bitmap_IO = struct
     open Bitmap
 
@@ -1387,8 +1414,9 @@ module Make = functor(File: S.IO) -> struct
 
       let bat_buffer = File.alloc (BAT.sizeof_bytes header) in
       let bat = BAT.of_buffer header bat_buffer in
+      let batmap = None in
       File.create filename >>= fun handle ->
-      let t = { filename; handle; header; footer; parent = None; bat; bitmap_cache = ref None } in
+      let t = { filename; handle; header; footer; parent = None; bat; batmap; bitmap_cache = ref None } in
       write t >>= fun t ->
       return t
 
@@ -1421,7 +1449,8 @@ module Make = functor(File: S.IO) -> struct
          having to perform reference counting *)
       File.openfile parent.Vhd.filename >>= fun parent_handle ->
       let parent = { parent with handle = parent_handle } in
-      let t = { filename; handle; header; footer; parent = Some parent; bat; bitmap_cache = ref None } in
+      let batmap = None in
+      let t = { filename; handle; header; footer; parent = Some parent; bat; batmap; bitmap_cache = ref None } in
       write t >>= fun t ->
       return t
 
@@ -1437,7 +1466,8 @@ module Make = functor(File: S.IO) -> struct
           return (Some p)
         | _ ->
           return None) >>= fun parent ->
-      return { filename; handle; header; footer; bat; bitmap_cache = ref None; parent }
+      Batmap_IO.read handle header >>= fun batmap ->
+      return { filename; handle; header; footer; bat; bitmap_cache = ref None; batmap; parent }
 
     let rec close t =
       (* This is where we could repair the footer if we have chosen not to

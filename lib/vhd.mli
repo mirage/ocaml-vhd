@@ -234,6 +234,21 @@ module BAT : sig
   (** [to_string t] creates a debug-printable string *)
 end
 
+module Batmap_header : sig
+  type t = {
+    offset: int64;
+    size: int;
+    major_version: int;
+    minor_version: int;
+    checksum: int32;
+    marker: int
+  }
+end
+
+module Batmap : sig
+  type t
+end
+
 module Bitmap : sig
   type t 
 
@@ -259,6 +274,7 @@ module Vhd : sig
     footer : Footer.t;
     parent : 'a t option;
     bat : BAT.t;
+    batmap : (Batmap_header.t * Batmap.t) option;
     bitmap_cache : (int * Bitmap.t) option ref;
   }
 
