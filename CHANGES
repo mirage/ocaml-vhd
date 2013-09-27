@@ -1,3 +1,6 @@
+0.5.1 (2013-09-27)
+* cope with vhds with over-size BATs
+* respect --prezeroed when streaming into raw format
 
 0.5.0 (2013-09-23)
 * new streaming interface supporting both raw and vhd formats
