@@ -111,44 +111,28 @@ let console_progress_bar total_work =
 
 let no_progress_bar _ _ = ()
 
-let complete op fd buffer =
-  let ofs = buffer.Cstruct.off in
-  let len = buffer.Cstruct.len in
-  let buf = buffer.Cstruct.buffer in
-  let rec loop acc fd buf ofs len =
-    op fd buf ofs len >>= fun n ->
-    let len' = len - n in
-    let acc' = acc + n in
-    if len' = 0 || n = 0
-    then return acc'
-    else loop acc' fd buf (ofs + n) len' in
-  loop 0 fd buf ofs len >>= fun n ->
-  if n = 0 && len <> 0
-  then fail End_of_file
-  else return ()
-
-(* Suitable for writing over the network because it doesn't lseek. Should
-   merge this with Vhd_lwt.Fd.really_write *)
-let really_write = complete Lwt_bytes.write
-let really_read = complete Lwt_bytes.read
-
 module Channels = struct
   type t = {
     ic: Lwt_io.input_channel;
     oc: Lwt_io.output_channel;
     really_read: Cstruct.t -> unit Lwt.t;
     really_write: Cstruct.t -> unit Lwt.t;
+    really_write_offset: int64 ref;
     close: unit -> unit Lwt.t
   }
   let of_raw_fd fd =
     let ic = Lwt_io.of_fd ~mode:Lwt_io.input fd in
     let oc = Lwt_io.of_fd ~mode:Lwt_io.output fd in
-    let really_read = complete Lwt_bytes.read fd in
-    let really_write = complete Lwt_bytes.write fd in
+    let really_write_offset = ref 0L in
+    let really_read = complete "read" None Lwt_bytes.read fd in
+    let really_write buf =
+      complete "write" (Some !really_write_offset) Lwt_bytes.write fd buf >>= fun () ->
+      really_write_offset := Int64.(add !really_write_offset (of_int (Cstruct.len buf)));
+      return () in
     let close () =
       let _ = try_lwt Lwt_io.close oc with _ -> return () in
       try_lwt Lwt_io.close ic with _ -> return () in
-    return { ic; oc; really_read; really_write; close }
+    return { ic; oc; really_read; really_write; really_write_offset; close }
 
   let sslctx =
     Ssl.init ();
@@ -158,12 +142,16 @@ module Channels = struct
     Lwt_ssl.ssl_connect fd sslctx >>= fun sock ->
     let ic = Lwt_ssl.in_channel_of_descr sock in
     let oc = Lwt_ssl.out_channel_of_descr sock in
-    let really_read = complete Lwt_ssl.read_bytes sock in
-    let really_write = complete Lwt_ssl.write_bytes sock in
+    let really_write_offset = ref 0L in
+    let really_read = complete "read" None Lwt_ssl.read_bytes sock in
+    let really_write buf =
+      complete "write" (Some !really_write_offset) Lwt_ssl.write_bytes sock buf >>= fun () ->
+      really_write_offset := Int64.(add !really_write_offset (of_int (Cstruct.len buf)));
+      return () in
     let close () =
       Lwt_chan.flush oc >>= fun () ->
       Lwt_ssl.close sock in
-    return { ic; oc; really_read; really_write; close }
+    return { ic; oc; really_read; really_write; really_write_offset; close }
 end
 
 let stream_human common _ s _ ?(progress = no_progress_bar) () =
@@ -284,6 +272,7 @@ let string_of_protocol = function
 
 type endpoint =
   | Stdout
+  | Null
   | File_descr of Lwt_unix.file_descr
   | Sockaddr of Lwt_unix.sockaddr
   | File of string
@@ -292,6 +281,7 @@ type endpoint =
 
 let endpoint_of_string = function
   | "stdout:" -> return Stdout
+  | "null:" -> return Null
   | uri ->
     let uri' = Uri.of_string uri in
     begin match Uri.scheme uri' with
@@ -346,6 +336,17 @@ let stream_t common source relative_to source_format destination_format destinat
   endpoint_of_string destination >>= fun endpoint ->
   let use_ssl = match endpoint with Https _ -> true | _ -> false in
   ( match endpoint with
+    | File path ->
+      Lwt_unix.openfile path [ Unix.O_RDWR ] 0o0 >>= fun fd ->
+      Channels.of_raw_fd fd >>= fun c ->
+      return (c, [ NoProtocol; Human ])
+    | Null ->
+      Lwt_unix.openfile "/dev/null" [ Unix.O_RDWR ] 0o0 >>= fun fd ->
+      Channels.of_raw_fd fd >>= fun c ->
+      return (c, [ NoProtocol; Human ])
+    | Stdout ->
+      Channels.of_raw_fd Lwt_unix.stdout >>= fun c ->
+      return (c, [ NoProtocol; Human ])
     | File_descr fd ->
       Channels.of_raw_fd fd >>= fun c ->
       return (c, [ Nbd; NoProtocol; Chunked; Human ])
@@ -467,12 +468,12 @@ let stream common (source: string) (relative_to: string option) (source_format: 
   with Failure x ->
     `Error(true, x)
 
-let serve_chunked_to_raw source dest =
+let serve_chunked_to_raw c dest =
   let header = Cstruct.create Chunked.sizeof in
   let twomib = 2 * 1024 * 1024 in
   let buffer = Memory.alloc twomib in
   let rec loop () =
-    really_read source header >>= fun () ->
+    c.Channels.really_read header >>= fun () ->
     if Chunked.is_last_chunk header then begin
       Printf.fprintf stderr "Received last chunk.\n%!";
       return ()
@@ -480,7 +481,7 @@ let serve_chunked_to_raw source dest =
       let rec block offset remaining =
         let this = Int32.(to_int (min (of_int twomib) remaining)) in
         let buf = if this < twomib then Cstruct.sub buffer 0 this else buffer in
-        really_read source buf >>= fun () ->
+        c.Channels.really_read buf >>= fun () ->
         Fd.really_write dest offset buf >>= fun () ->
         let offset = Int64.(add offset (of_int this)) in
         let remaining = Int32.(sub remaining (of_int this)) in
@@ -511,13 +512,16 @@ let serve common_options source source_fd source_protocol destination destinatio
         | None -> endpoint_of_string source
         | Some fd -> return (File_descr (Lwt_unix.of_unix_file_descr (file_descr_of_int fd))) ) >>= fun source_endpoint ->
       ( match source_endpoint with
-        | File_descr fd -> return fd
+        | File_descr fd ->
+          Channels.of_raw_fd fd >>= fun c ->
+          return c
         | Sockaddr s ->
           let sock = socket s in
           Lwt_unix.bind sock s;
           Lwt_unix.listen sock 1;
           Lwt_unix.accept sock >>= fun (fd, _) ->
-          return fd
+          Channels.of_raw_fd fd >>= fun c ->
+          return c
         | _ -> failwith (Printf.sprintf "Not implemented: serving from source %s" source) ) >>= fun source_sock ->
       ( match destination_endpoint with
         | File path -> Fd.openfile path

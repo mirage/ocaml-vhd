@@ -12,6 +12,27 @@
  * GNU Lesser General Public License for more details.
  *)
 
+let debug_io = ref false
+
+let complete name offset op fd buffer =
+  if !debug_io
+  then Printf.fprintf stderr "%s offset=%s length=%d\n%!" name (match offset with Some x -> Int64.to_string x | None -> "None") (Cstruct.len buffer);
+  let open Lwt in
+  let ofs = buffer.Cstruct.off in
+  let len = buffer.Cstruct.len in
+  let buf = buffer.Cstruct.buffer in
+  let rec loop acc fd buf ofs len =
+    op fd buf ofs len >>= fun n ->
+    let len' = len - n in
+    let acc' = acc + n in
+    if len' = 0 || n = 0
+    then return acc'
+    else loop acc' fd buf (ofs + n) len' in
+  loop 0 fd buf ofs len >>= fun n ->
+  if n = 0 && len <> 0
+  then fail End_of_file
+  else return ()
+
 module Fd = struct
   open Lwt
 
@@ -50,14 +71,6 @@ module Fd = struct
     if Int64.(mul(div n 512L) 512L) <> n then raise (Not_sector_aligned n)
 
   let really_read_into { fd; filename; lock } offset (* in file *) buf =
-    let rec rread acc fd buf =
-      lwt n = Lwt_cstruct.read fd buf in
-      let acc = acc + n in
-      let buf = Cstruct.shift buf n in
-      if Cstruct.len buf = 0 || n = 0
-      then return acc
-      else rread acc fd buf in
-
     (* All reads and writes should be sector-aligned *)
     assert_sector_aligned offset;
     assert_sector_aligned (Int64.of_int buf.Cstruct.off);
@@ -67,10 +80,8 @@ module Fd = struct
       (fun () ->
         try_lwt
           lwt _ = Lwt_unix.LargeFile.lseek fd offset Unix.SEEK_SET in
-          lwt read = rread 0 fd buf in
-          if read = 0 && (Cstruct.len buf <> 0)
-          then fail End_of_file
-          else return (Cstruct.(sub buf 0 read))
+          lwt () = complete "read" (Some offset) Lwt_bytes.read fd buf in
+          return buf
         with
         | Unix.Unix_error(Unix.EINVAL, "read", "") as e ->
           Printf.fprintf stderr "really_read offset = %Ld len = %d: EINVAL (alignment?)\n%!" offset (Cstruct.len buf);
@@ -85,14 +96,6 @@ module Fd = struct
     really_read_into fd offset buf
 
   let really_write { fd; filename; lock } offset (* in file *) buf =
-    let rec rwrite acc fd buf =
-      lwt n = Lwt_cstruct.write fd buf in
-      let buf = Cstruct.shift buf n in
-      let acc = acc + n in
-      if Cstruct.len buf = 0 || n = 0
-      then return acc
-      else rwrite acc fd buf in
-
     (* All reads and writes should be sector-aligned *)
     assert_sector_aligned offset;
     assert_sector_aligned (Int64.of_int buf.Cstruct.off);
@@ -102,10 +105,7 @@ module Fd = struct
       (fun () ->
         try_lwt
           lwt _ = Lwt_unix.LargeFile.lseek fd offset Unix.SEEK_SET in
-          lwt written = rwrite 0 fd buf in
-          if written = 0 && Cstruct.len buf <> 0
-          then fail End_of_file
-          else return ()
+          complete "write" (Some offset) Lwt_bytes.write fd buf
         with
         | Unix.Unix_error(Unix.EINVAL, "write", "") as e ->
           Printf.fprintf stderr "really_write offset = %Ld len = %d: EINVAL (alignment?)\n%!" offset (Cstruct.len buf);
