@@ -263,8 +263,8 @@ let _ =
 	let destination, destination_format = match !experimental_writes_bypass_tapdisk, dest, dest_vhd with
 	| true, _, Some vhd ->
 		warn "experimental_writes_bypass_tapdisk set: this may cause data corruption";
-		vhd, "vhd"
-        | _, device_or_url, None ->
+		"file://" ^ vhd, "vhd"
+        | _, device_or_url, _ ->
 		let uri = Uri.of_string device_or_url in
 		let rewrite_scheme scheme =
 			let uri = Uri.make ~scheme
@@ -283,7 +283,7 @@ let _ =
 		| Some "http" when !encryption_mode = Always ->
 			warn "turning on encryption for this transfer as requested by config file";
 			rewrite_scheme "https", "raw"
-		| _ -> device_or_url, "raw"
+		| _ -> "file://" ^ device_or_url, "raw"
 		end in
 	let relative_to = base_vhd in
 
