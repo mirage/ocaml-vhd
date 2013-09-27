@@ -946,6 +946,16 @@ module Vhd = struct
     | None -> ()
     | Some parent -> dump parent
 
+  let used_max_table_entries t =
+    (* Some tools will create a larger-than-necessary BAT for small .vhds to
+       allow the virtual size to be changed later. *)
+    let max_table_entries = t.header.Header.max_table_entries in
+    let block_size_bytes_shift = t.header.Header.block_size_sectors_shift + sector_shift in
+    let current_size_blocks = Int64.(to_int (shift_right (add t.footer.Footer.current_size (sub (1L lsl block_size_bytes_shift) 1L)) block_size_bytes_shift)) in
+    if current_size_blocks > max_table_entries
+    then failwith (Printf.sprintf "max_table_entries (%d) < current size (%d) expressed in blocks (1 << %d)" max_table_entries current_size_blocks block_size_bytes_shift);
+    current_size_blocks
+
   type block_marker = 
     | Start of (string * int64)
     | End of (string * int64)
@@ -1631,7 +1641,7 @@ module Make = functor(File: S.IO) -> struct
 
   let raw ?from (vhd: fd Vhd.t) =
     let block_size_sectors_shift = vhd.Vhd.header.Header.block_size_sectors_shift in
-    let max_table_entries = vhd.Vhd.header.Header.max_table_entries in
+    let max_table_entries = Vhd.used_max_table_entries vhd in
     let empty_block = Empty (Int64.shift_left 1L block_size_sectors_shift) in
     let empty_sector = Empty 1L in
 
@@ -1676,7 +1686,7 @@ module Make = functor(File: S.IO) -> struct
 
   let vhd ?from (t: fd Vhd.t) =
     let block_size_sectors_shift = t.Vhd.header.Header.block_size_sectors_shift in
-    let max_table_entries = t.Vhd.header.Header.max_table_entries in
+    let max_table_entries = Vhd.used_max_table_entries t in
 
     (* The physical disk layout will be:
        byte 0   - 511:  backup footer
@@ -1743,7 +1753,7 @@ module Make = functor(File: S.IO) -> struct
           return (Cons(Empty 1L, next))
         | Some (vhd', offset) ->
           return (Cons(Copy(vhd'.Vhd.handle, Int64.shift_right offset sector_shift, 1L), next)) in
-      if i >= header.Header.max_table_entries
+      if i >= max_table_entries
       then andthen ()
       else
         if include_block i
@@ -1803,6 +1813,7 @@ module Make = functor(File: S.IO) -> struct
 
        File.get_file_size t.filename >>= fun current_size ->
        let header = Header.create ~table_offset ~current_size  () in
+
        let current_size = Int64.(shift_left (of_int header.Header.max_table_entries) (header.Header.block_size_sectors_shift + sector_shift)) in
        let footer = Footer.create ~data_offset ~current_size ~disk_type:Disk_type.Dynamic_hard_disk () in
        let bat_buffer = File.alloc (BAT.sizeof_bytes header) in
