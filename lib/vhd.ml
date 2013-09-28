@@ -42,7 +42,11 @@ module Int64 = struct
   let ( ** ) = mul
   let ( lsl ) = shift_left
   let ( lsr ) = shift_right_logical
+
+  let roundup_sector x = ((x ++ (1L lsl sector_shift -- 1L)) lsr sector_shift) lsl sector_shift
 end
+
+let roundup_sector x = ((x + (1 lsl sector_shift - 1)) lsr sector_shift) lsl sector_shift
 
 let kib = 1024L
 let mib = Int64.(1024L ** kib)
@@ -842,7 +846,7 @@ module BAT = struct
   let sizeof_bytes (header: Header.t) =
     let size_needed = header.Header.max_table_entries * 4 in
     (* The BAT is always extended to a sector boundary *)
-    ((size_needed + sector_size - 1) lsr sector_shift) lsl sector_shift
+    roundup_sector size_needed
 
   let of_buffer (header: Header.t) (data: Cstruct.t) =
     for i = 0 to (Cstruct.len data) / 4 - 1 do
@@ -877,6 +881,97 @@ module BAT = struct
     for i = 0 to t.max_table_entries - 1 do
       Printf.printf "%d\t:0x%lx\n" i (get t i)
     done
+end
+
+module Batmap_header = struct
+
+  cstruct header {
+    uint8_t magic[8];
+    uint64_t offset;
+    uint32_t size_in_sectors;
+    uint16_t major_version;
+    uint16_t minor_version;
+    uint32_t checksum;
+    uint8_t marker
+  } as big_endian
+
+  let magic = "tdbatmap"
+
+  let current_major_version = 1
+  let current_minor_version = 2
+
+  let sizeof = roundup_sector sizeof_header
+
+  type t = {
+    offset: int64;
+    size_in_sectors: int;
+    major_version: int;
+    minor_version: int;
+    checksum: int32;
+    marker: int
+  }
+
+  let unmarshal (buf: Cstruct.t) =
+    let open Vhd_result in
+    let magic' = copy_header_magic buf in
+    ( if magic' <> magic
+      then fail (Failure (Printf.sprintf "Expected cookie %s, got %s" magic magic'))
+      else return () ) >>= fun () ->
+    let offset = get_header_offset buf in
+    let size_in_sectors = Int32.to_int (get_header_size_in_sectors buf) in
+    let major_version = get_header_major_version buf in
+    let minor_version = get_header_minor_version buf in
+    ( if major_version <> current_major_version || minor_version <> current_minor_version
+      then fail (Failure (Printf.sprintf "Unexpected BATmap version: %d.%d" major_version minor_version))
+      else return () ) >>= fun () ->
+    let checksum = get_header_checksum buf in
+    let marker = get_header_marker buf in
+    return { offset; size_in_sectors; major_version; minor_version; checksum; marker }
+
+  let marshal (buf: Cstruct.t) (t: t) =
+    for i = 0 to Cstruct.len buf - 1 do
+      Cstruct.set_uint8 buf i 0
+    done;
+    set_header_offset buf t.offset;
+    set_header_size_in_sectors buf (Int32.of_int t.size_in_sectors);
+    set_header_major_version buf t.major_version;
+    set_header_minor_version buf t.minor_version;
+    set_header_checksum buf t.checksum;
+    set_header_marker buf t.marker
+
+  let offset (x: Header.t) =
+    Int64.(x.Header.table_offset ++ (of_int (BAT.sizeof_bytes x)))
+
+end
+
+module Batmap = struct
+  type t = Cstruct.t
+
+  let sizeof_bytes (x: Header.t) = (x.Header.max_table_entries + 7) lsr 3
+
+  let sizeof (x: Header.t) = roundup_sector (sizeof_bytes x)
+
+  let set t n =
+    let byte = Cstruct.get_uint8 t (n / 8) in
+    let bit = n mod 8 in
+    let mask = 0x80 lsr bit in
+    Cstruct.set_uint8 t (n / 8) (byte lor mask)
+
+  let get t n =
+    let byte = Cstruct.get_uint8 t (n / 8) in
+    let bit = n mod 8 in
+    let mask = 0x80 lsr bit in
+    byte land mask <> mask
+
+  let unmarshal (buf: Cstruct.t) (h: Header.t) (bh: Batmap_header.t) =
+    let open Vhd_result in
+    let needed = Cstruct.sub buf 0 (sizeof_bytes h) in
+    let checksum = Checksum.of_cstruct buf in
+    ( if checksum <> bh.Batmap_header.checksum
+      then fail (Failure (Printf.sprintf "Invalid checksum. Expected %08lx got %08lx" bh.Batmap_header.checksum checksum))
+      else return () ) >>= fun () ->
+    return needed
+
 end
 
 module Bitmap = struct
@@ -935,6 +1030,7 @@ module Vhd = struct
     footer: Footer.t;
     parent: 'a t option;
     bat: BAT.t;
+    batmap: (Batmap_header.t * Batmap.t) option;
     bitmap_cache: (int * Bitmap.t) option ref; (* effective only for streaming *)
   }
 
@@ -1053,21 +1149,30 @@ module Vhd = struct
     let _parent_unicode_name = "parent-unicode-name"
     let _parent_locator_prefix = "parent-locator-"
     let _parent_locator_prefix_len = String.length _parent_locator_prefix
+    let _batmap_version = "batmap-version"
+    let _batmap_offset = "batmap-offset"
+    let _batmap_size_in_sectors = "batmap-size-in-sectors"
+    let _batmap_checksum = "batmap-checksum"
 
     let list = [ _features; _data_offset; _timestamp; _creator_application;
       _creator_version; _creator_host_os; _original_size; _current_size;
       _geometry; _disk_type; _footer_checksum; _uuid; _saved_state;
       _table_offset; _max_table_entries; _block_size_sectors_shift;
       _header_checksum; _parent_uuid; _parent_time_stamp; _parent_unicode_name
-    ] @ (List.map (fun x -> _parent_locator_prefix ^ (string_of_int x)) [0; 1; 2; 3; 4; 5; 6;7])
+    ] @ (List.map (fun x -> _parent_locator_prefix ^ (string_of_int x)) [0; 1; 2; 3; 4; 5; 6;7]
+    ) @ [
+      _batmap_version; _batmap_offset; _batmap_size_in_sectors; _batmap_checksum
+    ]
 
     let startswith prefix x =
       let prefix' = String.length prefix and x' = String.length x in
       prefix' <= x' && (String.sub x 0 prefix' = prefix)
 
     let get t key =
+      let opt f = function
+        | None -> None
+        | Some x -> Some (f x) in
       if key = _features
-
       then Some (String.concat ", " (List.map Feature.to_string t.footer.Footer.features))
       else if key = _data_offset
       then Some (Int64.to_string t.footer.Footer.data_offset)
@@ -1112,7 +1217,16 @@ module Vhd = struct
           let i = int_of_string (String.sub key _parent_locator_prefix_len (String.length key - _parent_locator_prefix_len)) in
           Some (Parent_locator.to_string t.header.Header.parent_locators.(i))
         with _ -> None
-      end else None
+      end
+      else if key = _batmap_version
+      then opt (fun (t, _) -> Printf.sprintf "%d.%d" t.Batmap_header.major_version t.Batmap_header.minor_version) t.batmap
+      else if key = _batmap_offset
+      then opt (fun (t, _) -> Int64.to_string t.Batmap_header.offset) t.batmap
+      else if key = _batmap_size_in_sectors
+      then opt (fun (t, _) -> string_of_int t.Batmap_header.size_in_sectors) t.batmap
+      else if key = _batmap_checksum
+      then opt (fun (t, _) -> Int32.to_string t.Batmap_header.checksum) t.batmap
+      else None
     type 'a t = 'a f
 
    end
@@ -1205,7 +1319,7 @@ module Make = functor(File: S.IO) -> struct
 
     let read fd t =
       let l = Int32.to_int t.platform_data_length in
-      let l_rounded = ((l + 511) lsr sector_shift) lsl sector_shift in
+      let l_rounded = roundup_sector l in
       ( if l_rounded = 0
         then return (Cstruct.create 0)
         else really_read fd t.platform_data_offset l_rounded ) >>= fun platform_data ->
@@ -1280,6 +1394,21 @@ module Make = functor(File: S.IO) -> struct
       really_write fd header.Header.table_offset buf
   end
 
+  module Batmap_IO = struct
+    open Batmap
+
+    let read fd (header: Header.t) =
+      really_read fd (Batmap_header.offset header) Batmap_header.sizeof >>= fun buf ->
+      match Batmap_header.unmarshal buf with
+      | Vhd_result.Error _ -> return None
+      | Vhd_result.Ok h ->
+        ( really_read fd h.Batmap_header.offset (h.Batmap_header.size_in_sectors * sector_size) >>= fun batmap ->
+          match Batmap.unmarshal batmap header h with
+          | Vhd_result.Error _ -> return None
+          | Vhd_result.Ok batmap ->
+            return (Some (h, batmap)))
+  end
+
   module Bitmap_IO = struct
     open Bitmap
 
@@ -1336,8 +1465,9 @@ module Make = functor(File: S.IO) -> struct
 
       let bat_buffer = File.alloc (BAT.sizeof_bytes header) in
       let bat = BAT.of_buffer header bat_buffer in
+      let batmap = None in
       File.create filename >>= fun handle ->
-      let t = { filename; handle; header; footer; parent = None; bat; bitmap_cache = ref None } in
+      let t = { filename; handle; header; footer; parent = None; bat; batmap; bitmap_cache = ref None } in
       write t >>= fun t ->
       return t
 
@@ -1370,7 +1500,8 @@ module Make = functor(File: S.IO) -> struct
          having to perform reference counting *)
       File.openfile parent.Vhd.filename >>= fun parent_handle ->
       let parent = { parent with handle = parent_handle } in
-      let t = { filename; handle; header; footer; parent = Some parent; bat; bitmap_cache = ref None } in
+      let batmap = None in
+      let t = { filename; handle; header; footer; parent = Some parent; bat; batmap; bitmap_cache = ref None } in
       write t >>= fun t ->
       return t
 
@@ -1386,7 +1517,8 @@ module Make = functor(File: S.IO) -> struct
           return (Some p)
         | _ ->
           return None) >>= fun parent ->
-      return { filename; handle; header; footer; bat; bitmap_cache = ref None; parent }
+      Batmap_IO.read handle header >>= fun batmap ->
+      return { filename; handle; header; footer; bat; bitmap_cache = ref None; batmap; parent }
 
     let rec close t =
       (* This is where we could repair the footer if we have chosen not to
@@ -1684,7 +1816,7 @@ module Make = functor(File: S.IO) -> struct
     let size = count { empty with total = vhd.Vhd.footer.Footer.current_size } 0 in
     return { elements; size } 
 
-  let vhd ?from (t: fd Vhd.t) =
+  let vhd ?from ?(emit_batmap=false)(t: fd Vhd.t) =
     let block_size_sectors_shift = t.Vhd.header.Header.block_size_sectors_shift in
     let max_table_entries = Vhd.used_max_table_entries t in
 
@@ -1692,7 +1824,10 @@ module Make = functor(File: S.IO) -> struct
        byte 0   - 511:  backup footer
        byte 512 - 1535: file header
        ... empty sector-- this is where we'll put the parent locator
-       byte 2048 - ...: BAT *)
+       byte 2048 - ...: BAT
+       Batmap_header | iff batmap
+       Batmap        |
+    *)
 
     let data_offset = 512L in
     let table_offset = 2048L in
@@ -1730,18 +1865,39 @@ module Make = functor(File: S.IO) -> struct
 
     let include_block = include_block from t in
 
-    (* Calculate where the first data block will go. Note the sizeof_bat is already
+    (* Calculate where the first data block can go. Note the sizeof_bat is already
        rounded up to the next sector boundary. *)
-    let first_block = Int64.(table_offset ++ (of_int sizeof_bat)) in
+    let next_free_sector_in_bytes = Int64.(table_offset ++ (of_int sizeof_bat)) in
+
+    let batmap_header = File.alloc Batmap_header.sizeof in
+    let batmap = File.alloc (Batmap.sizeof header) in
+    for i = 0 to Batmap.sizeof header - 1 do
+      Cstruct.set_uint8 batmap i 0
+    done;
+
+    let first_block =
+      if emit_batmap
+      then Int64.(next_free_sector_in_bytes ++ (of_int Batmap_header.sizeof) ++ (of_int (Batmap.sizeof header)))
+      else next_free_sector_in_bytes in
+
     let next_byte = ref first_block in
     for i = 0 to max_table_entries - 1 do
       if include_block i then begin
         BAT.set bat i (Int64.(to_int32(!next_byte lsr sector_shift)));
+        Batmap.set batmap i;
         next_byte := Int64.(!next_byte ++ (of_int sizeof_bitmap) ++ (of_int sizeof_data))
       end
     done;
 
-    let rec write_sectors buf from andthen =
+    Batmap_header.marshal batmap_header {
+      Batmap_header.offset = Int64.(next_free_sector_in_bytes ++ 512L);
+      size_in_sectors = Batmap.sizeof header lsr sector_shift; 
+      major_version = Batmap_header.current_major_version;
+      minor_version = Batmap_header.current_minor_version;
+      checksum = Checksum.of_cstruct batmap;
+      marker = 0;
+    };
+    let rec write_sectors buf andthen =
       return(Cons(Sectors buf, andthen)) in
 
     let rec block i andthen =
@@ -1760,6 +1916,11 @@ module Make = functor(File: S.IO) -> struct
         then return(Cons(Sectors bitmap, fun () -> sector 0))
         else block (i + 1) andthen in
 
+    let batmap andthen =
+      if emit_batmap 
+      then write_sectors batmap_header (fun () -> write_sectors batmap andthen)
+      else andthen () in
+
     assert(Footer.sizeof = 512);
     assert(Header.sizeof = 1024);
 
@@ -1767,13 +1928,15 @@ module Make = functor(File: S.IO) -> struct
     let (_: Footer.t) = Footer.marshal buf footer in
     coalesce_request None (return (Cons(Sectors(Cstruct.sub buf 0 Footer.sizeof), fun () ->
       let (_: Header.t) = Header.marshal buf header in
-      write_sectors (Cstruct.sub buf 0 Header.sizeof) 0 (fun () ->
+      write_sectors (Cstruct.sub buf 0 Header.sizeof) (fun () ->
         return(Cons(Empty 1L, fun () ->
           BAT.marshal buf bat;
-          write_sectors (Cstruct.sub buf 0 sizeof_bat) 0 (fun () ->
+          write_sectors (Cstruct.sub buf 0 sizeof_bat) (fun () ->
             let (_: Footer.t) = Footer.marshal buf footer in
-            block 0 (fun () ->
-              return(Cons(Sectors(Cstruct.sub buf 0 Footer.sizeof), fun () -> return End))
+            batmap (fun () ->
+              block 0 (fun () ->
+                return(Cons(Sectors(Cstruct.sub buf 0 Footer.sizeof), fun () -> return End))
+              )
             )
           )
        ))
@@ -1877,7 +2040,7 @@ module Make = functor(File: S.IO) -> struct
        File.get_file_size t.filename >>= fun bytes ->
        (* round up to the next full sector *)
        let open Int64 in
-       let bytes = ((bytes ++ (of_int sector_size) -- 1L) lsr sector_shift) lsl sector_shift in
+       let bytes = roundup_sector bytes in
        let size = {
          total = bytes;
          metadata = 0L;
