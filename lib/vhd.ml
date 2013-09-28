@@ -1376,10 +1376,14 @@ module Make = functor(File: S.IO) -> struct
 
     let read fd (header: Header.t) =
       really_read fd (Batmap_header.offset header) Batmap_header.sizeof >>= fun buf ->
-      Batmap_header.unmarshal buf >>|= fun h ->
-      really_read fd h.Batmap_header.offset (h.Batmap_header.size_in_sectors * sector_size) >>= fun batmap ->
-      Batmap.unmarshal batmap header h >>|= fun batmap ->
-      return (Some (h, batmap)) 
+      match Batmap_header.unmarshal buf with
+      | Vhd_result.Error _ -> return None
+      | Vhd_result.Ok h ->
+        ( really_read fd h.Batmap_header.offset (h.Batmap_header.size_in_sectors * sector_size) >>= fun batmap ->
+          match Batmap.unmarshal batmap header h with
+          | Vhd_result.Error _ -> return None
+          | Vhd_result.Ok batmap ->
+            return (Some (h, batmap)))
   end
 
   module Bitmap_IO = struct
