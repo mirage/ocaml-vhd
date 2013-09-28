@@ -896,7 +896,9 @@ module Batmap_header = struct
   let current_major_version = 1
   let current_minor_version = 2
 
-  let sizeof = sizeof_header
+  let sizeof =
+    (* round up to a sector boundary *)
+    ((sizeof_header + sector_size - 1) lsr sector_shift) lsl sector_shift
 
   type t = {
     offset: int64;
