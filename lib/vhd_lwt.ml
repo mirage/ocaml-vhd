@@ -68,7 +68,10 @@ module Fd = struct
   exception Not_sector_aligned of int64
 
   let assert_sector_aligned n =
-    if Int64.(mul(div n 512L) 512L) <> n then raise (Not_sector_aligned n)
+    if Int64.(mul(div n 512L) 512L) <> n then begin
+      Printf.fprintf stderr "ERROR: %Ld not sector aligned\n%!" n;
+      raise (Not_sector_aligned n)
+    end
 
   let really_read_into { fd; filename; lock } offset (* in file *) buf =
     (* All reads and writes should be sector-aligned *)

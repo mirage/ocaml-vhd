@@ -267,26 +267,41 @@ let verify state = match state.child with
     check_written_sectors t state.contents >>= fun () ->
     check_raw_stream_contents ~allow_empty:false t state.contents >>= fun () ->
 
+    let write_stream fd stream =
+      fold_left (fun offset x -> match x with
+        | Element.Empty y -> return (Int64.(add offset (mul y 512L)))
+        | Element.Sectors data ->
+          Fd.really_write fd offset data >>= fun () ->
+          return (Int64.(add offset (of_int (Cstruct.len data))))
+        | Element.Copy(fd', offset', len') ->
+          really_read fd' (Int64.mul offset' 512L) (Int64.to_int len' * 512) >>= fun buf ->
+          Fd.really_write fd offset buf >>= fun () ->
+          return (Int64.(add offset (of_int (Cstruct.len buf))))
+      ) 0L stream.elements in
+
     (* Stream the contents as a fresh vhd *)
     let filename = make_new_filename () in
     Fd.create filename >>= fun fd ->
     Vhd_input.vhd t >>= fun stream ->
-    fold_left (fun offset x -> match x with
-      | Element.Empty y -> return (Int64.(add offset (mul y 512L)))
-      | Element.Sectors data ->
-        Fd.really_write fd offset data >>= fun () ->
-        return (Int64.(add offset (of_int (Cstruct.len data))))
-      | Element.Copy(fd', offset', len') ->
-        really_read fd' (Int64.mul offset' 512L) (Int64.to_int len' * 512) >>= fun buf ->
-        Fd.really_write fd offset buf >>= fun () ->
-        return (Int64.(add offset (of_int (Cstruct.len buf))))
-    ) 0L stream.elements >>= fun _ ->
+    write_stream fd stream >>= fun _ ->
+    Fd.close fd >>= fun () ->
+    (* Check the contents look correct *)
+    Vhd_IO.openfile filename >>= fun t' ->
+    check_written_sectors t' state.contents >>= fun () ->
+    check_raw_stream_contents ~allow_empty:true t' state.contents >>= fun () ->
+    Vhd_IO.close t' >>= fun () ->
+    (* Stream the contents as a fresh vhd with a batmap *)
+    let filename = make_new_filename () in
+    Fd.create filename >>= fun fd ->
+    Vhd_input.vhd ~emit_batmap:true t >>= fun stream ->
+    write_stream fd stream >>= fun _ ->
     Fd.close fd >>= fun () ->
     (* Check the contents look correct *)
     Vhd_IO.openfile filename >>= fun t' ->
     check_written_sectors t' state.contents >>= fun () ->
     check_raw_stream_contents ~allow_empty:true t' state.contents >>= fun () ->
     Vhd_IO.close t'
+
 
 let cleanup state =
   List.iter Unix.unlink state.to_unlink;

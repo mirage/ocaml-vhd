@@ -24,6 +24,7 @@ let dest = ref None
 let size = ref (-1L)
 let prezeroed = ref false
 let set_machine_logging = ref false
+let experimental_reads_bypass_tapdisk = ref false
 let experimental_writes_bypass_tapdisk = ref false
 
 let string_opt = function
@@ -33,6 +34,7 @@ let string_opt = function
 let options = [
     "unbuffered", Arg.Bool (fun b -> File.use_unbuffered := b), (fun () -> string_of_bool !File.use_unbuffered), "use unbuffered I/O via O_DIRECT";
     "encryption-mode", Arg.String (fun x -> encryption_mode := encryption_mode_of_string x), (fun () -> string_of_encryption_mode !encryption_mode), "how to use encryption";
+    "experimental-reads-bypass-tapdisk", Arg.Set experimental_reads_bypass_tapdisk, (fun () -> string_of_bool !experimental_reads_bypass_tapdisk), "bypass tapdisk and read directly from the underlying vhd file";
     "experimental-writes-bypass-tapdisk", Arg.Set experimental_writes_bypass_tapdisk, (fun () -> string_of_bool !experimental_writes_bypass_tapdisk), "bypass tapdisk and write directly to the underlying vhd file";
     "base", Arg.String (fun x -> base := Some x), (fun () -> string_opt !base), "base disk to search for differences from";
     "src", Arg.String (fun x -> src := Some x), (fun () -> string_opt !src), "source disk";
@@ -257,12 +259,17 @@ let _ =
 		| Some x -> vhd_of_device x in
 	debug "src_vhd = %s; dest_vhd = %s; base_vhd = %s" (Opt.default "None" src_vhd) (Opt.default "None" dest_vhd) (Opt.default "None" base_vhd);
 
-	let source, source_format = match src, src_vhd with
-	| _, Some vhd -> vhd, "vhd"
-	| device, None -> device, "raw" in
+	let source, source_format = match !experimental_reads_bypass_tapdisk, src, src_vhd with
+	| true, _, Some vhd ->
+		warn "experimental_reads_bypass_tapdisk set: this may cause data corruption";
+		vhd, "vhd"
+	| false, _, Some vhd ->
+		failwith "not implemented yet"
+	| _, device, None -> device, "raw" in
 	let destination, destination_format = match !experimental_writes_bypass_tapdisk, dest, dest_vhd with
 	| true, _, Some vhd ->
 		warn "experimental_writes_bypass_tapdisk set: this may cause data corruption";
+		prezeroed := false; (* the physical disk will have vhd metadata and other stuff on it *)
 		"file://" ^ vhd, "vhd"
         | _, device_or_url, _ ->
 		let uri = Uri.of_string device_or_url in
