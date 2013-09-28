@@ -947,7 +947,7 @@ module Batmap = struct
     ( if checksum <> h.Batmap_header.checksum
       then fail (Failure (Printf.sprintf "Invalid checksum. Expected %08lx got %08lx" h.Batmap_header.checksum checksum))
       else return () ) >>= fun () ->
-    return buf
+    return (Cstruct.sub buf 0 h.Batmap_header.size)
 
 end
 
@@ -1359,7 +1359,7 @@ module Make = functor(File: S.IO) -> struct
     let read fd (header: Header.t) =
       really_read fd (Batmap_header.offset header) Batmap_header.sizeof >>= fun buf ->
       Batmap_header.unmarshal buf >>|= fun h ->
-      really_read fd h.Batmap_header.offset h.Batmap_header.size >>= fun batmap ->
+      really_read fd h.Batmap_header.offset (roundup_sector h.Batmap_header.size) >>= fun batmap ->
       Batmap.unmarshal batmap h >>|= fun batmap ->
       return (Some (h, batmap)) 
   end
