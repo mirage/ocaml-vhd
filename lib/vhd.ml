@@ -918,7 +918,7 @@ module Batmap_header = struct
     let major_version = get_header_major_version buf in
     let minor_version = get_header_minor_version buf in
     ( if major_version <> current_major_version || minor_version <> current_minor_version
-      then fail (Failure (Printf.sprintf "Unexpected BATmap version: %d.%d" current_major_version current_minor_version))
+      then fail (Failure (Printf.sprintf "Unexpected BATmap version: %d.%d" major_version minor_version))
       else return () ) >>= fun () ->
     let checksum = get_header_checksum buf in
     let marker = get_header_marker buf in
