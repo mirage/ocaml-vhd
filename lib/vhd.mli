@@ -237,7 +237,7 @@ end
 module Batmap_header : sig
   type t = {
     offset: int64;
-    size: int;
+    size_in_sectors: int;
     major_version: int;
     minor_version: int;
     checksum: int32;

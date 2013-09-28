@@ -888,7 +888,7 @@ module Batmap_header = struct
   cstruct header {
     uint8_t magic[8];
     uint64_t offset;
-    uint32_t size;
+    uint32_t size_in_sectors;
     uint16_t major_version;
     uint16_t minor_version;
     uint32_t checksum;
@@ -904,7 +904,7 @@ module Batmap_header = struct
 
   type t = {
     offset: int64;
-    size: int;
+    size_in_sectors: int;
     major_version: int;
     minor_version: int;
     checksum: int32;
@@ -918,7 +918,7 @@ module Batmap_header = struct
       then fail (Failure (Printf.sprintf "Expected cookie %s, got %s" magic magic'))
       else return () ) >>= fun () ->
     let offset = get_header_offset buf in
-    let size = Int32.to_int (get_header_size buf) in
+    let size_in_sectors = Int32.to_int (get_header_size_in_sectors buf) in
     let major_version = get_header_major_version buf in
     let minor_version = get_header_minor_version buf in
     ( if major_version <> current_major_version || minor_version <> current_minor_version
@@ -926,7 +926,7 @@ module Batmap_header = struct
       else return () ) >>= fun () ->
     let checksum = get_header_checksum buf in
     let marker = get_header_marker buf in
-    return { offset; size; major_version; minor_version; checksum; marker }
+    return { offset; size_in_sectors; major_version; minor_version; checksum; marker }
 
   let offset (x: Header.t) =
     Int64.(x.Header.table_offset ++ (of_int (BAT.sizeof_bytes x)))
@@ -936,18 +936,18 @@ end
 module Batmap = struct
   type t = Cstruct.t
 
-  let sizeof_bytes (x: Header.t) =
-    (1 lsl (x.Header.block_size_sectors_shift + sector_shift) + 7) lsr 3
+  let sizeof_bytes (x: Header.t) = (x.Header.max_table_entries + 7) lsr 3
 
   let sizeof (x: Header.t) = roundup_sector (sizeof_bytes x)
 
-  let unmarshal (buf: Cstruct.t) (h: Batmap_header.t) =
+  let unmarshal (buf: Cstruct.t) (h: Header.t) (bh: Batmap_header.t) =
     let open Vhd_result in
+    let needed = Cstruct.sub buf 0 (sizeof_bytes h) in
     let checksum = Checksum.of_cstruct buf in
-    ( if checksum <> h.Batmap_header.checksum
-      then fail (Failure (Printf.sprintf "Invalid checksum. Expected %08lx got %08lx" h.Batmap_header.checksum checksum))
+    ( if checksum <> bh.Batmap_header.checksum
+      then fail (Failure (Printf.sprintf "Invalid checksum. Expected %08lx got %08lx" bh.Batmap_header.checksum checksum))
       else return () ) >>= fun () ->
-    return (Cstruct.sub buf 0 h.Batmap_header.size)
+    return needed
 
 end
 
@@ -1128,7 +1128,7 @@ module Vhd = struct
     let _parent_locator_prefix_len = String.length _parent_locator_prefix
     let _batmap_version = "batmap-version"
     let _batmap_offset = "batmap-offset"
-    let _batmap_size = "batmap-size"
+    let _batmap_size_in_sectors = "batmap-size-in-sectors"
     let _batmap_checksum = "batmap-checksum"
 
     let list = [ _features; _data_offset; _timestamp; _creator_application;
@@ -1138,7 +1138,7 @@ module Vhd = struct
       _header_checksum; _parent_uuid; _parent_time_stamp; _parent_unicode_name
     ] @ (List.map (fun x -> _parent_locator_prefix ^ (string_of_int x)) [0; 1; 2; 3; 4; 5; 6;7]
     ) @ [
-      _batmap_version; _batmap_offset; _batmap_size; _batmap_checksum
+      _batmap_version; _batmap_offset; _batmap_size_in_sectors; _batmap_checksum
     ]
 
     let startswith prefix x =
@@ -1199,8 +1199,8 @@ module Vhd = struct
       then opt (fun (t, _) -> Printf.sprintf "%d.%d" t.Batmap_header.major_version t.Batmap_header.minor_version) t.batmap
       else if key = _batmap_offset
       then opt (fun (t, _) -> Int64.to_string t.Batmap_header.offset) t.batmap
-      else if key = _batmap_size
-      then opt (fun (t, _) -> string_of_int t.Batmap_header.size) t.batmap
+      else if key = _batmap_size_in_sectors
+      then opt (fun (t, _) -> string_of_int t.Batmap_header.size_in_sectors) t.batmap
       else if key = _batmap_checksum
       then opt (fun (t, _) -> Int32.to_string t.Batmap_header.checksum) t.batmap
       else None
@@ -1377,8 +1377,8 @@ module Make = functor(File: S.IO) -> struct
     let read fd (header: Header.t) =
       really_read fd (Batmap_header.offset header) Batmap_header.sizeof >>= fun buf ->
       Batmap_header.unmarshal buf >>|= fun h ->
-      really_read fd h.Batmap_header.offset (roundup_sector h.Batmap_header.size) >>= fun batmap ->
-      Batmap.unmarshal batmap h >>|= fun batmap ->
+      really_read fd h.Batmap_header.offset (h.Batmap_header.size_in_sectors * sector_size) >>= fun batmap ->
+      Batmap.unmarshal batmap header h >>|= fun batmap ->
       return (Some (h, batmap)) 
   end
 
