@@ -263,6 +263,7 @@ let _ =
 	let destination, destination_format = match !experimental_writes_bypass_tapdisk, dest, dest_vhd with
 	| true, _, Some vhd ->
 		warn "experimental_writes_bypass_tapdisk set: this may cause data corruption";
+		prezeroed := false; (* the physical disk will have vhd metadata and other stuff on it *)
 		"file://" ^ vhd, "vhd"
         | _, device_or_url, _ ->
 		let uri = Uri.of_string device_or_url in
