@@ -1126,21 +1126,30 @@ module Vhd = struct
     let _parent_unicode_name = "parent-unicode-name"
     let _parent_locator_prefix = "parent-locator-"
     let _parent_locator_prefix_len = String.length _parent_locator_prefix
+    let _batmap_version = "batmap-version"
+    let _batmap_offset = "batmap-offset"
+    let _batmap_size = "batmap-size"
+    let _batmap_checksum = "batmap-checksum"
 
     let list = [ _features; _data_offset; _timestamp; _creator_application;
       _creator_version; _creator_host_os; _original_size; _current_size;
       _geometry; _disk_type; _footer_checksum; _uuid; _saved_state;
       _table_offset; _max_table_entries; _block_size_sectors_shift;
       _header_checksum; _parent_uuid; _parent_time_stamp; _parent_unicode_name
-    ] @ (List.map (fun x -> _parent_locator_prefix ^ (string_of_int x)) [0; 1; 2; 3; 4; 5; 6;7])
+    ] @ (List.map (fun x -> _parent_locator_prefix ^ (string_of_int x)) [0; 1; 2; 3; 4; 5; 6;7]
+    ) @ [
+      _batmap_version; _batmap_offset; _batmap_size; _batmap_checksum
+    ]
 
     let startswith prefix x =
       let prefix' = String.length prefix and x' = String.length x in
       prefix' <= x' && (String.sub x 0 prefix' = prefix)
 
     let get t key =
+      let opt f = function
+        | None -> None
+        | Some x -> Some (f x) in
       if key = _features
-
       then Some (String.concat ", " (List.map Feature.to_string t.footer.Footer.features))
       else if key = _data_offset
       then Some (Int64.to_string t.footer.Footer.data_offset)
@@ -1185,7 +1194,16 @@ module Vhd = struct
           let i = int_of_string (String.sub key _parent_locator_prefix_len (String.length key - _parent_locator_prefix_len)) in
           Some (Parent_locator.to_string t.header.Header.parent_locators.(i))
         with _ -> None
-      end else None
+      end
+      else if key = _batmap_version
+      then opt (fun (t, _) -> Printf.sprintf "%d.%d" t.Batmap_header.major_version t.Batmap_header.minor_version) t.batmap
+      else if key = _batmap_offset
+      then opt (fun (t, _) -> Int64.to_string t.Batmap_header.offset) t.batmap
+      else if key = _batmap_size
+      then opt (fun (t, _) -> string_of_int t.Batmap_header.size) t.batmap
+      else if key = _batmap_checksum
+      then opt (fun (t, _) -> Int32.to_string t.Batmap_header.checksum) t.batmap
+      else None
     type 'a t = 'a f
 
    end
