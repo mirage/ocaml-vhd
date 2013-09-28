@@ -42,7 +42,11 @@ module Int64 = struct
   let ( ** ) = mul
   let ( lsl ) = shift_left
   let ( lsr ) = shift_right_logical
+
+  let roundup_sector x = ((x ++ (1L lsl sector_shift -- 1L)) lsr sector_shift) lsl sector_shift
 end
+
+let roundup_sector x = ((x + (1 lsl sector_shift - 1)) lsr sector_shift) lsl sector_shift
 
 let kib = 1024L
 let mib = Int64.(1024L ** kib)
@@ -842,7 +846,7 @@ module BAT = struct
   let sizeof_bytes (header: Header.t) =
     let size_needed = header.Header.max_table_entries * 4 in
     (* The BAT is always extended to a sector boundary *)
-    ((size_needed + sector_size - 1) lsr sector_shift) lsl sector_shift
+    roundup_sector size_needed
 
   let of_buffer (header: Header.t) (data: Cstruct.t) =
     for i = 0 to (Cstruct.len data) / 4 - 1 do
@@ -896,9 +900,7 @@ module Batmap_header = struct
   let current_major_version = 1
   let current_minor_version = 2
 
-  let sizeof =
-    (* round up to a sector boundary *)
-    ((sizeof_header + sector_size - 1) lsr sector_shift) lsl sector_shift
+  let sizeof = roundup_sector sizeof_header
 
   type t = {
     offset: int64;
@@ -934,8 +936,10 @@ end
 module Batmap = struct
   type t = Cstruct.t
 
-  let sizeof (x: Header.t) =
+  let sizeof_bytes (x: Header.t) =
     (1 lsl (x.Header.block_size_sectors_shift + sector_shift) + 7) lsr 3
+
+  let sizeof (x: Header.t) = roundup_sector (sizeof_bytes x)
 
   let unmarshal (buf: Cstruct.t) (h: Batmap_header.t) =
     let open Vhd_result in
@@ -1274,7 +1278,7 @@ module Make = functor(File: S.IO) -> struct
 
     let read fd t =
       let l = Int32.to_int t.platform_data_length in
-      let l_rounded = ((l + 511) lsr sector_shift) lsl sector_shift in
+      let l_rounded = roundup_sector l in
       ( if l_rounded = 0
         then return (Cstruct.create 0)
         else really_read fd t.platform_data_offset l_rounded ) >>= fun platform_data ->
@@ -1960,7 +1964,7 @@ module Make = functor(File: S.IO) -> struct
        File.get_file_size t.filename >>= fun bytes ->
        (* round up to the next full sector *)
        let open Int64 in
-       let bytes = ((bytes ++ (of_int sector_size) -- 1L) lsr sector_shift) lsl sector_shift in
+       let bytes = roundup_sector bytes in
        let size = {
          total = bytes;
          metadata = 0L;
