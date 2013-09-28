@@ -420,11 +420,12 @@ module Make : functor (File : S.IO) -> sig
         the stream will contain the vhd differencing disk needed to transform
         [from] into [t]. *)
 
-    val vhd: ?from: fd Vhd.t -> fd Vhd.t -> fd stream t
+    val vhd: ?from: fd Vhd.t -> ?emit_batmap:bool -> fd Vhd.t -> fd stream t
     (** [vhd t] creates a vhd-formatted stream representing the consolidated
         data present in the virtual disk [t]. If [from] is provided then
         the stream will contain the vhd differencing disk needed to transform
-        [from] into [t]. *)
+        [from] into [t]. If ?emit_batmap is set then the resulting vhd will have
+        the non-standard 'BATmap' metadata included. *)
   end
 
   module Raw_input : sig
