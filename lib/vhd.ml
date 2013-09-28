@@ -894,7 +894,7 @@ module Batmap_header = struct
   let magic = "tdbatmap"
 
   let current_major_version = 1
-  let current_minor_version = 3
+  let current_minor_version = 2
 
   let sizeof = sizeof_header
 
