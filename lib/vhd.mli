@@ -427,7 +427,7 @@ module Make : functor (File : S.IO) -> sig
         [from] into [t]. If ?emit_batmap is set then the resulting vhd will have
         the non-standard 'BATmap' metadata included. *)
 
-    val hybrid: ?from: 'b Vhd.t -> 'a -> fd Vhd.t -> 'a stream t
+    val hybrid: ?from: fd Vhd.t -> fd -> fd Vhd.t -> fd stream t
     (** [hybrid ?from raw vhd] creates a raw-formatted stream representing
         the consolidated data present in the virtual disk [t], in terms of
         copies from the virtual disk [raw]. If [from] is provided then the
