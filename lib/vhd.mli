@@ -426,6 +426,13 @@ module Make : functor (File : S.IO) -> sig
         the stream will contain the vhd differencing disk needed to transform
         [from] into [t]. If ?emit_batmap is set then the resulting vhd will have
         the non-standard 'BATmap' metadata included. *)
+
+    val hybrid: ?from: fd Vhd.t -> fd -> fd Vhd.t -> fd stream t
+    (** [hybrid ?from raw vhd] creates a raw-formatted stream representing
+        the consolidated data present in the virtual disk [t], in terms of
+        copies from the virtual disk [raw]. If [from] is provided then the
+        stream will contain only the virtual updates required to transform
+        [from] into [t] *)
   end
 
   module Raw_input : sig
