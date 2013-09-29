@@ -259,19 +259,17 @@ let _ =
 		| Some x -> vhd_of_device x in
 	debug "src_vhd = %s; dest_vhd = %s; base_vhd = %s" (Opt.default "None" src_vhd) (Opt.default "None" dest_vhd) (Opt.default "None" base_vhd);
 
-	let source, source_format = match !experimental_reads_bypass_tapdisk, src, src_vhd with
-	| true, _, Some vhd ->
-		warn "experimental_reads_bypass_tapdisk set: this may cause data corruption";
-		vhd, "vhd"
-	| false, _, Some vhd ->
-		failwith "not implemented yet"
-	| _, device, None -> device, "raw" in
-	let destination, destination_format = match !experimental_writes_bypass_tapdisk, dest, dest_vhd with
-	| true, _, Some vhd ->
-		warn "experimental_writes_bypass_tapdisk set: this may cause data corruption";
-		prezeroed := false; (* the physical disk will have vhd metadata and other stuff on it *)
-		"file://" ^ vhd, "vhd"
-        | _, device_or_url, _ ->
+	let common = Common.make false false true in
+
+        if !experimental_reads_bypass_tapdisk
+	then warn "experimental_reads_bypass_tapdisk set: this may cause data corruption";
+        if !experimental_writes_bypass_tapdisk
+	then warn "experimental_writes_bypass_tapdisk set: this may cause data corruption";
+
+	let relative_to = base_vhd in
+
+	let rewrite_url device_or_url =
+		(* Ensure device_or_url is a valid URL, and apply our encryption policy *)
 		let uri = Uri.of_string device_or_url in
 		let rewrite_scheme scheme =
 			let uri = Uri.make ~scheme
@@ -286,21 +284,38 @@ let _ =
 		begin match Uri.scheme uri with
 		| Some "https" when !encryption_mode = Never ->
 			warn "turning off encryption for this transfer as requested by config file";
-			rewrite_scheme "http", "raw"
+			rewrite_scheme "http"
 		| Some "http" when !encryption_mode = Always ->
 			warn "turning on encryption for this transfer as requested by config file";
-			rewrite_scheme "https", "raw"
-		| _ -> "file://" ^ device_or_url, "raw"
+			rewrite_scheme "https"
+		| _ -> "file://" ^ device_or_url
 		end in
-	let relative_to = base_vhd in
 
-	let common = Common.make false false true in
+	let open Lwt in
+	let stream_t, destination, destination_format = match !experimental_reads_bypass_tapdisk, src, src_vhd, !experimental_writes_bypass_tapdisk, dest, dest_vhd with
+        | true, _, Some vhd, true, _, Some vhd' ->
+		prezeroed := false; (* the physical disk will have vhd metadata and other stuff on it *)
+        	let t = Impl.make_stream common vhd relative_to "vhd" "vhd" in
+		t, "file://" ^ vhd', "vhd"
+	| false, _, _, true, _, _ ->
+		failwith "Not implemented: writing bypassing tapdisk while reading through tapdisk"
+	| false, _, Some vhd, false, _, _ ->
+		let t = Impl.hybrid_stream src relative_to vhd in
+		t, rewrite_url dest, "raw"
+        | true, _, Some vhd, _, _, _ ->
+        	let t = Impl.make_stream common vhd relative_to "vhd" "raw" in
+		t, rewrite_url dest, "raw"
+        | _, device, None, _, _, _ ->
+        	let t = Impl.make_stream common device relative_to "raw" "raw" in
+		t, rewrite_url dest, "raw" in
 
 	progress_cb 0.;
         let progress total_work work_done =
           let fraction = Int64.(to_float work_done /. (to_float total_work)) in
           progress_cb fraction in
-        let t = Impl.stream_t common source relative_to source_format destination_format destination (Some "none") None !prezeroed ~progress () in
+        let t =
+        	stream_t >>= fun s ->
+		Impl.write_stream common s destination (Some "none") None !prezeroed progress in
 	if destination_format = "vhd"
 	then with_paused_tapdisk dest (fun () -> Lwt_main.run t)
 	else Lwt_main.run t;

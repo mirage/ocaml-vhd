@@ -316,26 +316,34 @@ let socket sockaddr =
   | _ -> failwith "unsupported sockaddr type" in
   Lwt_unix.socket family Unix.SOCK_STREAM 0
 
+(* Read raw blocks but only where an underlying vhd has a BAT entry *)
+let hybrid_stream source relative_to vhd =
+  Vhd_IO.openfile vhd >>= fun t ->
+  Vhd_lwt.Fd.openfile vhd >>= fun src ->
+  ( match relative_to with
+    | None -> return None
+    | Some f -> Vhd_IO.openfile f >>= fun t -> return (Some t) ) >>= fun from ->
+  Vhd_input.hybrid ?from src t
 
+let make_stream common source relative_to source_format destination_format =
+  match source_format, destination_format with
+  | "vhd", "vhd" ->
+    Vhd_IO.openfile source >>= fun t ->
+    ( match relative_to with None -> return None | Some f -> Vhd_IO.openfile f >>= fun t -> return (Some t) ) >>= fun from ->
+    Vhd_input.vhd ?from t
+  | "vhd", "raw" ->
+    Vhd_IO.openfile source >>= fun t ->
+    ( match relative_to with None -> return None | Some f -> Vhd_IO.openfile f >>= fun t -> return (Some t) ) >>= fun from ->
+    Vhd_input.raw ?from t
+  | "raw", "vhd" ->
+    Raw_IO.openfile source >>= fun t ->
+    Raw_input.vhd t
+  | "raw", "raw" ->
+    Raw_IO.openfile source >>= fun t ->
+    Raw_input.raw t
+  | _, _ -> assert false
 
-let stream_t common source relative_to source_format destination_format destination source_protocol destination_protocol prezeroed ?(progress = no_progress_bar) () =
-  ( match source_format, destination_format with
-    | "vhd", "vhd" ->
-      Vhd_IO.openfile source >>= fun t ->
-      ( match relative_to with None -> return None | Some f -> Vhd_IO.openfile f >>= fun t -> return (Some t) ) >>= fun from ->
-      Vhd_input.vhd ?from t
-    | "vhd", "raw" ->
-      Vhd_IO.openfile source >>= fun t ->
-      ( match relative_to with None -> return None | Some f -> Vhd_IO.openfile f >>= fun t -> return (Some t) ) >>= fun from ->
-      Vhd_input.raw ?from t
-    | "raw", "vhd" ->
-      Raw_IO.openfile source >>= fun t ->
-      Raw_input.vhd t
-    | "raw", "raw" ->
-      Raw_IO.openfile source >>= fun t ->
-      Raw_input.raw t
-    | _, _ -> assert false ) >>= fun s ->
-
+let write_stream common s destination source_protocol destination_protocol prezeroed progress = 
   endpoint_of_string destination >>= fun endpoint ->
   let use_ssl = match endpoint with Https _ -> true | _ -> false in
   ( match endpoint with
@@ -447,6 +455,10 @@ let stream_t common source relative_to source_format destination_format destinat
         return ()
       | None -> return ()
 
+
+let stream_t common source relative_to source_format destination_format destination source_protocol destination_protocol prezeroed ?(progress = no_progress_bar) () =
+  make_stream common source relative_to source_format destination_format >>= fun s ->
+  write_stream common s destination source_protocol destination_protocol prezeroed progress
 
 let stream common (source: string) (relative_to: string option) (source_format: string) (destination_format: string) (destination: string) (source_protocol: string option) (destination_protocol: string option) prezeroed progress =
   try
