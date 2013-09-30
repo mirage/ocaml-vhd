@@ -135,7 +135,7 @@ let vhd_of_device path =
 	let tapdisk_of_path path =
 		try 
 			match Tapctl.of_device (Tapctl.create ()) path with
-			| _, _, (Some (_, vhd)) -> Some vhd
+			| _, _, (Some ("vhd", vhd)) -> Some vhd
 			| _, _, _ -> raise Not_found
 		with Tapctl.Not_blktap ->
 			debug "Device %s is not controlled by blktap" path;
