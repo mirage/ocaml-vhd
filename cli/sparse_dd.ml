@@ -268,7 +268,7 @@ let _ =
 		failwith "Not implemented: writing bypassing tapdisk while reading through tapdisk"
 	| false, _, Some vhd, false, _, _ ->
 		info "streaming from raw %s using BAT from %s (relative to %s) to raw %s" src vhd (string_opt relative_to) dest;
-		let t = Impl.hybrid_stream src relative_to vhd in
+		let t = Impl.make_stream common (src ^ ":" ^ vhd) relative_to "hybrid" "raw" in
 		t, rewrite_url dest, "raw"
         | true, _, Some vhd, _, _, _ ->
 		info "streaming from vhd %s (relative to %s) to raw %s" vhd (string_opt relative_to) dest;

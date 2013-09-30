@@ -316,17 +316,21 @@ let socket sockaddr =
   | _ -> failwith "unsupported sockaddr type" in
   Lwt_unix.socket family Unix.SOCK_STREAM 0
 
-(* Read raw blocks but only where an underlying vhd has a BAT entry *)
-let hybrid_stream source relative_to vhd =
-  Vhd_IO.openfile vhd >>= fun t ->
-  Vhd_lwt.Fd.openfile vhd >>= fun src ->
-  ( match relative_to with
-    | None -> return None
-    | Some f -> Vhd_IO.openfile f >>= fun t -> return (Some t) ) >>= fun from ->
-  Vhd_input.hybrid ?from src t
+let colon = Re_str.regexp_string ":"
 
 let make_stream common source relative_to source_format destination_format =
   match source_format, destination_format with
+  | "hybrid", "raw" ->
+    (* expect source to be block_device:vhd *)
+    begin match Re_str.bounded_split colon source 2 with
+    | [ raw; vhd ] ->
+      Vhd_IO.openfile vhd >>= fun t ->
+      Vhd_lwt.Fd.openfile raw >>= fun raw ->
+      ( match relative_to with None -> return None | Some f -> Vhd_IO.openfile f >>= fun t -> return (Some t) ) >>= fun from ->
+      Vhd_input.hybrid ?from raw t
+    | _ ->
+      fail (Failure (Printf.sprintf "Failed to parse hybrid source: %s (expected raw_disk|vhd_disk)" source))
+    end
   | "vhd", "vhd" ->
     Vhd_IO.openfile source >>= fun t ->
     ( match relative_to with None -> return None | Some f -> Vhd_IO.openfile f >>= fun t -> return (Some t) ) >>= fun from ->
@@ -466,7 +470,7 @@ let stream common (source: string) (relative_to: string option) (source_format: 
 
     let source_protocol = require "source-protocol" source_protocol in
 
-    let supported_formats = [ "raw"; "vhd" ] in
+    let supported_formats = [ "raw"; "vhd"; "hybrid" ] in
     let destination_protocol = match destination_protocol with
       | None -> None
       | Some x -> Some (protocol_of_string x) in
