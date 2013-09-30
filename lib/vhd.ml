@@ -1528,6 +1528,7 @@ module Make = functor(File: S.IO) -> struct
       | None -> return ()
       | Some p -> close p
 
+    (* Converts a virtual sector offset into a physical sector offset *)
     let rec get_sector_location t sector =
       let open Int64 in
       if sector lsl sector_shift > t.Vhd.footer.Footer.current_size
@@ -1555,7 +1556,7 @@ module Make = functor(File: S.IO) -> struct
           match t.Vhd.footer.Footer.disk_type, in_this_bitmap with
           | _, true ->
             let data_sector = (of_int32 (BAT.get t.Vhd.bat block_num)) ++ (of_int (Header.sizeof_bitmap t.Vhd.header) lsr sector_shift) ++ sector_in_block in
-            return (Some(t, data_sector lsl sector_shift))
+            return (Some(t, data_sector))
           | Disk_type.Dynamic_hard_disk, false ->
             return None
           | Disk_type.Differencing_hard_disk, false ->
@@ -1570,7 +1571,7 @@ module Make = functor(File: S.IO) -> struct
       else get_sector_location t sector >>= function
       | None -> return None
       | Some (t, offset) ->
-        really_read t.Vhd.handle offset sector_size >>= fun data ->
+        really_read t.Vhd.handle (offset lsl sector_shift) sector_size >>= fun data ->
         return (Some data)
 
     let constant size v =
@@ -1773,9 +1774,9 @@ module Make = functor(File: S.IO) -> struct
 
   let hybrid ?from (raw: 'a) (vhd: fd Vhd.t) =
     let block_size_sectors_shift = vhd.Vhd.header.Header.block_size_sectors_shift in
-    let block_size_bytes = Int64.shift_left 1L block_size_sectors_shift in
+    let block_size_sectors = Int64.shift_left 1L block_size_sectors_shift in
     let max_table_entries = Vhd.used_max_table_entries vhd in
-    let empty_block = Empty block_size_bytes in
+    let empty_block = Empty block_size_sectors in
 
     let include_block = include_block from vhd in
 
@@ -1786,9 +1787,10 @@ module Make = functor(File: S.IO) -> struct
       else begin
         if not(include_block i)
         then return (Cons(empty_block, next_block))
-        else return (Cons(Copy(raw, Int64.(mul (of_int i) block_size_bytes), block_size_bytes), next_block))
+        else return (Cons(Copy(raw, Int64.(mul (of_int i) block_size_sectors), block_size_sectors), next_block))
       end in
     (* Note we avoid inspecting the sector bitmaps to avoid unnecessary seeking *)
+    let block_size_bytes = Int64.shift_left block_size_sectors sector_shift in
     let rec count totals i =
       if i = max_table_entries
       then totals
@@ -1828,7 +1830,7 @@ module Make = functor(File: S.IO) -> struct
               | None ->
                 return (Cons(empty_sector, next_sector))
               | Some (vhd', offset) ->
-                return (Cons(Copy(vhd'.Vhd.handle, Int64.shift_right offset sector_shift, 1L), next_sector))
+                return (Cons(Copy(vhd'.Vhd.handle, offset, 1L), next_sector))
             end in
           sector 0
         end
@@ -1938,7 +1940,7 @@ module Make = functor(File: S.IO) -> struct
         | None ->
           return (Cons(Empty 1L, next))
         | Some (vhd', offset) ->
-          return (Cons(Copy(vhd'.Vhd.handle, Int64.shift_right offset sector_shift, 1L), next)) in
+          return (Cons(Copy(vhd'.Vhd.handle, offset, 1L), next)) in
       if i >= max_table_entries
       then andthen ()
       else
