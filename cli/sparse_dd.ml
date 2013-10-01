@@ -253,6 +253,7 @@ let _ =
 		| Some "http" when !encryption_mode = Always ->
 			warn "turning on encryption for this transfer as requested by config file";
 			rewrite_scheme "https"
+		| Some ("http" | "https") -> device_or_url
 		| _ -> "file://" ^ device_or_url
 		end in
 
