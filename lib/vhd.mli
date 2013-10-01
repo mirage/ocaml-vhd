@@ -337,9 +337,11 @@ module Make : functor (File : S.IO) -> sig
   open File
 
   module Vhd_IO : sig
-    val openfile : string -> fd Vhd.t t
-    (** [openfile filename] reads the vhd metadata from [filename] (and other
-        files on the path from [filename] to the root of the tree) *)
+    val openfile : ?path:string list -> string -> fd Vhd.t t
+    (** [openfile ?path filename] reads the vhd metadata from [filename] (and other
+        files on the path from [filename] to the root of the tree). If [filename]
+        or any of the parent locators have relative paths, then they will be
+        searched for on the ?path. *)
 
     val close : fd Vhd.t -> unit t
     (** [close t] frees all resources associated with [t] *)

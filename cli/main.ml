@@ -41,7 +41,10 @@ let common_options_t =
   let unbuffered =
     let doc = "Use unbuffered I/O." in
     Arg.(value & flag & info ["unbuffered"; "direct"] ~docs ~doc) in
-  Term.(pure Common.make $ debug $ verb $ unbuffered)
+  let search_path =
+    let doc = "Search path for vhds." in
+    Arg.(value & opt string "." & info [ "path" ] ~docs ~doc) in
+  Term.(pure Common.make $ debug $ verb $ unbuffered $ search_path)
 
 let get_cmd =
   let doc = "query vhd metadata" in

@@ -6,6 +6,8 @@ open D
 
 let config_file = "/etc/sparse_dd.conf"
 
+let vhd_search_path = "/dev/mapper:."
+
 type encryption_mode =
   | Always
   | Never
@@ -224,7 +226,7 @@ let _ =
 		| Some x -> vhd_of_device x in
 	debug "src_vhd = %s; dest_vhd = %s; base_vhd = %s" (Opt.default "None" src_vhd) (Opt.default "None" dest_vhd) (Opt.default "None" base_vhd);
 
-	let common = Common.make false false true in
+	let common = Common.make false false true vhd_search_path in
 
         if !experimental_reads_bypass_tapdisk
 	then warn "experimental_reads_bypass_tapdisk set: this may cause data corruption";
