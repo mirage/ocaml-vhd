@@ -30,7 +30,7 @@ let get common filename key =
     let filename = require "filename" filename in
     let key = require "key" key in
     let t =
-      Vhd_IO.openfile filename >>= fun t ->
+      Vhd_IO.openfile ~path:common.path filename >>= fun t ->
       let result = Vhd.Field.get t key in
       Vhd_IO.close t >>= fun () ->
       return result in
@@ -49,7 +49,7 @@ let info common filename =
   try
     let filename = require "filename" filename in
     let t =
-      Vhd_IO.openfile filename >>= fun t ->
+      Vhd_IO.openfile ~path:common.path filename >>= fun t ->
       let all = List.map (fun f ->
         match Vhd.Field.get t f with
         | Some v -> [ f; v ]
@@ -75,7 +75,7 @@ let create common filename size parent =
       Lwt_main.run t
     | Some parent, None ->
       let t =
-        Vhd_IO.openfile parent >>= fun parent ->
+        Vhd_IO.openfile ~path:common.path parent >>= fun parent ->
         Vhd_IO.create_difference ~filename ~parent () >>= fun vhd ->
         Vhd_IO.close parent >>= fun () ->
         Vhd_IO.close vhd >>= fun () ->
@@ -92,7 +92,7 @@ let check common filename =
   try
     let filename = require "filename" filename in
     let t =
-      Vhd_IO.openfile filename >>= fun vhd ->
+      Vhd_IO.openfile ~path:common.path filename >>= fun vhd ->
       Vhd.check_overlapping_blocks vhd;
       return () in
     Lwt_main.run t;
@@ -338,20 +338,20 @@ let make_stream common source relative_to source_format destination_format =
     (* expect source to be block_device:vhd *)
     begin match Re_str.bounded_split colon source 2 with
     | [ raw; vhd ] ->
-      Vhd_IO.openfile vhd >>= fun t ->
+      Vhd_IO.openfile ~path:common.path vhd >>= fun t ->
       Vhd_lwt.Fd.openfile raw >>= fun raw ->
-      ( match relative_to with None -> return None | Some f -> Vhd_IO.openfile f >>= fun t -> return (Some t) ) >>= fun from ->
+      ( match relative_to with None -> return None | Some f -> Vhd_IO.openfile ~path:common.path f >>= fun t -> return (Some t) ) >>= fun from ->
       Vhd_input.hybrid ?from raw t
     | _ ->
       fail (Failure (Printf.sprintf "Failed to parse hybrid source: %s (expected raw_disk|vhd_disk)" source))
     end
   | "vhd", "vhd" ->
-    Vhd_IO.openfile source >>= fun t ->
-    ( match relative_to with None -> return None | Some f -> Vhd_IO.openfile f >>= fun t -> return (Some t) ) >>= fun from ->
+    Vhd_IO.openfile ~path:common.path source >>= fun t ->
+    ( match relative_to with None -> return None | Some f -> Vhd_IO.openfile ~path:common.path f >>= fun t -> return (Some t) ) >>= fun from ->
     Vhd_input.vhd ?from t
   | "vhd", "raw" ->
-    Vhd_IO.openfile source >>= fun t ->
-    ( match relative_to with None -> return None | Some f -> Vhd_IO.openfile f >>= fun t -> return (Some t) ) >>= fun from ->
+    Vhd_IO.openfile ~path:common.path source >>= fun t ->
+    ( match relative_to with None -> return None | Some f -> Vhd_IO.openfile ~path:common.path f >>= fun t -> return (Some t) ) >>= fun from ->
     Vhd_input.raw ?from t
   | "raw", "vhd" ->
     Raw_IO.openfile source >>= fun t ->

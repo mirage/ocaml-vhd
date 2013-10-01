@@ -6,6 +6,8 @@ open D
 
 let config_file = "/etc/sparse_dd.conf"
 
+let vhd_search_path = "/dev/mapper:."
+
 type encryption_mode =
   | Always
   | Never
@@ -19,7 +21,7 @@ let encryption_mode_of_string = function
   | "never" -> Never
   | "user" -> User
   | x -> failwith (Printf.sprintf "Unknown encryption mode %s. Use always, never or user." x)
-let encryption_mode = ref Never
+let encryption_mode = ref User
 
 let base = ref None 
 let src = ref None
@@ -224,7 +226,7 @@ let _ =
 		| Some x -> vhd_of_device x in
 	debug "src_vhd = %s; dest_vhd = %s; base_vhd = %s" (Opt.default "None" src_vhd) (Opt.default "None" dest_vhd) (Opt.default "None" base_vhd);
 
-	let common = Common.make false false true in
+	let common = Common.make false false true vhd_search_path in
 
         if !experimental_reads_bypass_tapdisk
 	then warn "experimental_reads_bypass_tapdisk set: this may cause data corruption";
@@ -253,6 +255,7 @@ let _ =
 		| Some "http" when !encryption_mode = Always ->
 			warn "turning on encryption for this transfer as requested by config file";
 			rewrite_scheme "https"
+		| Some ("http" | "https") -> device_or_url
 		| _ -> "file://" ^ device_or_url
 		end in
 
@@ -267,17 +270,20 @@ let _ =
 		error "Not implemented: writes bypass tapdisk while reads go through tapdisk";
 		failwith "Not implemented: writing bypassing tapdisk while reading through tapdisk"
 	| false, _, Some vhd, false, _, _ ->
+		let dest = rewrite_url dest in
 		info "streaming from raw %s using BAT from %s (relative to %s) to raw %s" src vhd (string_opt relative_to) dest;
 		let t = Impl.make_stream common (src ^ ":" ^ vhd) relative_to "hybrid" "raw" in
-		t, rewrite_url dest, "raw"
+		t, dest, "raw"
         | true, _, Some vhd, _, _, _ ->
+		let dest = rewrite_url dest in
 		info "streaming from vhd %s (relative to %s) to raw %s" vhd (string_opt relative_to) dest;
         	let t = Impl.make_stream common vhd relative_to "vhd" "raw" in
-		t, rewrite_url dest, "raw"
+		t, dest, "raw"
         | _, device, None, _, _, _ ->
+		let dest = rewrite_url dest in
 		info "streaming from raw %s (relative to %s) to raw %s" src (string_opt relative_to) dest;
         	let t = Impl.make_stream common device relative_to "raw" "raw" in
-		t, rewrite_url dest, "raw" in
+		t, dest, "raw" in
 
 	progress_cb 0.;
         let progress total_work work_done =

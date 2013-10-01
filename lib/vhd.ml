@@ -1285,6 +1285,19 @@ module Make = functor(File: S.IO) -> struct
     | Vhd_result.Error e -> fail e
     | Vhd_result.Ok x -> f x
 
+  (* Search a path for a filename *)
+  let search filename path =
+    let rec loop = function
+    | [] -> return None
+    | x :: xs ->
+      let possibility = Filename.concat x filename in
+      ( File.exists possibility >>= function
+        | true -> return (Some possibility)
+        | false -> loop xs ) in
+    if Filename.is_relative filename
+    then loop path
+    else loop [ "" ]
+
   let rec unaligned_really_write fd offset buffer =
     let open Int64 in
     let sector_start = (offset lsr sector_shift) lsl sector_shift in
@@ -1336,7 +1349,7 @@ module Make = functor(File: S.IO) -> struct
   module Header_IO = struct
     open Header
 
-    let get_parent_filename t =
+    let get_parent_filename t search_path =
       let rec test n =
         if n >= Array.length t.parent_locators
         then fail (Failure "Failed to find parent!")
@@ -1345,10 +1358,9 @@ module Make = functor(File: S.IO) -> struct
           let open Parent_locator in
           match to_filename l with
           | Some path ->
-            exists path >>= fun x ->
-            if not x
-            then test (n + 1)
-            else return path
+            ( search path search_path >>= function
+              | None -> test (n + 1)
+              | Some path -> return path )
           | None -> test (n + 1) in
       test 0
 
@@ -1505,20 +1517,23 @@ module Make = functor(File: S.IO) -> struct
       write t >>= fun t ->
       return t
 
-    let rec openfile filename =
-      File.openfile filename >>= fun handle ->
-      Footer_IO.read handle 0L >>= fun footer ->
-      Header_IO.read handle (Int64.of_int Footer.sizeof) >>= fun header ->
-      BAT_IO.read handle header >>= fun bat ->
-      (match footer.Footer.disk_type with
-        | Disk_type.Differencing_hard_disk ->
-          Header_IO.get_parent_filename header >>= fun parent_filename ->
-          openfile parent_filename >>= fun p ->
-          return (Some p)
-        | _ ->
-          return None) >>= fun parent ->
-      Batmap_IO.read handle header >>= fun batmap ->
-      return { filename; handle; header; footer; bat; bitmap_cache = ref None; batmap; parent }
+    let rec openfile ?(path = ["."]) filename =
+      search filename path >>= function
+      | None -> fail (Failure (Printf.sprintf "Failed to find %s (search path = %s)" filename (String.concat ":" path)))
+      | Some filename ->
+        File.openfile filename >>= fun handle ->
+        Footer_IO.read handle 0L >>= fun footer ->
+        Header_IO.read handle (Int64.of_int Footer.sizeof) >>= fun header ->
+        BAT_IO.read handle header >>= fun bat ->
+        (match footer.Footer.disk_type with
+          | Disk_type.Differencing_hard_disk ->
+            Header_IO.get_parent_filename header path >>= fun parent_filename ->
+            openfile ~path parent_filename >>= fun p ->
+            return (Some p)
+          | _ ->
+            return None) >>= fun parent ->
+        Batmap_IO.read handle header >>= fun batmap ->
+        return { filename; handle; header; footer; bat; bitmap_cache = ref None; batmap; parent }
 
     let rec close t =
       (* This is where we could repair the footer if we have chosen not to

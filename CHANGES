@@ -1,3 +1,9 @@
+trunk (unreleased)
+* can parse and print XenServer 'batmaps'
+* sparse_dd: encryption: default to respecting the user's choice
+* add a vhd search path, for parent locators with relative paths
+* sparse_dd: add /dev/mapper to the default vhd search path to match libvhd
+
 0.5.1 (2013-09-27)
 * cope with vhds with over-size BATs
 * respect --prezeroed when streaming into raw format
