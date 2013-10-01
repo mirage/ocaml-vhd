@@ -268,17 +268,20 @@ let _ =
 		error "Not implemented: writes bypass tapdisk while reads go through tapdisk";
 		failwith "Not implemented: writing bypassing tapdisk while reading through tapdisk"
 	| false, _, Some vhd, false, _, _ ->
+		let dest = rewrite_url dest in
 		info "streaming from raw %s using BAT from %s (relative to %s) to raw %s" src vhd (string_opt relative_to) dest;
 		let t = Impl.make_stream common (src ^ ":" ^ vhd) relative_to "hybrid" "raw" in
-		t, rewrite_url dest, "raw"
+		t, dest, "raw"
         | true, _, Some vhd, _, _, _ ->
+		let dest = rewrite_url dest in
 		info "streaming from vhd %s (relative to %s) to raw %s" vhd (string_opt relative_to) dest;
         	let t = Impl.make_stream common vhd relative_to "vhd" "raw" in
-		t, rewrite_url dest, "raw"
+		t, dest, "raw"
         | _, device, None, _, _, _ ->
+		let dest = rewrite_url dest in
 		info "streaming from raw %s (relative to %s) to raw %s" src (string_opt relative_to) dest;
         	let t = Impl.make_stream common device relative_to "raw" "raw" in
-		t, rewrite_url dest, "raw" in
+		t, dest, "raw" in
 
 	progress_cb 0.;
         let progress total_work work_done =
