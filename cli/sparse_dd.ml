@@ -19,7 +19,7 @@ let encryption_mode_of_string = function
   | "never" -> Never
   | "user" -> User
   | x -> failwith (Printf.sprintf "Unknown encryption mode %s. Use always, never or user." x)
-let encryption_mode = ref Never
+let encryption_mode = ref User
 
 let base = ref None 
 let src = ref None
