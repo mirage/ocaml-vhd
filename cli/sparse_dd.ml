@@ -1,6 +1,9 @@
 (* Utility program which copies between two block devices, using vhd BATs and efficient zero-scanning
    for performance. *)
 
+module D = Debug.Make(struct let name = "sparse_dd" end)
+open D
+
 let config_file = "/etc/sparse_dd.conf"
 
 type encryption_mode =
@@ -31,6 +34,8 @@ let string_opt = function
   | None -> "None"
   | Some x -> x
 
+let machine_readable_progress = ref false
+
 let options = [
     "unbuffered", Arg.Bool (fun b -> File.use_unbuffered := b), (fun () -> string_of_bool !File.use_unbuffered), "use unbuffered I/O via O_DIRECT";
     "encryption-mode", Arg.String (fun x -> encryption_mode := encryption_mode_of_string x), (fun () -> string_of_encryption_mode !encryption_mode), "how to use encryption";
@@ -41,7 +46,7 @@ let options = [
     "dest", Arg.String (fun x -> dest := Some x), (fun () -> string_opt !dest), "destination disk";
     "size", Arg.String (fun x -> size := Int64.of_string x), (fun () -> Int64.to_string !size), "number of bytes to copy";
     "prezeroed", Arg.Set prezeroed, (fun () -> string_of_bool !prezeroed), "assume the destination disk has been prezeroed";
-    "machine", Arg.Set set_machine_logging, (fun () -> string_of_bool !set_machine_logging), "emit machine-readable output";
+    "machine", Arg.Set machine_readable_progress, (fun () -> string_of_bool !machine_readable_progress), "emit machine-readable output";
 ]
 
 open Xenstore
@@ -71,61 +76,27 @@ module Mutex = struct
 			raise e
 end
 
-type logging_mode =
-	| Buffer (* before we know which output format we should use *)
-	| Human
-	| Machine
+module Progress = struct
+	let header = Cstruct.create Chunked.sizeof
 
-let logging_mode = ref Buffer
+	(** Report progress complete to another program reading stdout *)
+	let report fraction =
+		if !machine_readable_progress then begin
+			let s = Printf.sprintf "Progress: %.0f" (fraction *. 100.) in
+			let data = Cstruct.create (String.length s) in
+			Cstruct.blit_from_string s 0 data 0 (String.length s);
+			Chunked.marshal header { Chunked.offset = 0L; data };
+			Printf.printf "%s%s%!" (Cstruct.to_string header) s
+		end
 
-let buffer = ref []
-
-let log_m = Mutex.create ()
-
-let log (fmt: ('a , unit, string, unit) format4) =
-	let header = Cstruct.create Chunked.sizeof in
-	Mutex.execute log_m
-		(fun () ->
-			Printf.kprintf
-				(fun s ->
-					match !logging_mode with
-						| Buffer ->
-							buffer := s :: !buffer
-						| Human ->
-							Printf.printf "%s\n%!" s
-						| Machine ->
-							let data = Cstruct.create (String.length s) in
-							Cstruct.blit_from_string s 0 data 0 (String.length s);
-							Chunked.marshal header { Chunked.offset = 0L; data };
-							Printf.printf "%s%s%!" (Cstruct.to_string header) s
-				) fmt
-		)
-let debug (fmt: ('a , unit, string, unit) format4) = log fmt
-let warn  (fmt: ('a , unit, string, unit) format4) = log fmt
-
-
-let set_logging_mode m =
-	let to_flush = Mutex.execute log_m
-		(fun () ->
-			logging_mode := m;
-			match m with
-				| Human
-				| Machine ->
-					List.rev !buffer
-				| Buffer -> []
-		) in
-	List.iter (fun x -> debug "%s" x) to_flush
-
-let close_output () =
-	Mutex.execute log_m
-		(fun () ->
-			match !logging_mode with
-				| Machine ->
-					let header = Cstruct.create Chunked.sizeof in
-					Chunked.marshal header { Chunked.offset = 0L; data = Cstruct.create 0 };
-					Printf.printf "%s%!" (Cstruct.to_string header)
-				| _ -> ()
-		)
+	(** Emit the end-of-stream message *)
+	let close () =
+		if !machine_readable_progress then begin
+			let header = Cstruct.create Chunked.sizeof in
+			Chunked.marshal header { Chunked.offset = 0L; data = Cstruct.create 0 };
+			Printf.printf "%s%!" (Cstruct.to_string header)
+		end
+end
 
 let startswith prefix x =
 	let prefix' = String.length prefix
@@ -164,7 +135,7 @@ let vhd_of_device path =
 	let tapdisk_of_path path =
 		try 
 			match Tapctl.of_device (Tapctl.create ()) path with
-			| _, _, (Some (_, vhd)) -> Some vhd
+			| _, _, (Some ("vhd", vhd)) -> Some vhd
 			| _, _, _ -> raise Not_found
 		with Tapctl.Not_blktap ->
 			debug "Device %s is not controlled by blktap" path;
@@ -220,19 +191,13 @@ let progress_cb =
 
 	function fraction ->
 		let new_percent = int_of_float (fraction *. 100.) in
-		if !last_percent <> new_percent then begin
-			if !logging_mode = Machine
-			then debug "Progress: %.0f" (fraction *. 100.)
-			else debug "\b\rProgress: %-60s (%d%%)" (String.make (int_of_float (fraction *. 60.)) '#') new_percent;
-			flush stdout;
-		end;
+		if !last_percent <> new_percent then Progress.report fraction;
+		if !last_percent / 10 <> new_percent / 10 then debug "progress %d%%" new_percent;
 		last_percent := new_percent
 
 let _ =
 	File.use_unbuffered := true;
 	Xcp_service.configure ~options ();
-	if !set_machine_logging then set_logging_mode Machine;
-	if !logging_mode = Buffer then set_logging_mode Human;
 
 	let src = match !src with
 		| None ->
@@ -295,17 +260,22 @@ let _ =
 	let stream_t, destination, destination_format = match !experimental_reads_bypass_tapdisk, src, src_vhd, !experimental_writes_bypass_tapdisk, dest, dest_vhd with
         | true, _, Some vhd, true, _, Some vhd' ->
 		prezeroed := false; (* the physical disk will have vhd metadata and other stuff on it *)
+		info "streaming from vhd %s (relative to %s) to vhd %s" vhd (string_opt relative_to) vhd';
         	let t = Impl.make_stream common vhd relative_to "vhd" "vhd" in
 		t, "file://" ^ vhd', "vhd"
 	| false, _, _, true, _, _ ->
+		error "Not implemented: writes bypass tapdisk while reads go through tapdisk";
 		failwith "Not implemented: writing bypassing tapdisk while reading through tapdisk"
 	| false, _, Some vhd, false, _, _ ->
-		let t = Impl.hybrid_stream src relative_to vhd in
+		info "streaming from raw %s using BAT from %s (relative to %s) to raw %s" src vhd (string_opt relative_to) dest;
+		let t = Impl.make_stream common (src ^ ":" ^ vhd) relative_to "hybrid" "raw" in
 		t, rewrite_url dest, "raw"
         | true, _, Some vhd, _, _, _ ->
+		info "streaming from vhd %s (relative to %s) to raw %s" vhd (string_opt relative_to) dest;
         	let t = Impl.make_stream common vhd relative_to "vhd" "raw" in
 		t, rewrite_url dest, "raw"
         | _, device, None, _, _, _ ->
+		info "streaming from raw %s (relative to %s) to raw %s" src (string_opt relative_to) dest;
         	let t = Impl.make_stream common device relative_to "raw" "raw" in
 		t, rewrite_url dest, "raw" in
 
@@ -321,4 +291,4 @@ let _ =
 	else Lwt_main.run t;
 	let time = Unix.gettimeofday () -. start in
 	debug "Time: %.2f seconds" time;
-	close_output ()
+	Progress.close ()
