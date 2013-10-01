@@ -118,8 +118,12 @@ module Channels = struct
     really_read: Cstruct.t -> unit Lwt.t;
     really_write: Cstruct.t -> unit Lwt.t;
     really_write_offset: int64 ref;
+    skip: int64 -> unit Lwt.t;
     close: unit -> unit Lwt.t
   }
+
+  exception Impossible_to_seek
+
   let of_raw_fd fd =
     let ic = Lwt_io.of_fd ~mode:Lwt_io.input fd in
     let oc = Lwt_io.of_fd ~mode:Lwt_io.output fd in
@@ -129,10 +133,19 @@ module Channels = struct
       complete "write" (Some !really_write_offset) Lwt_bytes.write fd buf >>= fun () ->
       really_write_offset := Int64.(add !really_write_offset (of_int (Cstruct.len buf)));
       return () in
+    let skip _ = fail Impossible_to_seek in
     let close () =
       let _ = try_lwt Lwt_io.close oc with _ -> return () in
       try_lwt Lwt_io.close ic with _ -> return () in
-    return { ic; oc; really_read; really_write; really_write_offset; close }
+    return { ic; oc; really_read; really_write; really_write_offset; skip; close }
+
+  let of_seekable_fd fd =
+    of_raw_fd fd >>= fun c ->
+    let skip n =
+      Lwt_unix.LargeFile.lseek fd n Unix.SEEK_CUR >>= fun offset ->
+      c.really_write_offset := offset;
+      return () in
+    return { c with skip }
 
   let sslctx =
     Ssl.init ();
@@ -148,10 +161,11 @@ module Channels = struct
       complete "write" (Some !really_write_offset) Lwt_ssl.write_bytes sock buf >>= fun () ->
       really_write_offset := Int64.(add !really_write_offset (of_int (Cstruct.len buf)));
       return () in
+    let skip _ = fail Impossible_to_seek in
     let close () =
       Lwt_chan.flush oc >>= fun () ->
       Lwt_ssl.close sock in
-    return { ic; oc; really_read; really_write; really_write_offset; close }
+    return { ic; oc; really_read; really_write; really_write_offset; skip; close }
 end
 
 let stream_human common _ s _ ?(progress = no_progress_bar) () =
@@ -248,20 +262,20 @@ let stream_raw common c s prezeroed ?(progress = no_progress_bar) () =
   ( if not prezeroed then expand_empty s else return s ) >>= fun s ->
   expand_copy s >>= fun s ->
 
-  fold_left (fun(sector, work_done) x ->
+  fold_left (fun work_done x ->
     (match x with
       | Element.Sectors data ->
         c.Channels.really_write data >>= fun () ->
         return Int64.(of_int (Cstruct.len data))
       | Element.Empty n -> (* must be prezeroed *)
+        c.Channels.skip (Int64.(mul n 512L));
         assert prezeroed;
         return 0L
       | _ -> fail (Failure (Printf.sprintf "unexpected stream element: %s" (Element.to_string x))) ) >>= fun work ->
-    let sector = Int64.add sector (Element.len x) in
     let work_done = Int64.add work_done work in
     p work_done;
-    return (sector, work_done)
-  ) (0L, 0L) s.elements >>= fun _ ->
+    return work_done
+  ) 0L s.elements >>= fun _ ->
   p total_work;
 
   return (Some total_work)
@@ -316,17 +330,21 @@ let socket sockaddr =
   | _ -> failwith "unsupported sockaddr type" in
   Lwt_unix.socket family Unix.SOCK_STREAM 0
 
-(* Read raw blocks but only where an underlying vhd has a BAT entry *)
-let hybrid_stream source relative_to vhd =
-  Vhd_IO.openfile vhd >>= fun t ->
-  Vhd_lwt.Fd.openfile vhd >>= fun src ->
-  ( match relative_to with
-    | None -> return None
-    | Some f -> Vhd_IO.openfile f >>= fun t -> return (Some t) ) >>= fun from ->
-  Vhd_input.hybrid ?from src t
+let colon = Re_str.regexp_string ":"
 
 let make_stream common source relative_to source_format destination_format =
   match source_format, destination_format with
+  | "hybrid", "raw" ->
+    (* expect source to be block_device:vhd *)
+    begin match Re_str.bounded_split colon source 2 with
+    | [ raw; vhd ] ->
+      Vhd_IO.openfile vhd >>= fun t ->
+      Vhd_lwt.Fd.openfile raw >>= fun raw ->
+      ( match relative_to with None -> return None | Some f -> Vhd_IO.openfile f >>= fun t -> return (Some t) ) >>= fun from ->
+      Vhd_input.hybrid ?from raw t
+    | _ ->
+      fail (Failure (Printf.sprintf "Failed to parse hybrid source: %s (expected raw_disk|vhd_disk)" source))
+    end
   | "vhd", "vhd" ->
     Vhd_IO.openfile source >>= fun t ->
     ( match relative_to with None -> return None | Some f -> Vhd_IO.openfile f >>= fun t -> return (Some t) ) >>= fun from ->
@@ -349,7 +367,7 @@ let write_stream common s destination source_protocol destination_protocol preze
   ( match endpoint with
     | File path ->
       Lwt_unix.openfile path [ Unix.O_RDWR ] 0o0 >>= fun fd ->
-      Channels.of_raw_fd fd >>= fun c ->
+      Channels.of_seekable_fd fd >>= fun c ->
       return (c, [ NoProtocol; Human ])
     | Null ->
       Lwt_unix.openfile "/dev/null" [ Unix.O_RDWR ] 0o0 >>= fun fd ->
@@ -466,7 +484,7 @@ let stream common (source: string) (relative_to: string option) (source_format: 
 
     let source_protocol = require "source-protocol" source_protocol in
 
-    let supported_formats = [ "raw"; "vhd" ] in
+    let supported_formats = [ "raw"; "vhd"; "hybrid" ] in
     let destination_protocol = match destination_protocol with
       | None -> None
       | Some x -> Some (protocol_of_string x) in
