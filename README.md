@@ -3,73 +3,62 @@ ocaml-vhd
 
 A pure OCaml library to read and write [vhd](http://en.wikipedia.org/wiki/VHD_(file_format)) format data, plus a simple command-line tool which allows vhd files to be interrogated, manipulated, format-converted and streamed to and from files and remote servers.
 
-Basic command-line tool examples
---------------------------------
+Example usage
+-------------
 
-To create an empty dynamic (i.e. grows on demand) vhd:
+To initialise your environment in utop:
 ```
-vhd-tool create filename.vhd --size 16GiB
-```
-
-To create an empty difference vhd:
-```
-vhd-tool create filename.vhd --size 16GiB --parent otherfile.vhd
+open Lwt;;
+#require "vhd-format";;
+#require "vhd-format.lwt";;
+module V = Vhd.Make(Vhd_lwt);;
 ```
 
-To query all the parameters of a vhd:
+To open a file and read the first sector:
 ```
-vhd-tool info filename.vhd
-```
-
-To query a specific parameter:
-```
-vhd-tool get filename.vhd current-size
+V.Vhd_IO.openfile "foo.vhd" >>= fun f -> V.Vhd_IO.read_sector f 0L;;
+- : Cstruct.t option = Some {Cstruct.buffer = <abstr>; off = 0; len = 512}   
 ```
 
-Example: incremental backup
----------------------------
-
-(This is a work in progress)
-
-When running VMs on a hypervisor like [XenServer](http://www.xenserver.org/), it's important to have a backup strategy for your important virtual disks. One possibility is to perform periodic disk snapshots and archive the "deltas" (or differences) between the new snapshot and the last.
-
-First take a snapshot: this will be the first backup:
+To read the vhd file header:
 ```
-xe vdi-snapshot uuid=<uuid>
+V.Vhd_IO.openfile "89a62601-c82a-447a-a7fd-f7f379195e80.vhd" >>= fun f -> return f.Vhd.Vhd.header;;
+- : Vhd.Header.t = {
+ Vhd.Header.table_offset = 1536L; max_table_entries = 12288;
+ block_size_sectors_shift = 12; checksum = -3001l; parent_unique_id = <abstr>;  
+ parent_time_stamp = 0l; parent_unicode_name = [||];
+ parent_locators =
+  [|{Vhd.Parent_locator.platform_code = Vhd.Platform_code.None;
+     platform_data_space = 0l; platform_data_space_original = 0l;
+     platform_data_length = 0l; platform_data_offset = 0L;
+     platform_data = {Cstruct.buffer = <abstr>; off = 0; len = 0}};
+    {Vhd.Parent_locator.platform_code = Vhd.Platform_code.None;
+     platform_data_space = 0l; platform_data_space_original = 0l;
+     platform_data_length = 0l; platform_data_offset = 0L;
+     platform_data = {Cstruct.buffer = <abstr>; off = 0; len = 0}};
+    {Vhd.Parent_locator.platform_code = Vhd.Platform_code.None;
+     platform_data_space = 0l; platform_data_space_original = 0l;
+     platform_data_length = 0l; platform_data_offset = 0L;
+     platform_data = {Cstruct.buffer = <abstr>; off = 0; len = 0}};
+    {Vhd.Parent_locator.platform_code = Vhd.Platform_code.None;
+     platform_data_space = 0l; platform_data_space_original = 0l;
+     platform_data_length = 0l; platform_data_offset = 0L;
+     platform_data = {Cstruct.buffer = <abstr>; off = 0; len = 0}};
+    {Vhd.Parent_locator.platform_code = Vhd.Platform_code.None;
+     platform_data_space = 0l; platform_data_space_original = 0l;
+     platform_data_length = 0l; platform_data_offset = 0L;
+     platform_data = {Cstruct.buffer = <abstr>; off = 0; len = 0}};
+    {Vhd.Parent_locator.platform_code = Vhd.Platform_code.None;
+     platform_data_space = 0l; platform_data_space_original = 0l;
+     platform_data_length = 0l; platform_data_offset = 0L;
+     platform_data = {Cstruct.buffer = <abstr>; off = 0; len = 0}};
+    {Vhd.Parent_locator.platform_code = Vhd.Platform_code.None;
+     platform_data_space = 0l; platform_data_space_original = 0l;
+     platform_data_length = 0l; platform_data_offset = 0L;
+     platform_data = {Cstruct.buffer = <abstr>; off = 0; len = 0}};
+    {Vhd.Parent_locator.platform_code = Vhd.Platform_code.None;
+     platform_data_space = 0l; platform_data_space_original = 0l;
+     platform_data_length = 0l; platform_data_offset = 0L;
+     platform_data = {Cstruct.buffer = <abstr>; off = 0; len = 0}}|]}
 ```
-Next download the snapshot as a single .vhd:
-```
-xe vdi-export uuid=<uuid>
-```
-This will print a filename to the terminal.
-
-Periodically (e.g. from cron), perform a new snapshot:
-```
-xe vdi-snapshot uuid=<uuid>
-```
-Next download the differences from a previous snapshot as a single .vhd:
-```
-xe vdi-export uuid=<uuid> relative-to=<previous-uuid>
-```
-Next, to avoid using too much disk space, count the number of snapshots and delete the oldest if you have too many:
-```
-xe vdi-destroy uuid=<oldest-uuid>
-vhd-tool commit filename.vhd --into older.vhd
-```
-
-To restore a backup onto a fresh system use:
-```
-vhd-tool stream --source filename.vhd
-                --source-format vhd
-                --destination http://user:password@xenserver/import_vdi
-                --destination-format vhd
-                --progress
-```
-
-Test ideas backlog
-------------------
-
-Check the stream 'size' correctly counts the amount of
-work described by the stream.
-
 
