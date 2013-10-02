@@ -1,5 +1,5 @@
 # OPAM packages needed to build tests.
-OPAM_PACKAGES="lwt cstruct uuidm cmdliner"
+OPAM_PACKAGES="lwt cstruct uuidm cmdliner ounit"
 
 
 case "$OCAML_VERSION,$OPAM_VERSION" in
