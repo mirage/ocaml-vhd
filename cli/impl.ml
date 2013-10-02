@@ -134,8 +134,6 @@ let stream_nbd common c s prezeroed ?(progress = no_progress_bar) () =
   let c = { Nbd_lwt_client.read = c.Channels.really_read; write = c.Channels.really_write } in
 
   Nbd_lwt_client.negotiate c >>= fun (server, size, flags) ->
-Printf.printf "OK\n%!";
-exit 0;
   (* Work to do is: non-zero data to write + empty sectors if the
      target is not prezeroed *)
   let total_work = Int64.(add (add s.size.metadata s.size.copy) (if prezeroed then 0L else s.size.empty)) in
