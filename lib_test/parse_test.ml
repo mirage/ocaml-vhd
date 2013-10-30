@@ -18,6 +18,7 @@ module Impl = Vhd.Make(Vhd_lwt)
 open Impl
 open Vhd
 open Vhd_lwt
+open Patterns
 
 let create () =
   let _ = Create_vhd.disk in
@@ -36,12 +37,6 @@ let make_new_filename =
     let this = !counter in
     incr counter;
     disk_name_stem ^ (string_of_int this) ^ disk_suffix
-
-let sizes = [
-  0L;
-  4194304L;
-  max_disk_size;
-]
 
 (* Create a dynamic disk, check headers *)
 let check_empty_disk size =
@@ -68,38 +63,12 @@ let check_empty_snapshot size =
   Vhd_IO.close vhd' >>= fun () ->
   Vhd_IO.close vhd
 
-(* Look for problems reading and writing to edge-cases *)
-type choice =
-  | First
-  | Last
-
-let string_of_choice = function
-  | First -> "first"
-  | Last -> "last"
-
-type position = {
-  block: choice;
-  sector: choice;
-}
-
-let positions = [
-  { block = First; sector = First };
-  { block = First; sector = Last };
-  { block = Last; sector = First };
-  { block = Last; sector = Last }
-]
-
 let fill_sector_with pattern =
   let b = Memory.alloc 512 in
   for i = 0 to 511 do
     Cstruct.set_char b i (pattern.[i mod (String.length pattern)])
   done;
   b
-
-let first_write_message = "This is a sector which contains simple data.\n"
-let second_write_message = "All work and no play makes Dave a dull boy.\n"
-let first_sector = fill_sector_with first_write_message
-let second_sector = fill_sector_with second_write_message
 
 let absolute_sector_of vhd { block; sector } =
   if vhd.Vhd.header.Header.max_table_entries = 0
@@ -116,28 +85,6 @@ let absolute_sector_of vhd { block; sector } =
 
 let cstruct_to_string c = String.escaped (Cstruct.to_string c)
 
-type operation =
-  | Create of int64
-  | Snapshot
-  | Write of (position * string * Cstruct.t)
-
-let descr_of_operation = function
-  | Create x -> Printf.sprintf "create a disk of size %Ld bytes" x
-  | Snapshot -> "take a snapshot"
-  | Write (p, message, _) -> Printf.sprintf "write \"%s\"to the %s sector of the %s block" (String.escaped message) (string_of_choice p.sector) (string_of_choice p.block)
-
-let string_of_operation = function
-  | Create x -> Printf.sprintf "Create:%Ld" x
-  | Snapshot -> "Snapshot"
-  | Write (p, _, _) -> Printf.sprintf "Write:%s:%s" (string_of_choice p.block) (string_of_choice p.sector)
-
-let descr_of_program = function
-  | [] -> ""
-  | [ x ] -> descr_of_operation x
-  | x :: xs -> "First, " ^ (descr_of_operation x) ^ "; then " ^ (String.concat "; then " (List.map descr_of_operation xs))
-
-let string_of_program p = String.concat "_" (List.map string_of_operation p)
-
 type state = {
   to_close: fd Vhd.t list;
   to_unlink: string list;
@@ -151,6 +98,15 @@ let initial = {
   child = None;
   contents = [];
 }
+
+let sectors = Hashtbl.create 16
+let sector_lookup message =
+  if Hashtbl.mem sectors message
+  then Hashtbl.find sectors message
+  else
+    let data = fill_sector_with message in
+    Hashtbl.replace sectors message data;
+    data
 
 let execute state = function
   | Create size ->
@@ -174,7 +130,8 @@ let execute state = function
       child = Some vhd';
       contents = state.contents;
     }
-  | Write (position, _, data) ->
+  | Write (position, message) ->
+    let data = sector_lookup message in
     let vhd = match state.child with
     | Some vhd -> vhd
     | None -> failwith "no vhd open" in
@@ -315,50 +272,9 @@ let run program =
   Lwt_list.fold_left_s single_instruction initial program >>= fun final_state ->
   cleanup final_state
 
-let rec allpairs xs ys = match xs with
-  | [] -> []
-  | x :: xs -> List.map (fun y -> x, y) ys @ (allpairs xs ys)
-
-let first_write p = Write(p, first_write_message, first_sector)
-let second_write p = Write(p, second_write_message, second_sector)
-
-(* Check writing and then reading back works *)
-let create_write_read =
-  List.map (fun (size, p) ->
-    [ Create size; first_write p ]
-  ) (allpairs sizes positions)
-
-(* Check writing and then reading back works in a simple chain *)
-let create_write_read_leaf =
-  List.map (fun (size, p) ->
-    [ Create size; Snapshot; first_write p ]
-  ) (allpairs sizes positions)
-
-(* Check writing and then reading back works in a chain where the writes are in the parent *)
-let create_write_read_parent =
-  List.map (fun (size, p) ->
-    [ Create size; first_write p; Snapshot ]
-  ) (allpairs sizes positions)
-
-(* Check writing and then reading back works in a chain where there are writes in both parent and leaf *)
-let create_write_overwrite =
-  List.map (fun (size, (p1, p2)) ->
-    [ Create size; first_write p1; Snapshot; second_write p2 ]
-  ) (allpairs sizes (allpairs positions positions))
-
-(* TODO: ... and all of that again with a larger leaf *)
-
-let all_programs =
-  List.concat [
-    create_write_read;
-    create_write_read_leaf;
-    create_write_read_parent;
-    create_write_overwrite;
-]
-
 let all_program_tests = List.map (fun p ->
   (string_of_program p) >:: (fun () -> Lwt_main.run (run p))
-) all_programs
+) programs
 
 let _ =
   let verbose = ref false in
