@@ -142,8 +142,8 @@ module IO = struct
     return (get_vhd_time (st.Lwt_unix.LargeFile.st_mtime))
 
   let get_file_size x =
-    lwt st = Lwt_unix.LargeFile.stat x in
-    return st.Lwt_unix.LargeFile.st_size
+    try return (File.get_file_size x)
+    with e -> fail e
 
   include Fd
   include Memory

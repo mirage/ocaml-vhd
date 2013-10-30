@@ -19,6 +19,10 @@ val openfile: string -> int -> Unix.file_descr
 (** [openfile filename mode] opens [filename] read/write using
     the current global buffering mode *)
 
+val get_file_size: string -> int64
+(** [fet_file_size filename] returns the number of bytes in
+    [filename] *)
+
 val fsync: Unix.file_descr -> unit
 (** [fsync fd] ensures that any buffered data is written to disk
     and throws a Unix_error if any error has been recorded. *)
