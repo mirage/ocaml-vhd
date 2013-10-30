@@ -16,10 +16,12 @@
 
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/ioctl.h>
 
 #include <fcntl.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdint.h>
 
 #include <caml/alloc.h>
 #include <caml/memory.h>
@@ -36,22 +38,25 @@ extern void uerror(char *cmdname, value cmdarg);
 
 CAMLprim value stub_blkgetsize64(value filename){
   CAMLparam1(filename);
+  CAMLlocal1(result);
   uint64_t size_in_bytes;
+  int fd;
   int success = -1;
 
   const char *filename_c = strdup(String_val(filename));
 
   enter_blocking_section();
-  fd = open(filename_c, O_RD, 0);
+  fd = open(filename_c, O_RDONLY, 0);
   if (ioctl(fd, BLKGETSIZE64, &size_in_bytes) == 0)
-    success = 0
+    success = 0;
   close(fd);
   leave_blocking_section();
 
   free((void*)filename_c);
 
   if (fd == -1) uerror("open", filename);
-  if (success = -1) uerror("BLKGETSIZE64", filename);
+  if (success == -1) uerror("BLKGETSIZE64", filename);
 
-  CAMLreturn(Val_int64(size_in_bytes));
+  result = caml_copy_int64(size_in_bytes);
+  CAMLreturn(result);
 }
