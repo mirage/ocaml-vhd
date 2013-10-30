@@ -21,5 +21,15 @@ let openfile_buffered filename mode = Unix.openfile filename [ Unix.O_RDWR ] mod
 let openfile filename mode =
   (if !use_unbuffered then openfile_unbuffered else openfile_buffered) filename mode
 
+external blkgetsize64: string -> int64 = "stub_blkgetsize64"
+
+let get_file_size x =
+    let st = Unix.LargeFile.stat x in
+    match st.Unix.LargeFile.st_kind with
+    | Unix.S_REG -> st.Unix.LargeFile.st_size
+    | Unix.S_BLK -> blkgetsize64 x
+    | _ -> failwith (Printf.sprintf "get_file_size: %s not a file or block device" x)
+
+
 external fsync : Unix.file_descr -> unit = "stub_fsync"
 

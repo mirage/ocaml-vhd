@@ -21,7 +21,7 @@ Library vhd_lwt
   Findlibparent:      vhd
   Modules:            Vhd_lwt, Memory, File
   BuildDepends:       lwt, lwt.unix, cstruct.lwt
-  CSources:           odirect_stubs.c
+  CSources:           odirect_stubs.c, blkgetsize64_stubs.c
 
 Executable disk_to_ocaml
   CompiledObject:     best
