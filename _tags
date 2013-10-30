@@ -1,5 +1,5 @@
 # OASIS_START
-# DO NOT EDIT (digest: 8f29976a6c79d0207b3554660bcd5338)
+# DO NOT EDIT (digest: f70a1508d9b9c6e553b4bd94403e687b)
 # Ignore VCS directories, you can use the same kind of rule outside 
 # OASIS_START/STOP if you want to exclude directories that contains 
 # useless stuff for the build process
@@ -26,6 +26,9 @@
 "lib/odirect_stubs.c": pkg_lwt
 "lib/odirect_stubs.c": pkg_lwt.unix
 "lib/odirect_stubs.c": pkg_cstruct.lwt
+"lib/blkgetsize64_stubs.c": pkg_lwt
+"lib/blkgetsize64_stubs.c": pkg_lwt.unix
+"lib/blkgetsize64_stubs.c": pkg_cstruct.lwt
 # Executable disk_to_ocaml
 <lib_test/disk_to_ocaml.{native,byte}>: use_vhd
 <lib_test/disk_to_ocaml.{native,byte}>: use_vhd_lwt
