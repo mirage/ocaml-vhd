@@ -39,6 +39,22 @@ Executable parse_test
   Install:            false
   BuildDepends:       lwt, lwt.unix, vhd-format, vhd-format.lwt, cstruct, oUnit
 
+Executable vm_test
+  CompiledObject:     best
+  Path:               lib_test
+  MainIs:             vm_test.ml
+  Custom:             true
+  Install:            false
+  BuildDepends:       lwt, lwt.unix, vhd-format, vhd-format.lwt, cstruct, oUnit
+
+Executable vm_test
+  CompiledObject:     best
+  Path:               lib_test
+  MainIs:             vm_test.ml
+  Custom:             true
+  Install:            false
+  BuildDepends:       lwt, lwt.unix, vhd-format, vhd-format.lwt, cstruct, oUnit
+
 Test parse_test
   Command:            ./parse_test.native
   Run:                true
