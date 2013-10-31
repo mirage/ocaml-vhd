@@ -126,7 +126,7 @@ module IO = struct
   let return = Lwt.return
   let fail = Lwt.fail
 
-  let exists path = return (try ignore(Unix.stat path); true with _ -> false)
+  let exists path = return (try ignore(Unix.LargeFile.stat path); true with _ -> false)
 
   let y2k = 946684800.0 (* seconds from the unix epoch to the vhd epoch *)
 
