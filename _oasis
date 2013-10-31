@@ -11,7 +11,7 @@ Library vhd
   CompiledObject:     best
   Path:               lib
   Findlibname:        vhd-format
-  Modules:            Vhd, S, Vhd_result, Element
+  Modules:            Vhd, S, Vhd_result, Element, Patterns
   BuildDepends:       lwt, lwt.unix, uuidm, cstruct
 
 Library vhd_lwt
@@ -19,8 +19,8 @@ Library vhd_lwt
   Path:               lib
   Findlibname:        lwt
   Findlibparent:      vhd
-  Modules:            Vhd_lwt, Memory, File
-  BuildDepends:       lwt, lwt.unix, cstruct.lwt
+  Modules:            Vhd_lwt, Memory, File, Patterns_lwt
+  BuildDepends:       lwt, lwt.unix, cstruct.lwt, oUnit
   CSources:           odirect_stubs.c, blkgetsize64_stubs.c
 
 Executable disk_to_ocaml
