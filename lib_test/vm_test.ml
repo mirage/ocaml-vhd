@@ -11,6 +11,8 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Lesser General Public License for more details.
  *)
+let version = "0.0.1"
+
 open OUnit
 open Lwt
 
@@ -20,7 +22,6 @@ open Vhd
 open Vhd_lwt
 open Patterns
 open Patterns_lwt
-
 
 let fill_sector_with pattern =
   let b = Memory.alloc 512 in
@@ -143,13 +144,36 @@ let all_program_tests = List.map (fun p ->
   (string_of_program p) >:: (fun () -> Lwt_main.run (run p))
 ) programs
 
-let _ =
-  let verbose = ref false in
-  Arg.parse [
-    "-verbose", Arg.Unit (fun _ -> verbose := true), "Run in verbose mode";
-  ] (fun x -> Printf.fprintf stderr "Ignoring argument: %s" x)
-    "Test vhd parser";
-
+let default_cmd url verbose =
+  if verbose then begin
+    Printf.printf "url = %s\nverbose = %b\n" url verbose;
+    Printf.printf "Test suite starting\n%!";
+  end;
   let suite = "vhd" >::: all_program_tests in
-  run_test_tt ~verbose:!verbose suite
+  let _ = run_test_tt ~verbose suite in
+  `Ok ()
 
+(* Command-line parsing *)
+open Cmdliner
+
+let url_arg =
+  let doc = "XenAPI URL" in
+  Arg.(required & opt (some string) (Some "http://127.0.0.1/") & info [ "url" ] ~docv:"URL")
+
+let verbose_arg =
+  let doc = "Run in verbose mode" in
+  Arg.(value & flag & info [ "verbose" ] ~docv:"VERBOSE")
+
+let default =
+  let doc = "Use the Mirage test VM to verify vhd I/O" in
+  let man = [
+    `S "DESCRIPTION";
+    `P "Perform I/O via the Mirage test VM and verify the side-effects on the backend storage are correct.";
+  ] in
+  Term.(ret (pure default_cmd $ url_arg $ verbose_arg)),
+  Term.info "mirage-vhd-test" ~version ~doc
+
+let _ =
+  match Term.eval default with
+  | `Error _ -> exit 1
+  | _ -> exit 0

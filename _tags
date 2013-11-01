@@ -1,5 +1,5 @@
 # OASIS_START
-# DO NOT EDIT (digest: 48dab6d9d05b8939ae3221d3b3dfc4b5)
+# DO NOT EDIT (digest: cd81e53be985d1f2b952b7afd4a7b93c)
 # Ignore VCS directories, you can use the same kind of rule outside 
 # OASIS_START/STOP if you want to exclude directories that contains 
 # useless stuff for the build process
@@ -59,6 +59,7 @@
 <lib_test/vm_test.{native,byte}>: pkg_lwt.unix
 <lib_test/vm_test.{native,byte}>: pkg_cstruct
 <lib_test/vm_test.{native,byte}>: pkg_oUnit
+<lib_test/vm_test.{native,byte}>: pkg_cmdliner
 <lib_test/vm_test.{native,byte}>: pkg_cstruct.lwt
 <lib_test/vm_test.{native,byte}>: pkg_uuidm
 <lib_test/*.ml{,i}>: use_vhd
@@ -67,6 +68,7 @@
 <lib_test/*.ml{,i}>: pkg_lwt.unix
 <lib_test/*.ml{,i}>: pkg_cstruct
 <lib_test/*.ml{,i}>: pkg_oUnit
+<lib_test/*.ml{,i}>: pkg_cmdliner
 <lib_test/*.ml{,i}>: pkg_cstruct.lwt
 <lib_test/*.ml{,i}>: pkg_uuidm
 <lib_test/vm_test.{native,byte}>: custom

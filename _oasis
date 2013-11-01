@@ -45,7 +45,7 @@ Executable vm_test
   MainIs:             vm_test.ml
   Custom:             true
   Install:            false
-  BuildDepends:       lwt, lwt.unix, vhd-format, vhd-format.lwt, cstruct, oUnit
+  BuildDepends:       lwt, lwt.unix, vhd-format, vhd-format.lwt, cstruct, oUnit, cmdliner
 
 Executable vm_test
   CompiledObject:     best
