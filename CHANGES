@@ -1,3 +1,6 @@
+0.6.2 (2013-11-01)
+* vhd: always open parents read/only; add a read/write boolean to openfile
+
 0.6.1 (2013-10-30)
 * raw: use BLKGETSIZE64 to query the size if stat(2) reveals we've been given
   a block device. Otherwise we use a file size of 0 and don't copy anything.
