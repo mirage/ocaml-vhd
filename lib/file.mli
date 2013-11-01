@@ -15,7 +15,7 @@
 val use_unbuffered: bool ref
 (** if set to true we will use unbuffered I/O via O_DIRECT *)
 
-val openfile: string -> int -> Unix.file_descr
+val openfile: string -> bool -> int -> Unix.file_descr
 (** [openfile filename mode] opens [filename] read/write using
     the current global buffering mode *)
 

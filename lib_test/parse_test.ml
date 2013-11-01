@@ -43,7 +43,7 @@ let make_new_filename =
 let check_empty_disk size =
   let filename = make_new_filename () in
   Vhd_IO.create_dynamic ~filename ~size () >>= fun vhd ->
-  Vhd_IO.openfile filename >>= fun vhd' ->
+  Vhd_IO.openfile filename false >>= fun vhd' ->
   assert_equal ~printer:Header.to_string ~cmp:Header.equal vhd.Vhd.header vhd'.Vhd.header;
   assert_equal ~printer:Footer.to_string vhd.Vhd.footer vhd'.Vhd.footer;
   assert_equal ~printer:BAT.to_string ~cmp:BAT.equal vhd.Vhd.bat vhd'.Vhd.bat;
@@ -56,7 +56,7 @@ let check_empty_snapshot size =
   Vhd_IO.create_dynamic ~filename ~size () >>= fun vhd ->
   let filename = make_new_filename () in
   Vhd_IO.create_difference ~filename ~parent:vhd () >>= fun vhd' ->
-  Vhd_IO.openfile filename >>= fun vhd'' ->
+  Vhd_IO.openfile filename false >>= fun vhd'' ->
   assert_equal ~printer:Header.to_string ~cmp:Header.equal vhd'.Vhd.header vhd''.Vhd.header;
   assert_equal ~printer:Footer.to_string vhd'.Vhd.footer vhd''.Vhd.footer;
   assert_equal ~printer:BAT.to_string ~cmp:BAT.equal vhd'.Vhd.bat vhd''.Vhd.bat;

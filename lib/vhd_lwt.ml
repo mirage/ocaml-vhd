@@ -42,8 +42,8 @@ module Fd = struct
     lock: Lwt_mutex.t;
   }
 
-  let openfile filename =
-    let unix_fd = File.openfile filename 0o644 in
+  let openfile filename rw =
+    let unix_fd = File.openfile filename rw 0o644 in
     let fd = Lwt_unix.of_unix_file_descr unix_fd in
     let lock = Lwt_mutex.create () in
     return { fd; filename; lock }
@@ -61,7 +61,7 @@ module Fd = struct
     lwt fd = Lwt_unix.openfile filename [ Unix.O_RDWR; Unix.O_CREAT; Unix.O_TRUNC ] 0o644 in
     lwt () = Lwt_unix.close fd in
     (* Then re-open using our new API *)
-    openfile filename
+    openfile filename true
 
   let close t = Lwt_unix.close t.fd
 

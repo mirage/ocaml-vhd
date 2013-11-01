@@ -45,7 +45,7 @@ module type IO = sig
   include RW with type handle := fd
 
   val exists: string -> bool t
-  val openfile: string -> fd t
+  val openfile: string -> bool -> fd t
   val fsync: fd -> unit
   val create: string -> fd t
   val close: fd -> unit t

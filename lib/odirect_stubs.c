@@ -32,15 +32,21 @@
 extern void uerror(char *cmdname, value cmdarg);
 #define Nothing ((value) 0)
 
-CAMLprim value stub_openfile_direct(value filename, value mode){
-  CAMLparam2(filename, mode);
+CAMLprim value stub_openfile_direct(value filename, value rw, value perm){
+  CAMLparam3(filename, rw, perm);
   CAMLlocal1(result);
   int fd;
 
   const char *filename_c = strdup(String_val(filename));
 
   enter_blocking_section();
-  fd = open(filename_c, O_RDWR | O_DIRECT, Int_val(mode));
+  int flags = O_DIRECT;
+  if (Bool_val(rw)) {
+    flags |= O_RDWR;
+  } else {
+    flags |= O_RDONLY;
+  }
+  fd = open(filename_c, flags, Int_val(perm));
   leave_blocking_section();
 
   free((void*)filename_c);

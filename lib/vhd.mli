@@ -337,7 +337,7 @@ module Make : functor (File : S.IO) -> sig
   open File
 
   module Vhd_IO : sig
-    val openfile : ?path:string list -> string -> fd Vhd.t t
+    val openfile : ?path:string list -> string -> bool -> fd Vhd.t t
     (** [openfile ?path filename] reads the vhd metadata from [filename] (and other
         files on the path from [filename] to the root of the tree). If [filename]
         or any of the parent locators have relative paths, then they will be
@@ -379,7 +379,7 @@ module Make : functor (File : S.IO) -> sig
   end
 
   module Raw_IO : sig
-    val openfile : string -> fd Raw.t t
+    val openfile : string -> bool -> fd Raw.t t
     (** [openfile filename] opens a raw-format file [filename] *)
 
     val close : fd Raw.t -> unit t
