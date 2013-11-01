@@ -1510,25 +1510,25 @@ module Make = functor(File: S.IO) -> struct
       File.create filename >>= fun handle ->
       (* Re-open the parent file to avoid sharing the underlying file descriptor and
          having to perform reference counting *)
-      File.openfile parent.Vhd.filename >>= fun parent_handle ->
+      File.openfile parent.Vhd.filename false >>= fun parent_handle ->
       let parent = { parent with handle = parent_handle } in
       let batmap = None in
       let t = { filename; handle; header; footer; parent = Some parent; bat; batmap; bitmap_cache = ref None } in
       write t >>= fun t ->
       return t
 
-    let rec openfile ?(path = ["."]) filename =
+    let rec openfile ?(path = ["."]) filename rw =
       search filename path >>= function
       | None -> fail (Failure (Printf.sprintf "Failed to find %s (search path = %s)" filename (String.concat ":" path)))
       | Some filename ->
-        File.openfile filename >>= fun handle ->
+        File.openfile filename rw >>= fun handle ->
         Footer_IO.read handle 0L >>= fun footer ->
         Header_IO.read handle (Int64.of_int Footer.sizeof) >>= fun header ->
         BAT_IO.read handle header >>= fun bat ->
         (match footer.Footer.disk_type with
           | Disk_type.Differencing_hard_disk ->
             Header_IO.get_parent_filename header path >>= fun parent_filename ->
-            openfile ~path parent_filename >>= fun p ->
+            openfile ~path parent_filename false >>= fun p ->
             return (Some p)
           | _ ->
             return None) >>= fun parent ->
@@ -1667,8 +1667,8 @@ module Make = functor(File: S.IO) -> struct
   module Raw_IO = struct
     open Raw
 
-    let openfile filename =
-      File.openfile filename >>= fun handle ->
+    let openfile filename rw =
+      File.openfile filename rw >>= fun handle ->
       return { filename; handle }
 
     let close t =
