@@ -554,7 +554,7 @@ module Parent_locator = struct
           then Cstruct.sub t.platform_data 0 from
           else find_string (from + 1) in
       let path = Cstruct.to_string (find_string 0) in
-      let expected_prefix = "file://./" in
+      let expected_prefix = "file://" in
       let expected_prefix' = String.length expected_prefix in
       let startswith prefix x =
         let prefix' = String.length prefix and x' = String.length x in
@@ -603,7 +603,7 @@ module Parent_locator = struct
   let from_filename filename =
     (* Convenience function when creating simple vhds which have only
        one parent locator in the standard place (offset 1536 bytes) *)
-    let uri = "file://./" ^ filename in
+    let uri = "file://" ^ filename in
     let platform_data = Cstruct.create (String.length uri) in
     Cstruct.blit_from_string uri 0 platform_data 0 (String.length uri);
     let locator0 = {
