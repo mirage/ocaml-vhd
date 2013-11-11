@@ -1350,19 +1350,22 @@ module Make = functor(File: S.IO) -> struct
     open Header
 
     let get_parent_filename t search_path =
-      let rec test n =
+      let rec test checked_so_far n =
         if n >= Array.length t.parent_locators
-        then fail (Failure "Failed to find parent!")
+        then fail (Failure (Printf.sprintf "Failed to find parent (tried [ %s ] with search_path %s)"
+                             (String.concat "; " checked_so_far)
+                             (String.concat "; " search_path)
+             ))
         else
           let l = t.parent_locators.(n) in
           let open Parent_locator in
           match to_filename l with
           | Some path ->
             ( search path search_path >>= function
-              | None -> test (n + 1)
+              | None -> test (path :: checked_so_far) (n + 1)
               | Some path -> return path )
-          | None -> test (n + 1) in
-      test 0
+          | None -> test checked_so_far (n + 1) in
+      test [] 0
 
     let read fd pos =
       really_read fd pos sizeof >>= fun buf ->
