@@ -29,7 +29,8 @@ let diff () =
   let _ = Diff_vhd.disk in
   ()
 
-let disk_name_stem = "/tmp/parse_test."
+let tmp_file_dir = "/tmp"
+let disk_name_stem = tmp_file_dir ^ "/parse_test."
 let disk_suffix = ".vhd"
 
 let make_new_filename =
@@ -60,6 +61,20 @@ let check_empty_snapshot size =
   assert_equal ~printer:Header.to_string ~cmp:Header.equal vhd'.Vhd.header vhd''.Vhd.header;
   assert_equal ~printer:Footer.to_string vhd'.Vhd.footer vhd''.Vhd.footer;
   assert_equal ~printer:BAT.to_string ~cmp:BAT.equal vhd'.Vhd.bat vhd''.Vhd.bat;
+  Vhd_IO.close vhd'' >>= fun () ->
+  Vhd_IO.close vhd' >>= fun () ->
+  Vhd_IO.close vhd
+
+(* Check ../ works in parent locator *)
+let check_parent_parent_dir () =
+  let filename = make_new_filename () in
+  Vhd_IO.create_dynamic ~filename ~size:0L () >>= fun vhd ->
+  let leaf_path = Filename.(concat (concat tmp_file_dir "leaves") "leaf.vhd") in
+  let leaf_dir = Filename.dirname leaf_path in
+  (try Unix.mkdir leaf_dir 0o0644 with _ -> ());
+  Vhd_IO.create_difference ~filename:leaf_path ~parent:vhd ~relative_path:true () >>= fun vhd' ->
+  (* Make sure we can open the leaf *)
+  Vhd_IO.openfile leaf_path false >>= fun vhd'' ->
   Vhd_IO.close vhd'' >>= fun () ->
   Vhd_IO.close vhd' >>= fun () ->
   Vhd_IO.close vhd
@@ -184,6 +199,7 @@ let _ =
   let suite = "vhd" >:::
     [
       "create" >:: create;
+      "check_parent_parent_dir" >:: (fun () -> Lwt_main.run (check_parent_parent_dir ()));
      ] @ (List.map check_empty_disk sizes)
        @ (List.map check_empty_snapshot sizes)
        @ all_program_tests in

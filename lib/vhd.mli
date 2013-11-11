@@ -355,6 +355,7 @@ module Make : functor (File : S.IO) -> sig
         virtual size [size] bytes and filename [filename]. *)
 
     val create_difference: filename:string -> parent:fd Vhd.t
+      -> ?relative_path:bool
       -> ?uuid:Uuidm.t
       -> ?saved_state:bool
       -> ?features:Feature.t list

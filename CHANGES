@@ -1,3 +1,8 @@
+trunk (unreleased)
+* vhd: always interpret relative paths in parent locators as being relative to
+  the current directory of the file containing the locator first, and then search
+  the general search path after.
+
 0.6.4 (2013-11-06)
 * vhd: we expect parent locators to have prefix "file://", rather than "file://./"
 

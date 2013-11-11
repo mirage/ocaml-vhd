@@ -1350,19 +1350,22 @@ module Make = functor(File: S.IO) -> struct
     open Header
 
     let get_parent_filename t search_path =
-      let rec test n =
+      let rec test checked_so_far n =
         if n >= Array.length t.parent_locators
-        then fail (Failure "Failed to find parent!")
+        then fail (Failure (Printf.sprintf "Failed to find parent (tried [ %s ] with search_path %s)"
+                             (String.concat "; " checked_so_far)
+                             (String.concat "; " search_path)
+             ))
         else
           let l = t.parent_locators.(n) in
           let open Parent_locator in
           match to_filename l with
           | Some path ->
             ( search path search_path >>= function
-              | None -> test (n + 1)
+              | None -> test (path :: checked_so_far) (n + 1)
               | Some path -> return path )
-          | None -> test (n + 1) in
-      test 0
+          | None -> test checked_so_far (n + 1) in
+      test [] 0
 
     let read fd pos =
       really_read fd pos sizeof >>= fun buf ->
@@ -1483,7 +1486,29 @@ module Make = functor(File: S.IO) -> struct
       write t >>= fun t ->
       return t
 
+    let make_relative_path base target =
+      assert (not (Filename.is_relative base));
+      assert (not (Filename.is_relative target));
+      let to_list path =
+        let rec loop acc path =
+          if Filename.dirname path = "/"
+          then Filename.basename path :: acc
+          else loop (Filename.basename path :: acc) (Filename.dirname path) in
+        loop [] path in
+      let base = to_list (Filename.dirname base) in
+      let target = to_list target in
+      (* remove common preceeding path elements *)
+      let rec remove_common = function
+        | [], y -> [], y
+        | x, [] -> x, []
+        | x :: xs, y :: ys when x = y -> remove_common (xs, ys)
+        | xs, ys -> xs, ys in
+      let base, target = remove_common (base, target) in
+      let base = List.map (fun _ -> "..") base in
+      String.concat "/" (base @ target)
+
     let create_difference ~filename ~parent
+      ?(relative_path = true)
       ?(uuid=Uuidm.create `V4)
       ?(saved_state=false)
       ?(features=[]) () =
@@ -1496,7 +1521,11 @@ module Make = functor(File: S.IO) -> struct
         ~current_size:parent.Vhd.footer.Footer.current_size
         ~disk_type:Disk_type.Differencing_hard_disk
         ~uid:uuid ~saved_state () in
-      let parent_locators = Parent_locator.from_filename parent.Vhd.filename in
+      let parent_filename =
+        if relative_path
+        then make_relative_path filename parent.Vhd.filename
+        else parent.Vhd.filename in
+      let parent_locators = Parent_locator.from_filename parent_filename in
       File.get_modification_time parent.Vhd.filename >>= fun parent_time_stamp ->
       let header = Header.create ~table_offset
         ~current_size:parent.Vhd.footer.Footer.current_size
@@ -1527,6 +1556,8 @@ module Make = functor(File: S.IO) -> struct
         BAT_IO.read handle header >>= fun bat ->
         (match footer.Footer.disk_type with
           | Disk_type.Differencing_hard_disk ->
+            (* Add the directory of the current file to the search path *)
+            let path = Filename.dirname filename :: path in
             Header_IO.get_parent_filename header path >>= fun parent_filename ->
             openfile ~path parent_filename false >>= fun p ->
             return (Some p)
