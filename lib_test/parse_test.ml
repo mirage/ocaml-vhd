@@ -207,8 +207,12 @@ let _ =
 
   (* Switch to the 'nobody' user so we can test file permissions *)
   let nobody = Unix.getpwnam "nobody" in
-  Unix.setuid nobody.Unix.pw_uid;
-
+  begin
+    try
+      Unix.setuid nobody.Unix.pw_uid;
+    with e ->
+      Printf.fprintf stderr "WARNING: failed to setuid to a non-priviledged user, access control tests will pass spuriously (%s)\n%!" (Printexc.to_string e)
+  end;
   let suite = "vhd" >:::
     [
       "create" >:: create;
