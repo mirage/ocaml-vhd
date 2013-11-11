@@ -1556,6 +1556,8 @@ module Make = functor(File: S.IO) -> struct
         BAT_IO.read handle header >>= fun bat ->
         (match footer.Footer.disk_type with
           | Disk_type.Differencing_hard_disk ->
+            (* Add the directory of the current file to the search path *)
+            let path = Filename.dirname filename :: path in
             Header_IO.get_parent_filename header path >>= fun parent_filename ->
             openfile ~path parent_filename false >>= fun p ->
             return (Some p)
