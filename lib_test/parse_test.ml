@@ -71,12 +71,21 @@ let check_parent_parent_dir () =
   Vhd_IO.create_dynamic ~filename ~size:0L () >>= fun vhd ->
   let leaf_path = Filename.(concat (concat tmp_file_dir "leaves") "leaf.vhd") in
   let leaf_dir = Filename.dirname leaf_path in
-  (try Unix.mkdir leaf_dir 0o0644 with _ -> ());
+  (try Unix.mkdir leaf_dir 0o0755 with _ -> ());
   Vhd_IO.create_difference ~filename:leaf_path ~parent:vhd ~relative_path:true () >>= fun vhd' ->
   (* Make sure we can open the leaf *)
   Vhd_IO.openfile leaf_path false >>= fun vhd'' ->
   Vhd_IO.close vhd'' >>= fun () ->
   Vhd_IO.close vhd' >>= fun () ->
+  Vhd_IO.close vhd
+
+(* Check we respect RO-ness *)
+let check_readonly () =
+  let filename = make_new_filename () in
+  Vhd_IO.create_dynamic ~filename ~size:0L () >>= fun vhd ->
+  Vhd_IO.close vhd >>= fun () ->
+  Unix.chmod filename 0o444;
+  Vhd_IO.openfile filename false >>= fun vhd ->
   Vhd_IO.close vhd
 
 let fill_sector_with pattern =
@@ -196,10 +205,19 @@ let _ =
     Printf.sprintf "check_empty_snapshot_%Ld" size
     >:: (fun () -> Lwt_main.run (check_empty_snapshot size)) in
 
+  (* Switch to the 'nobody' user so we can test file permissions *)
+  let nobody = Unix.getpwnam "nobody" in
+  begin
+    try
+      Unix.setuid nobody.Unix.pw_uid;
+    with e ->
+      Printf.fprintf stderr "WARNING: failed to setuid to a non-priviledged user, access control tests will pass spuriously (%s)\n%!" (Printexc.to_string e)
+  end;
   let suite = "vhd" >:::
     [
       "create" >:: create;
       "check_parent_parent_dir" >:: (fun () -> Lwt_main.run (check_parent_parent_dir ()));
+      "check_readonly" >:: (fun () -> Lwt_main.run (check_readonly ()));
      ] @ (List.map check_empty_disk sizes)
        @ (List.map check_empty_snapshot sizes)
        @ all_program_tests in
