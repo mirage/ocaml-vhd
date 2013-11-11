@@ -79,6 +79,15 @@ let check_parent_parent_dir () =
   Vhd_IO.close vhd' >>= fun () ->
   Vhd_IO.close vhd
 
+(* Check we respect RO-ness *)
+let check_readonly () =
+  let filename = make_new_filename () in
+  Vhd_IO.create_dynamic ~filename ~size:0L () >>= fun vhd ->
+  Vhd_IO.close vhd >>= fun () ->
+  Unix.chmod filename 0o400;
+  Vhd_IO.openfile filename true >>= fun vhd ->
+  Vhd_IO.close vhd
+
 let fill_sector_with pattern =
   let b = Memory.alloc 512 in
   for i = 0 to 511 do
@@ -200,6 +209,7 @@ let _ =
     [
       "create" >:: create;
       "check_parent_parent_dir" >:: (fun () -> Lwt_main.run (check_parent_parent_dir ()));
+      "check_readonly" >:: (fun () -> Lwt_main.run (check_readonly ()));
      ] @ (List.map check_empty_disk sizes)
        @ (List.map check_empty_snapshot sizes)
        @ all_program_tests in
