@@ -1806,12 +1806,22 @@ module Make = functor(File: S.IO) -> struct
     let include_block from t = match from with
       | None -> in_any_bat t
       | Some from ->
-        let module BATS = Set.Make(struct type t = (string * BAT.t) let compare x y = compare (fst x) (fst y) end) in
+        let module E = struct
+          (* We can't simply compare filenames as strings (consider "./././foo" and "foo").
+             We use the combination of the vhd's builtin uuid (which should be enough by itself)
+             and the basename, just in case there exist duplicate uuids in the wild (because
+             no-one else seems to really care to check) *)
+          type key = Uuidm.t * string
+          type t = (key * BAT.t)
+          let to_string ((uuid, filename), _) = Printf.sprintf "%s:%s" (Uuidm.to_string uuid) filename
+          let compare x y = compare (fst x) (fst y)
+        end in
+        let module BATS = Set.Make(E) in
         let rec make t =
           let rest = match t.Vhd.parent with
             | None -> BATS.empty
             | Some x -> make x in
-          BATS.add (t.Vhd.filename, t.Vhd.bat) rest in
+          BATS.add ((t.Vhd.footer.Footer.uid, Filename.basename t.Vhd.filename), t.Vhd.bat) rest in
         let t_branch = make t in
         let from_branch = make from in
         let to_include = BATS.(union (diff t_branch from_branch) (diff from_branch t_branch)) in
