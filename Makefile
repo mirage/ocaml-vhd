@@ -1,7 +1,7 @@
 .PHONY: all clean install build
 all: build doc
 
-NAME=vhd
+NAME=vhd-format
 J=4
 
 export OCAMLRUNPARAM=b
