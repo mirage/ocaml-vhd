@@ -1828,7 +1828,7 @@ module Make = functor(File: S.IO) -> struct
         fun i ->
           BATS.fold (fun (_, bat) acc -> acc || (BAT.get bat i <> BAT.unused)) to_include false
 
-  let raw ?from (vhd: fd Vhd.t) =
+  let raw_common ?from ?(raw: 'a) (vhd: fd Vhd.t) =
     let block_size_sectors_shift = vhd.Vhd.header.Header.block_size_sectors_shift in
     let max_table_entries = Vhd.used_max_table_entries vhd in
     let empty_block = Empty (Int64.shift_left 1L block_size_sectors_shift) in
@@ -1847,16 +1847,20 @@ module Make = functor(File: S.IO) -> struct
           let absolute_block_start = Int64.(shift_left (of_int i) block_size_sectors_shift) in
           let rec sector j =
             let next_sector () = sector (j + 1) in
+            let absolute_sector = Int64.(add absolute_block_start (of_int j)) in
             if j = 1 lsl block_size_sectors_shift
             then next_block ()
-            else begin
-              let absolute_sector = Int64.(add absolute_block_start (of_int j)) in
-              Vhd_IO.get_sector_location vhd absolute_sector >>= function
+            else match raw with
+            | None ->
+              begin Vhd_IO.get_sector_location vhd absolute_sector >>= function
               | None ->
                 return (Cons(empty_sector, next_sector))
               | Some (vhd', offset) ->
                 return (Cons(Copy(vhd'.Vhd.handle, offset, 1L), next_sector))
-            end in
+              end
+            | Some raw ->
+              return (Cons(Copy(raw, absolute_sector, 1L), next_sector))
+          in
           sector 0
         end
       end in
@@ -1873,7 +1877,9 @@ module Make = functor(File: S.IO) -> struct
     let size = count { empty with total = vhd.Vhd.footer.Footer.current_size } 0 in
     return { elements; size } 
 
-  let vhd ?from ?(emit_batmap=false)(t: fd Vhd.t) =
+  let raw ?from (vhd: fd Vhd.t) = raw_common ?from vhd
+
+  let vhd_common ?from ?raw ?(emit_batmap=false)(t: fd Vhd.t) =
     let block_size_sectors_shift = t.Vhd.header.Header.block_size_sectors_shift in
     let max_table_entries = Vhd.used_max_table_entries t in
 
@@ -1961,11 +1967,15 @@ module Make = functor(File: S.IO) -> struct
       let rec sector j =
         let next () = if j = sizeof_data_sectors - 1 then block (i + 1) andthen else sector (j + 1) in
         let absolute_sector = Int64.(add (shift_left (of_int i) block_size_sectors_shift) (of_int j)) in
-        Vhd_IO.get_sector_location t absolute_sector >>= function
+        match raw with
         | None ->
-          return (Cons(Empty 1L, next))
-        | Some (vhd', offset) ->
-          return (Cons(Copy(vhd'.Vhd.handle, offset, 1L), next)) in
+          begin Vhd_IO.get_sector_location t absolute_sector >>= function
+          | None ->
+            return (Cons(Empty 1L, next))
+          | Some (vhd', offset) ->
+            return (Cons(Copy(vhd'.Vhd.handle, offset, 1L), next))
+          end
+        | Some raw -> return (Cons(Copy(raw, absolute_sector, 1L), next)) in
       if i >= max_table_entries
       then andthen ()
       else
@@ -2016,42 +2026,14 @@ module Make = functor(File: S.IO) -> struct
     let size = count size 0 in
     return { elements; size } 
 
+    let vhd ?from ?emit_batmap (t: fd Vhd.t) = vhd_common ?from ?emit_batmap t
   end
 
   module Hybrid_input = struct
+    let raw ?from (raw: 'a) (vhd: fd Vhd.t) = Vhd_input.raw_common ?from ~raw vhd
 
-    let raw ?from (raw: 'a) (vhd: fd Vhd.t) =
-      let block_size_sectors_shift = vhd.Vhd.header.Header.block_size_sectors_shift in
-      let block_size_sectors = Int64.shift_left 1L block_size_sectors_shift in
-      let max_table_entries = Vhd.used_max_table_entries vhd in
-      let empty_block = Empty block_size_sectors in
-
-      let include_block = Vhd_input.include_block from vhd in
-
-      let rec block i =
-        let next_block () = block (i + 1) in
-        if i = max_table_entries
-        then return End
-        else begin
-          if not(include_block i)
-          then return (Cons(empty_block, next_block))
-          else return (Cons(Copy(raw, Int64.(mul (of_int i) block_size_sectors), block_size_sectors), next_block))
-        end in
-      (* Note we avoid inspecting the sector bitmaps to avoid unnecessary seeking *)
-      let block_size_bytes = Int64.shift_left block_size_sectors sector_shift in
-      let rec count totals i =
-        if i = max_table_entries
-        then totals
-        else begin
-          if not(include_block i)
-          then count { totals with empty = Int64.(add totals.empty block_size_bytes) } (i + 1)
-          else count { totals with copy  = Int64.(add totals.copy  block_size_bytes) } (i + 1)
-        end in
-      coalesce_request None (block 0) >>= fun elements ->
-      let size = count { empty with total = vhd.Vhd.footer.Footer.current_size } 0 in
-      return { elements; size } 
-
-   end
+    let vhd ?from (raw: 'a) (vhd: fd Vhd.t) = Vhd_input.vhd_common ?from ~raw vhd
+  end
 
    module Raw_input = struct
      open Raw

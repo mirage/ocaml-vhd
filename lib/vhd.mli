@@ -440,6 +440,13 @@ module Make : functor (File : S.IO) -> sig
         copies from the virtual disk [raw]. If [from] is provided then the
         stream will contain only the virtual updates required to transform
         [from] into [t] *)
+
+    val vhd: ?from: fd Vhd.t -> fd -> fd Vhd.t -> fd stream t
+    (** [vhd ?from raw vhd] creates a vhd-formatted stream representing
+        the consolidated data present in the virtual disk [t], in terms of
+        copies from the virtual disk [raw]. If [from] is provided then the
+        stream will contain only the virtual updates required to transform
+        [from] into [t] *)
   end
 
   module Raw_input : sig
