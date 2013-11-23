@@ -4,6 +4,7 @@ trunk (unreleased)
   the general search path after.
 * deltas: handle cases where parent filenames are different strings but refer
   to the same file (e.g. "foo", "./foo")
+* vhd: rename Vhd_input.hybrid -> Hybrid_input.raw
 
 0.6.4 (2013-11-06)
 * vhd: we expect parent locators to have prefix "file://", rather than "file://./"
