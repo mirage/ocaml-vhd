@@ -6,6 +6,7 @@ trunk (unreleased)
   to the same file (e.g. "foo", "./foo")
 * vhd: rename Vhd_input.hybrid -> Hybrid_input.raw
 * vhd: add Hybrid_input.vhd to output vhd-formatted data
+* vhd: fix stream size calculation, so progress reports (bars?) will be more accurate
 
 0.6.4 (2013-11-06)
 * vhd: we expect parent locators to have prefix "file://", rather than "file://./"

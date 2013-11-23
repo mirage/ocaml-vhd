@@ -2016,7 +2016,7 @@ module Make = functor(File: S.IO) -> struct
       then totals
       else begin
         if not(include_block i)
-        then count { totals with empty = Int64.(add totals.empty (shift_left 1L (block_size_sectors_shift + sector_shift))) } (i + 1)
+        then count totals (i + 1)
         else count { totals with copy  = Int64.(add totals.copy  (shift_left 1L (block_size_sectors_shift + sector_shift)));
                                  metadata = Int64.(add totals.metadata (of_int sizeof_bitmap))  } (i + 1)
       end in
