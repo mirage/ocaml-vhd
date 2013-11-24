@@ -1333,7 +1333,7 @@ module From_input = functor (I: S.INPUT) -> struct
     let module M = Map.Make(Int32) in
     let phys_to_virt = BAT.fold (fun idx sector acc -> M.add sector idx acc) bat M.empty in
     let bitmap = alloc (Header.sizeof_bitmap header) in
-    let data = alloc (1 lsl sector_shift) in
+    let data = alloc (1 lsl (header.Header.block_size_sectors_shift + sector_shift)) in
     let rec block blocks andthen =
       if M.is_empty blocks
       then andthen ()
@@ -1343,15 +1343,27 @@ module From_input = functor (I: S.INPUT) -> struct
         skip_to fd Int64.(shift_left (of_int32 s) sector_shift) >>= fun () ->
         read fd bitmap >>= fun () ->
         let bitmap = Bitmap.Partial bitmap in
+        let num_sectors = 1 lsl header.Header.block_size_sectors_shift in
+        (* Compute the length of a 'span' of sectors in the bitmap, so we can coalesce
+           our reads into large chunks *)
+        let length_of_span from =
+          let this = Bitmap.get bitmap (Int64.of_int from) in
+          let rec loop length i =
+            if Bitmap.get bitmap (Int64.of_int i) = this
+            then loop (length+1) (i+1)
+            else length in
+          loop 0 from in
         let rec sector i andthen =
-          if i = (1 lsl header.Header.block_size_sectors_shift)
+          if i = num_sectors
           then andthen ()
           else
-            read fd data >>= fun () ->
+            let len = length_of_span i in
+            let frag = Cstruct.sub data 0 (len lsl sector_shift) in
+            read fd frag >>= fun () ->
             let physical_offset = Int64.(add physical_block_offset (of_int i)) in
             if Bitmap.get bitmap (Int64.of_int i)
-            then Fragment.Block(physical_offset, data) >+> fun () -> sector (i + 1) andthen
-            else sector (i + 1) andthen in
+            then Fragment.Block(physical_offset, frag) >+> fun () -> sector (i + len) andthen
+            else sector (i + len) andthen in
         sector 0 (fun () -> block (M.remove s blocks) andthen) in
     block phys_to_virt (fun () ->
     let buffer = alloc Footer.sizeof in
