@@ -333,8 +333,32 @@ module Stream : functor(A: S.ASYNC) -> sig
 
 end
 
-module Make : functor (File : S.IO) -> sig
-  open File
+module Fragment : sig
+  type t =
+    | Header of Header.t
+    | Footer of Footer.t
+    | BAT of BAT.t
+    | Batmap of Batmap.t
+    | Block of int64 * Cstruct.t
+  (** a fragment of a vhd-formatted stream/file *)
+
+end
+
+module From_input : functor (I: S.INPUT) -> sig
+  open I
+
+  type 'a ll =
+    | Cons of 'a * (unit -> 'a ll t)
+    | End
+  (** a lazy list *)
+
+  val openstream : fd -> Fragment.t ll t
+  (** produce a stream of Fragment.ts from a vhd stream, using constant space *)
+end
+
+
+module From_file : functor (F : S.FILE) -> sig
+  open F
 
   module Vhd_IO : sig
     val openfile : ?path:string list -> string -> bool -> fd Vhd.t t

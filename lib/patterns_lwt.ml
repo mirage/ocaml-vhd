@@ -14,7 +14,7 @@
 open OUnit
 open Lwt
 
-module Impl = Vhd.Make(Vhd_lwt)
+module Impl = Vhd.From_file(Vhd_lwt)
 open Impl
 open Vhd
 open Vhd_lwt
