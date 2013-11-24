@@ -1339,6 +1339,7 @@ module From_input = functor (I: S.INPUT) -> struct
       then andthen ()
       else
         let s, idx = M.min_binding blocks in
+        let physical_block_offset = Int64.(shift_left (of_int idx) header.Header.block_size_sectors_shift) in
         skip_to fd Int64.(shift_left (of_int32 s) sector_shift) >>= fun () ->
         read fd bitmap >>= fun () ->
         let bitmap = Bitmap.Partial bitmap in
@@ -1347,8 +1348,9 @@ module From_input = functor (I: S.INPUT) -> struct
           then andthen ()
           else
             read fd data >>= fun () ->
+            let physical_offset = Int64.(add physical_block_offset (of_int i)) in
             if Bitmap.get bitmap (Int64.of_int i)
-            then Fragment.Block(0L, data) >+> fun () -> sector (i + 1) andthen
+            then Fragment.Block(physical_offset, data) >+> fun () -> sector (i + 1) andthen
             else sector (i + 1) andthen in
         sector 0 (fun () -> block (M.remove s blocks) andthen) in
     block phys_to_virt (fun () ->

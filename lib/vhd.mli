@@ -227,6 +227,9 @@ module BAT : sig
   val set: t -> int -> int32 -> unit
   (** [set t i j] sets the [i]th entry to [j] *)
 
+  val fold: (int -> int32 -> 'a -> 'a) -> t -> 'a -> 'a
+  (** [fold f t initial] folds [f] across all valid entries *)
+
   val length: t -> int
   (** [length t] the number of entries in the table *)
 
@@ -339,7 +342,8 @@ module Fragment : sig
     | Footer of Footer.t
     | BAT of BAT.t
     | Batmap of Batmap.t
-    | Block of int64 * Cstruct.t
+    | Block of int64 * Cstruct.t  (** sector offset * data block *)
+
   (** a fragment of a vhd-formatted stream/file *)
 
 end
