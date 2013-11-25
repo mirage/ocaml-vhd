@@ -190,6 +190,20 @@ let all_program_tests = List.map (fun p ->
   (string_of_program p) >:: (fun () -> Lwt_main.run (run p))
 ) programs
 
+(* Check we produce the same output as 'vhd-util create' *)
+
+let rec allpairs xs ys = match xs with
+  | [] -> []
+  | x :: xs -> List.map (fun y -> x, y) ys @ (allpairs xs ys)
+
+(* pairs of (size, max_size) where size < max_size *)
+let vhd_util_sizes = List.filter (fun (a, b) -> a <= b) (allpairs Patterns.sizes Patterns.sizes)
+
+let to_mib x = Int64.(to_int (div x 1024L))
+
+let one_vhd_util (size, max_size) =
+  (Printf.sprintf "vhd_util create -s %d -S %d" (to_mib size) (to_mib max_size)) >:: (fun () -> failwith "unimplemented")
+
 let _ =
   let verbose = ref false in
   Arg.parse [
@@ -220,6 +234,7 @@ let _ =
       "check_readonly" >:: (fun () -> Lwt_main.run (check_readonly ()));
      ] @ (List.map check_empty_disk sizes)
        @ (List.map check_empty_snapshot sizes)
-       @ all_program_tests in
+       @ all_program_tests
+       @ (List.map one_vhd_util vhd_util_sizes) in
   run_test_tt ~verbose:!verbose suite
 
