@@ -365,11 +365,15 @@ module From_file : functor (F : S.FILE) -> sig
   open F
 
   module Vhd_IO : sig
-    val openfile : ?path:string list -> string -> bool -> fd Vhd.t t
-    (** [openfile ?path filename] reads the vhd metadata from [filename] (and other
+    val openchain : ?path:string list -> string -> bool -> fd Vhd.t t
+    (** [openchain ?path filename] reads the vhd metadata from [filename] (and other
         files on the path from [filename] to the root of the tree). If [filename]
         or any of the parent locators have relative paths, then they will be
         searched for on the ?path. *)
+
+    val openfile : string -> bool -> fd Vhd.t t
+    (** [openfile filename] reads the vhd metadata from [filename], but not any
+        other files on the path to the root of the tree. *)
 
     val close : fd Vhd.t -> unit t
     (** [close t] frees all resources associated with [t] *)

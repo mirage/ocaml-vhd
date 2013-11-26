@@ -1643,7 +1643,7 @@ module From_file = functor(F: S.FILE) -> struct
       write t >>= fun t ->
       return t
 
-    let rec openfile ?(path = ["."]) filename rw =
+    let rec openchain ?(path = ["."]) filename rw =
       search filename path >>= function
       | None -> fail (Failure (Printf.sprintf "Failed to find %s (search path = %s)" filename (String.concat ":" path)))
       | Some filename ->
@@ -1656,12 +1656,21 @@ module From_file = functor(F: S.FILE) -> struct
             (* Add the directory of the current file to the search path *)
             let path = Filename.dirname filename :: path in
             Header_IO.get_parent_filename header path >>= fun parent_filename ->
-            openfile ~path parent_filename false >>= fun p ->
+            openchain ~path parent_filename false >>= fun p ->
             return (Some p)
           | _ ->
             return None) >>= fun parent ->
         Batmap_IO.read handle header >>= fun batmap ->
         return { filename; handle; header; footer; bat; bitmap_cache = ref None; batmap; parent }
+
+    let openfile filename rw =
+      F.openfile filename rw >>= fun handle ->
+      Footer_IO.read handle 0L >>= fun footer ->
+      Header_IO.read handle (Int64.of_int Footer.sizeof) >>= fun header ->
+      BAT_IO.read handle header >>= fun bat ->
+      Batmap_IO.read handle header >>= fun batmap ->
+      return { filename; handle; header; footer; bat; bitmap_cache = ref None; batmap; parent = None }
+
 
     let rec close t =
       (* This is where we could repair the footer if we have chosen not to
