@@ -44,7 +44,7 @@ let make_new_filename =
 let check_empty_disk size =
   let filename = make_new_filename () in
   Vhd_IO.create_dynamic ~filename ~size () >>= fun vhd ->
-  Vhd_IO.openfile filename false >>= fun vhd' ->
+  Vhd_IO.openchain filename false >>= fun vhd' ->
   assert_equal ~printer:Header.to_string ~cmp:Header.equal vhd.Vhd.header vhd'.Vhd.header;
   assert_equal ~printer:Footer.to_string vhd.Vhd.footer vhd'.Vhd.footer;
   assert_equal ~printer:BAT.to_string ~cmp:BAT.equal vhd.Vhd.bat vhd'.Vhd.bat;
@@ -57,7 +57,7 @@ let check_empty_snapshot size =
   Vhd_IO.create_dynamic ~filename ~size () >>= fun vhd ->
   let filename = make_new_filename () in
   Vhd_IO.create_difference ~filename ~parent:vhd () >>= fun vhd' ->
-  Vhd_IO.openfile filename false >>= fun vhd'' ->
+  Vhd_IO.openchain filename false >>= fun vhd'' ->
   assert_equal ~printer:Header.to_string ~cmp:Header.equal vhd'.Vhd.header vhd''.Vhd.header;
   assert_equal ~printer:Footer.to_string vhd'.Vhd.footer vhd''.Vhd.footer;
   assert_equal ~printer:BAT.to_string ~cmp:BAT.equal vhd'.Vhd.bat vhd''.Vhd.bat;
@@ -74,7 +74,7 @@ let check_parent_parent_dir () =
   (try Unix.mkdir leaf_dir 0o0755 with _ -> ());
   Vhd_IO.create_difference ~filename:leaf_path ~parent:vhd ~relative_path:true () >>= fun vhd' ->
   (* Make sure we can open the leaf *)
-  Vhd_IO.openfile leaf_path false >>= fun vhd'' ->
+  Vhd_IO.openchain leaf_path false >>= fun vhd'' ->
   Vhd_IO.close vhd'' >>= fun () ->
   Vhd_IO.close vhd' >>= fun () ->
   Vhd_IO.close vhd
@@ -85,7 +85,7 @@ let check_readonly () =
   Vhd_IO.create_dynamic ~filename ~size:0L () >>= fun vhd ->
   Vhd_IO.close vhd >>= fun () ->
   Unix.chmod filename 0o444;
-  Vhd_IO.openfile filename false >>= fun vhd ->
+  Vhd_IO.openchain filename false >>= fun vhd ->
   Vhd_IO.close vhd
 
 let fill_sector_with pattern =

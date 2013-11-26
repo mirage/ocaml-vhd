@@ -148,7 +148,7 @@ let verify t contents =
     write_stream fd stream >>= fun _ ->
     Fd.close fd >>= fun () ->
     (* Check the contents look correct *)
-    Vhd_IO.openfile filename false >>= fun t' ->
+    Vhd_IO.openchain filename false >>= fun t' ->
     check_written_sectors t' contents >>= fun () ->
     check_raw_stream_contents ~allow_empty:true t' contents >>= fun () ->
     Vhd_IO.close t' >>= fun () ->
@@ -159,7 +159,7 @@ let verify t contents =
     write_stream fd stream >>= fun _ ->
     Fd.close fd >>= fun () ->
     (* Check the contents look correct *)
-    Vhd_IO.openfile filename false >>= fun t' ->
+    Vhd_IO.openchain filename false >>= fun t' ->
     check_written_sectors t' contents >>= fun () ->
     check_raw_stream_contents ~allow_empty:true t' contents >>= fun () ->
     Vhd_IO.close t'
