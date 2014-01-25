@@ -272,6 +272,7 @@ end
 module Vhd : sig
   type 'a t = {
     filename : string;
+    rw: bool;
     handle : 'a;
     header : Header.t;
     footer : Footer.t;

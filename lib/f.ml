@@ -1046,6 +1046,7 @@ end
 module Vhd = struct
   type 'a t = {
     filename: string;
+    rw: bool;
     handle: 'a;
     header: Header.t;
     footer: Footer.t;
@@ -1601,7 +1602,7 @@ module From_file = functor(F: S.FILE) -> struct
       let bat = BAT.of_buffer header bat_buffer in
       let batmap = None in
       F.create filename >>= fun handle ->
-      let t = { filename; handle; header; footer; parent = None; bat; batmap; bitmap_cache = ref None } in
+      let t = { filename; rw = true; handle; header; footer; parent = None; bat; batmap; bitmap_cache = ref None } in
       write t >>= fun t ->
       return t
 
@@ -1661,7 +1662,7 @@ module From_file = functor(F: S.FILE) -> struct
       F.openfile parent.Vhd.filename false >>= fun parent_handle ->
       let parent = { parent with handle = parent_handle } in
       let batmap = None in
-      let t = { filename; handle; header; footer; parent = Some parent; bat; batmap; bitmap_cache = ref None } in
+      let t = { filename; rw = true; handle; header; footer; parent = Some parent; bat; batmap; bitmap_cache = ref None } in
       write t >>= fun t ->
       return t
 
@@ -1683,7 +1684,7 @@ module From_file = functor(F: S.FILE) -> struct
           | _ ->
             return None) >>= fun parent ->
         Batmap_IO.read handle header >>= fun batmap ->
-        return { filename; handle; header; footer; bat; bitmap_cache = ref None; batmap; parent }
+        return { filename; rw; handle; header; footer; bat; bitmap_cache = ref None; batmap; parent }
 
     let openfile filename rw =
       F.openfile filename rw >>= fun handle ->
@@ -1691,16 +1692,22 @@ module From_file = functor(F: S.FILE) -> struct
       Header_IO.read handle (Int64.of_int Footer.sizeof) >>= fun header ->
       BAT_IO.read handle header >>= fun bat ->
       Batmap_IO.read handle header >>= fun batmap ->
-      return { filename; handle; header; footer; bat; bitmap_cache = ref None; batmap; parent = None }
+      return { filename; rw; handle; header; footer; bat; bitmap_cache = ref None; batmap; parent = None }
 
-
-    let rec close t =
-      (* This is where we could repair the footer if we have chosen not to
-         update it for speed. *)
-      F.close t.Vhd.handle >>= fun () ->
-      match t.Vhd.parent with
-      | None -> return ()
-      | Some p -> close p
+    let close t =
+      (* We avoided rewriting the footer for speed, this is where it is repaired. *)
+      ( if t.Vhd.rw
+        then
+          let footer_buffer = Memory.alloc Footer.sizeof in
+          write_trailing_footer footer_buffer t.Vhd.handle t
+        else return ()
+      ) >>= fun () ->
+      let rec close t =
+        F.close t.Vhd.handle >>= fun () ->
+        match t.Vhd.parent with
+        | None -> return ()
+        | Some p -> close p in
+      close t
 
     (* Converts a virtual sector offset into a physical sector offset *)
     let rec get_sector_location t sector =
@@ -1816,8 +1823,6 @@ module From_file = functor(F: S.FILE) -> struct
           write_zero_block t.Vhd.handle t block_num >>= fun () ->
           let bat_buffer = Memory.alloc (BAT.sizeof_bytes t.Vhd.header) in
           BAT_IO.write bat_buffer t.Vhd.handle t.Vhd.header t.Vhd.bat >>= fun () ->
-          let footer_buffer = Memory.alloc Footer.sizeof in
-          write_trailing_footer footer_buffer t.Vhd.handle t >>= fun () ->
           update_sector (BAT.get t.Vhd.bat block_num)
         end else begin
           update_sector (BAT.get t.Vhd.bat block_num)
