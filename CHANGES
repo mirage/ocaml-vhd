@@ -10,6 +10,7 @@ trunk (unreleased)
 * vhd: rename 'openfile' to 'openchain' to reflect that it opens an entire chain,
   or fails trying
 * vhd: add 'openfile' which only opens a single file
+* switch result type to a polymorphic variant
 
 0.6.4 (2013-11-06)
 * vhd: we expect parent locators to have prefix "file://", rather than "file://./"

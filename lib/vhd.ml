@@ -228,9 +228,9 @@ module UTF16 = struct
 
   let to_utf8 x =
     try
-      Vhd_result.Ok (to_utf8_exn x)
+      `Ok (to_utf8_exn x)
     with e ->
-      Vhd_result.Error e
+      `Error e
 
   let to_string x = Printf.sprintf "[| %s |]" (String.concat "; " (List.map string_of_int (Array.to_list x)))
 
@@ -295,9 +295,9 @@ module UTF16 = struct
         inner ofs' n'
       end in
     try
-      Vhd_result.Ok (inner pos 0)
+      `Ok (inner pos 0)
     with e ->
-      Vhd_result.Error e
+      `Error e
 end
 
 module Footer = struct
@@ -477,14 +477,14 @@ module Platform_code = struct
 
   let of_int32 =
     let open Vhd_result in function
-    | 0l -> Ok None
-    | x when x = wi2r -> Ok Wi2r
-    | x when x = wi2k -> Ok Wi2k
-    | x when x = w2ru -> Ok W2ru
-    | x when x = w2ku -> Ok W2ku
-    | x when x = mac -> Ok Mac
-    | x when x = macx -> Ok MacX
-    | x -> Error (Failure (Printf.sprintf "unknown platform_code: %lx" x))
+    | 0l -> `Ok None
+    | x when x = wi2r -> `Ok Wi2r
+    | x when x = wi2k -> `Ok Wi2k
+    | x when x = w2ru -> `Ok W2ru
+    | x when x = w2ku -> `Ok W2ku
+    | x when x = mac -> `Ok Mac
+    | x when x = macx -> `Ok MacX
+    | x -> `Error (Failure (Printf.sprintf "unknown platform_code: %lx" x))
 
   let to_int32 = function
     | None -> 0l
@@ -699,8 +699,8 @@ module Header = struct
     Printf.printf "parent_unique_id    : %s\n" (Uuidm.to_string t.parent_unique_id);
     Printf.printf "parent_time_stamp   : %lu\n" t.parent_time_stamp;
     let s = match UTF16.to_utf8 t.parent_unicode_name with
-      | Vhd_result.Ok s -> s
-      | Vhd_result.Error e -> Printf.sprintf "<Unable to decode UTF-16: %s>" (String.concat " " (List.map (fun x -> Printf.sprintf "%02x" x) (Array.to_list t.parent_unicode_name))) in
+      | `Ok s -> s
+      | `Error e -> Printf.sprintf "<Unable to decode UTF-16: %s>" (String.concat " " (List.map (fun x -> Printf.sprintf "%02x" x) (Array.to_list t.parent_unicode_name))) in
     Printf.printf "parent_unicode_name : '%s' (%d bytes)\n" s (Array.length t.parent_unicode_name);
     Printf.printf "parent_locators     : %s\n" 
       (String.concat "\n                      " (List.map Parent_locator.to_string (Array.to_list t.parent_locators)))
@@ -1306,8 +1306,8 @@ module From_input = functor (I: S.INPUT) -> struct
 
   (* Convert Result.Error values into failed threads *)
   let (>>|=) m f = match m with
-    | Vhd_result.Error e -> fail e
-    | Vhd_result.Ok x -> f x
+    | `Error e -> fail e
+    | `Ok x -> f x
 
   (* Operator to avoid bracket overload *)
   let (>+>) m f = return (Cons(m, f))
@@ -1379,8 +1379,8 @@ module From_file = functor(F: S.FILE) -> struct
 
   (* Convert Result.Error values into failed threads *)
   let (>>|=) m f = match m with
-    | Vhd_result.Error e -> fail e
-    | Vhd_result.Ok x -> f x
+    | `Error e -> fail e
+    | `Ok x -> f x
 
   (* Search a path for a filename *)
   let search filename path =
@@ -1512,12 +1512,12 @@ module From_file = functor(F: S.FILE) -> struct
     let read fd (header: Header.t) =
       really_read fd (Batmap_header.offset header) Batmap_header.sizeof >>= fun buf ->
       match Batmap_header.unmarshal buf with
-      | Vhd_result.Error _ -> return None
-      | Vhd_result.Ok h ->
+      | `Error _ -> return None
+      | `Ok h ->
         ( really_read fd h.Batmap_header.offset (h.Batmap_header.size_in_sectors * sector_size) >>= fun batmap ->
           match Batmap.unmarshal batmap header h with
-          | Vhd_result.Error _ -> return None
-          | Vhd_result.Ok batmap ->
+          | `Error _ -> return None
+          | `Ok batmap ->
             return (Some (h, batmap)))
   end
 
