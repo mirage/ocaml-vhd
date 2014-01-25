@@ -16,11 +16,12 @@ Library vhd
   BuildDepends:       uuidm, cstruct, io-page
 
 Library vhd_lwt
+  Pack:               true
   CompiledObject:     best
   Path:               lib
   Findlibname:        lwt
   Findlibparent:      vhd
-  Modules:            Vhd_lwt, File, Patterns_lwt, Block
+  Modules:            IO, File, Patterns_lwt, Block
   BuildDepends:       lwt, lwt.unix, cstruct.lwt, oUnit, mirage-types.lwt
   CSources:           odirect_stubs.c, blkgetsize64_stubs.c
 

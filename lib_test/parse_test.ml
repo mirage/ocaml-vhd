@@ -15,11 +15,11 @@ open OUnit
 open Lwt
 
 open Vhd.Patterns
-module Impl = Vhd.F.From_file(Vhd_lwt)
+module Impl = Vhd.F.From_file(Vhd_lwt.IO)
 open Impl
 open Vhd.F
-open Vhd_lwt
-open Patterns_lwt
+open Vhd_lwt.IO
+open Vhd_lwt.Patterns_lwt
 
 let create () =
   let _ = Create_vhd.disk in

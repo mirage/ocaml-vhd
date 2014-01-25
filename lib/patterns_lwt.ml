@@ -14,9 +14,9 @@
 open OUnit
 open Lwt
 
-module Impl = Vhd.F.From_file(Vhd_lwt)
+module Impl = Vhd.F.From_file(IO)
 open Vhd.F
-open Vhd_lwt
+open IO
 open Impl
 open Patterns
 

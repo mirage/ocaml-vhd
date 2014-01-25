@@ -13,8 +13,8 @@
  *)
 open Lwt
 
-module IO = Vhd.F.From_file(Vhd_lwt)
-open IO
+module M = Vhd.F.From_file(IO)
+open M
 
 type 'a io = 'a Lwt.t
 
@@ -36,7 +36,7 @@ type info = {
 }
 
 type t = {
-  mutable vhd: Vhd_lwt.fd Vhd.F.Vhd.t option;
+  mutable vhd: IO.fd Vhd.F.Vhd.t option;
   info: info;
   id: id;
 }
