@@ -45,6 +45,13 @@ let id t = t.id
 
 let connect path =
   Lwt.catch
+    (fun () -> Lwt_unix.LargeFile.stat path >>= fun _ -> return true)
+    (fun _ -> return false)
+  >>= fun exists ->
+  if not exists
+  then return (`Error (`Unknown (Printf.sprintf "File does not exist: %s" path)))
+  else
+  Lwt.catch
     (fun () -> Lwt_unix.access path [ Lwt_unix.W_OK ] >>= fun () -> return true)
     (fun _ -> return false)
   >>= fun read_write ->
