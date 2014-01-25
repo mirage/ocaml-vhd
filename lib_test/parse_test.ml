@@ -14,12 +14,12 @@
 open OUnit
 open Lwt
 
-module Impl = Vhd.From_file(Vhd_lwt)
+open Vhd.Patterns
+module Impl = Vhd.F.From_file(Vhd_lwt.IO)
 open Impl
-open Vhd
-open Vhd_lwt
-open Patterns
-open Patterns_lwt
+open Vhd.F
+open Vhd_lwt.IO
+open Vhd_lwt.Patterns_lwt
 
 let create () =
   let _ = Create_vhd.disk in
@@ -89,7 +89,8 @@ let check_readonly () =
   Vhd_IO.close vhd
 
 let fill_sector_with pattern =
-  let b = Memory.alloc 512 in
+  let b = Io_page.(to_cstruct (get 1)) in
+  let b = Cstruct.sub b 0 512 in
   for i = 0 to 511 do
     Cstruct.set_char b i (pattern.[i mod (String.length pattern)])
   done;

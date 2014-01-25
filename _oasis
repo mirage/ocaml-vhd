@@ -8,19 +8,21 @@ Plugins:     META (0.3)
 BuildTools:  ocamlbuild
 
 Library vhd
+  Pack:               true
   CompiledObject:     best
   Path:               lib
   Findlibname:        vhd-format
-  Modules:            Vhd, S, Vhd_result, Element, Patterns
-  BuildDepends:       lwt, lwt.unix, uuidm, cstruct
+  Modules:            F, S, Result, Element, Patterns
+  BuildDepends:       uuidm, cstruct, io-page
 
 Library vhd_lwt
+  Pack:               true
   CompiledObject:     best
   Path:               lib
   Findlibname:        lwt
   Findlibparent:      vhd
-  Modules:            Vhd_lwt, Memory, File, Patterns_lwt
-  BuildDepends:       lwt, lwt.unix, cstruct.lwt, oUnit
+  Modules:            IO, File, Patterns_lwt, Block
+  BuildDepends:       lwt, lwt.unix, cstruct.lwt, oUnit, mirage-types.lwt
   CSources:           odirect_stubs.c, blkgetsize64_stubs.c
 
 Executable disk_to_ocaml
@@ -37,7 +39,7 @@ Executable parse_test
   MainIs:             parse_test.ml
   Custom:             true
   Install:            false
-  BuildDepends:       lwt, lwt.unix, vhd-format, vhd-format.lwt, cstruct, oUnit
+  BuildDepends:       lwt, lwt.unix, vhd-format, vhd-format.lwt, cstruct, oUnit, io-page.unix
 
 Test parse_test
   Command:            ./parse_test.native

@@ -1,5 +1,5 @@
 (*
- * Copyright (C) 2011-2013 Citrix Inc
+ * Copyright (C) Citrix Systems Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published
@@ -12,6 +12,5 @@
  * GNU Lesser General Public License for more details.
  *)
 
-val alloc: int -> Cstruct.t
-(** [alloc size] allocates a page-aligned Cstruct.t of size exactly [size]
-    bytes *)
+include V1_LWT.BLOCK
+  with type id = string
