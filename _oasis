@@ -20,8 +20,8 @@ Library vhd_lwt
   Path:               lib
   Findlibname:        lwt
   Findlibparent:      vhd
-  Modules:            Vhd_lwt, Memory, File, Patterns_lwt
-  BuildDepends:       lwt, lwt.unix, cstruct.lwt, oUnit
+  Modules:            Vhd_lwt, Memory, File, Patterns_lwt, Block
+  BuildDepends:       lwt, lwt.unix, cstruct.lwt, oUnit, mirage-types.lwt
   CSources:           odirect_stubs.c, blkgetsize64_stubs.c
 
 Executable disk_to_ocaml
