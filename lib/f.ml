@@ -1832,19 +1832,19 @@ module From_file = functor(F: S.FILE) -> struct
     s >>= fun next -> match next, acc with
     | End, None -> return End
     | End, Some x -> return (Cons(x, fun () -> return End))
-    | Cons(Sectors s, next), None -> return(Cons(Sectors s, fun () -> coalesce_request None (next ())))
-    | Cons(Sectors _, next), Some x -> return(Cons(x, fun () -> coalesce_request None s))
-    | Cons(Empty n, next), None -> coalesce_request (Some(Empty n)) (next ())
-    | Cons(Empty n, next), Some(Empty m) -> coalesce_request (Some(Empty (n ++ m))) (next ())
-    | Cons(Empty n, next), Some x -> return (Cons(x, fun () -> coalesce_request None s))
-    | Cons(Copy(h, ofs, len), next), None -> coalesce_request (Some (Copy(h, ofs, len))) (next ())
-    | Cons(Copy(h, ofs, len), next), Some(Copy(h', ofs', len')) ->
+    | Cons(`Sectors s, next), None -> return(Cons(`Sectors s, fun () -> coalesce_request None (next ())))
+    | Cons(`Sectors _, next), Some x -> return(Cons(x, fun () -> coalesce_request None s))
+    | Cons(`Empty n, next), None -> coalesce_request (Some(`Empty n)) (next ())
+    | Cons(`Empty n, next), Some(`Empty m) -> coalesce_request (Some(`Empty (n ++ m))) (next ())
+    | Cons(`Empty n, next), Some x -> return (Cons(x, fun () -> coalesce_request None s))
+    | Cons(`Copy(h, ofs, len), next), None -> coalesce_request (Some (`Copy(h, ofs, len))) (next ())
+    | Cons(`Copy(h, ofs, len), next), Some(`Copy(h', ofs', len')) ->
       if ofs ++ len = ofs' && h == h'
-      then coalesce_request (Some(Copy(h, ofs, len ++ len'))) (next ())
+      then coalesce_request (Some(`Copy(h, ofs, len ++ len'))) (next ())
       else if ofs' ++ len' = ofs && h == h'
-      then coalesce_request (Some(Copy(h, ofs', len ++ len'))) (next ())
-      else return (Cons(Copy(h', ofs', len'), fun () -> coalesce_request None s))
-    | Cons(Copy(h, ofs, len), next), Some x -> return(Cons(x, fun () -> coalesce_request None s))
+      then coalesce_request (Some(`Copy(h, ofs', len ++ len'))) (next ())
+      else return (Cons(`Copy(h', ofs', len'), fun () -> coalesce_request None s))
+    | Cons(`Copy(h, ofs, len), next), Some x -> return(Cons(x, fun () -> coalesce_request None s))
 
   let twomib_bytes = 2 * 1024 * 1024
   let twomib_sectors = twomib_bytes / 512
@@ -1853,13 +1853,13 @@ module From_file = functor(F: S.FILE) -> struct
     let open Int64 in
     s >>= function
     | End -> return End
-    | Cons(Empty n, next) ->
+    | Cons(`Empty n, next) ->
         let rec copy n =
           let this = to_int (min n (of_int twomib_sectors)) in
           let block = Cstruct.sub twomib_empty 0 (this * 512) in
           let n = n -- (of_int this) in
           let next () = if n > 0L then copy n else expand_empty_elements twomib_empty (next ()) in
-          return (Cons(Sectors block, next)) in
+          return (Cons(`Sectors block, next)) in
         copy n
     | Cons(x, next) -> return (Cons(x, fun () -> expand_empty_elements twomib_empty (next ())))
 
@@ -1879,7 +1879,7 @@ module From_file = functor(F: S.FILE) -> struct
     let open Int64 in
     s >>= function
     | End -> return End
-    | Cons(Element.Copy(h, sector_start, sector_len), next) ->
+    | Cons(`Copy(h, sector_start, sector_len), next) ->
         let rec copy sector_start sector_len =
           let this = to_int (min sector_len (of_int twomib_sectors)) in
           let data = Cstruct.sub buffer 0 (this * 512) in
@@ -1887,7 +1887,7 @@ module From_file = functor(F: S.FILE) -> struct
           let sector_start = sector_start ++ (of_int this) in
           let sector_len = sector_len -- (of_int this) in
           let next () = if sector_len > 0L then copy sector_start sector_len else expand_copy_elements buffer (next ()) in
-          return (Cons(Sectors data, next)) in
+          return (Cons(`Sectors data, next)) in
         copy sector_start sector_len
     | Cons(x, next) -> return (Cons(x, fun () -> expand_copy_elements buffer (next ())))
 
@@ -1937,8 +1937,8 @@ module From_file = functor(F: S.FILE) -> struct
   let raw_common ?from ?(raw: 'a) (vhd: fd Vhd.t) =
     let block_size_sectors_shift = vhd.Vhd.header.Header.block_size_sectors_shift in
     let max_table_entries = Vhd.used_max_table_entries vhd in
-    let empty_block = Empty (Int64.shift_left 1L block_size_sectors_shift) in
-    let empty_sector = Empty 1L in
+    let empty_block = `Empty (Int64.shift_left 1L block_size_sectors_shift) in
+    let empty_sector = `Empty 1L in
 
     let include_block = include_block from vhd in
 
@@ -1962,10 +1962,10 @@ module From_file = functor(F: S.FILE) -> struct
               | None ->
                 return (Cons(empty_sector, next_sector))
               | Some (vhd', offset) ->
-                return (Cons(Copy(vhd'.Vhd.handle, offset, 1L), next_sector))
+                return (Cons(`Copy(vhd'.Vhd.handle, offset, 1L), next_sector))
               end
             | Some raw ->
-              return (Cons(Copy(raw, absolute_sector, 1L), next_sector))
+              return (Cons(`Copy(raw, absolute_sector, 1L), next_sector))
           in
           sector 0
         end
@@ -2067,7 +2067,7 @@ module From_file = functor(F: S.FILE) -> struct
       marker = 0;
     };
     let rec write_sectors buf andthen =
-      return(Cons(Sectors buf, andthen)) in
+      return(Cons(`Sectors buf, andthen)) in
 
     let rec block i andthen =
       let rec sector j =
@@ -2077,16 +2077,16 @@ module From_file = functor(F: S.FILE) -> struct
         | None ->
           begin Vhd_IO.get_sector_location t absolute_sector >>= function
           | None ->
-            return (Cons(Empty 1L, next))
+            return (Cons(`Empty 1L, next))
           | Some (vhd', offset) ->
-            return (Cons(Copy(vhd'.Vhd.handle, offset, 1L), next))
+            return (Cons(`Copy(vhd'.Vhd.handle, offset, 1L), next))
           end
-        | Some raw -> return (Cons(Copy(raw, absolute_sector, 1L), next)) in
+        | Some raw -> return (Cons(`Copy(raw, absolute_sector, 1L), next)) in
       if i >= max_table_entries
       then andthen ()
       else
         if include_block i
-        then return(Cons(Sectors bitmap, fun () -> sector 0))
+        then return(Cons(`Sectors bitmap, fun () -> sector 0))
         else block (i + 1) andthen in
 
     let batmap andthen =
@@ -2099,16 +2099,16 @@ module From_file = functor(F: S.FILE) -> struct
 
     let buf = F.alloc (max Footer.sizeof (max Header.sizeof sizeof_bat)) in
     let (_: Footer.t) = Footer.marshal buf footer in
-    coalesce_request None (return (Cons(Sectors(Cstruct.sub buf 0 Footer.sizeof), fun () ->
+    coalesce_request None (return (Cons(`Sectors(Cstruct.sub buf 0 Footer.sizeof), fun () ->
       let (_: Header.t) = Header.marshal buf header in
       write_sectors (Cstruct.sub buf 0 Header.sizeof) (fun () ->
-        return(Cons(Empty 1L, fun () ->
+        return(Cons(`Empty 1L, fun () ->
           BAT.marshal buf bat;
           write_sectors (Cstruct.sub buf 0 sizeof_bat) (fun () ->
             let (_: Footer.t) = Footer.marshal buf footer in
             batmap (fun () ->
               block 0 (fun () ->
-                return(Cons(Sectors(Cstruct.sub buf 0 Footer.sizeof), fun () -> return End))
+                return(Cons(`Sectors(Cstruct.sub buf 0 Footer.sizeof), fun () -> return End))
               )
             )
           )
@@ -2184,29 +2184,29 @@ module From_file = functor(F: S.FILE) -> struct
        done;
 
        let rec write_sectors buf from andthen =
-         return(Cons(Sectors buf, andthen)) in
+         return(Cons(`Sectors buf, andthen)) in
        let rec block i andthen =
          if i >= blocks
          then andthen ()
          else
            let length = Int64.(shift_left 1L header.Header.block_size_sectors_shift) in
            let sector = Int64.(shift_left (of_int i) header.Header.block_size_sectors_shift) in
-           return (Cons(Sectors bitmap, fun () -> return (Cons(Copy(t.Raw.handle, sector, length), fun () -> block (i+1) andthen)))) in
+           return (Cons(`Sectors bitmap, fun () -> return (Cons(`Copy(t.Raw.handle, sector, length), fun () -> block (i+1) andthen)))) in
 
        assert(Footer.sizeof = 512);
        assert(Header.sizeof = 1024);
 
        let buf = F.alloc (max Footer.sizeof (max Header.sizeof sizeof_bat)) in
        let (_: Footer.t) = Footer.marshal buf footer in
-       coalesce_request None (return (Cons(Sectors(Cstruct.sub buf 0 Footer.sizeof), fun () ->
+       coalesce_request None (return (Cons(`Sectors(Cstruct.sub buf 0 Footer.sizeof), fun () ->
          let (_: Header.t) = Header.marshal buf header in
          write_sectors (Cstruct.sub buf 0 Header.sizeof) 0 (fun () ->
-           return(Cons(Empty 1L, fun () ->
+           return(Cons(`Empty 1L, fun () ->
              BAT.marshal buf bat;
              write_sectors (Cstruct.sub buf 0 sizeof_bat) 0 (fun () ->
                let (_: Footer.t) = Footer.marshal buf footer in
                block 0 (fun () ->
-                 return(Cons(Sectors(Cstruct.sub buf 0 Footer.sizeof), fun () -> return End))
+                 return(Cons(`Sectors(Cstruct.sub buf 0 Footer.sizeof), fun () -> return End))
                )
              )
           ))
@@ -2227,7 +2227,7 @@ module From_file = functor(F: S.FILE) -> struct
          empty = 0L;
          copy = bytes;
        } in
-       let elements = Cons(Copy(t.handle, 0L, bytes lsr sector_shift), fun () -> return End) in
+       let elements = Cons(`Copy(t.handle, 0L, bytes lsr sector_shift), fun () -> return End) in
        return { size; elements }
    end
 end

@@ -14,11 +14,11 @@
 open OUnit
 open Lwt
 
-module Impl = Vhd.From_file(Vhd_lwt)
+open Vhd.Patterns
+module Impl = Vhd.F.From_file(Vhd_lwt)
 open Impl
-open Vhd
+open Vhd.F
 open Vhd_lwt
-open Patterns
 open Patterns_lwt
 
 let create () =
