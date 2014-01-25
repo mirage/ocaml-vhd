@@ -65,5 +65,41 @@ let disconnect t = match t.vhd with
 
 let get_info t = return t.info
 
-let read t offset bufs = return (`Error `Unimplemented)
-let write t offset bufs = return (`Error `Unimplemented)
+let to_sectors bufs =
+  let rec loop acc remaining =
+    if Cstruct.len remaining = 0 then List.rev acc else
+    let available = min 512 (Cstruct.len remaining) in
+    loop (Cstruct.sub remaining 0 available :: acc) (Cstruct.shift remaining available) in
+  List.concat (List.map (loop []) bufs)
+
+let forall_sectors f offset bufs =
+  let rec one offset = function
+  | [] -> return ()
+  | b :: bs -> f offset b >>= fun () -> one (Int64.succ offset) bs in
+  one offset (to_sectors bufs)
+
+let zero =
+  let buf = Cstruct.create 512 in
+  for i = 0 to Cstruct.len buf - 1 do
+    Cstruct.set_uint8 buf i 0
+  done;
+  buf
+
+let read t offset bufs = match t.vhd with
+  | None -> return (`Error `Disconnected)
+  | Some vhd ->
+    forall_sectors
+      (fun offset sector ->
+        ( Vhd_IO.read_sector vhd offset >>= function
+          | None -> return zero
+          | Some data -> return data ) >>= fun data ->
+        Cstruct.blit data 0 sector 0 512;
+        return ()
+      ) offset bufs >>= fun () ->
+    return (`Ok ())
+
+let write t offset bufs = match t.vhd with
+  | None -> return (`Error `Disconnected)
+  | Some vhd ->
+    forall_sectors (Vhd_IO.write_sector vhd) offset bufs >>= fun () ->
+    return (`Ok ())
