@@ -121,7 +121,7 @@ module Footer: sig
 
   val sizeof : int
   val marshal : Cstruct.t -> t -> t
-  val unmarshal : Cstruct.t -> (t, exn) Vhd_result.t
+  val unmarshal : Cstruct.t -> (t, exn) Result.t
 
   val to_string: t -> string
 end
@@ -163,7 +163,7 @@ module Parent_locator : sig
 
   val sizeof : int
   val marshal : Cstruct.t -> t -> unit
-  val unmarshal : Cstruct.t -> (t, exn) Vhd_result.t
+  val unmarshal : Cstruct.t -> (t, exn) Result.t
 end
 
 module Header : sig
@@ -210,7 +210,7 @@ module Header : sig
   val sizeof : int
 
   val marshal : Cstruct.t -> t -> t
-  val unmarshal : Cstruct.t -> (t, exn) Vhd_result.t
+  val unmarshal : Cstruct.t -> (t, exn) Result.t
 end
 
 module BAT : sig

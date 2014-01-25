@@ -11,6 +11,9 @@ trunk (unreleased)
   or fails trying
 * vhd: add 'openfile' which only opens a single file
 * switch result type to a polymorphic variant
+* switch Element type to a polymorphic variant
+* rename the module Vhd to module F
+* pack Vhd modules
 
 0.6.4 (2013-11-06)
 * vhd: we expect parent locators to have prefix "file://", rather than "file://./"

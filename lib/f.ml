@@ -87,7 +87,7 @@ module Disk_type = struct
   exception Unknown of int32
 
   let of_int32 =
-    let open Vhd_result in function
+    let open Result in function
     | 2l -> return Fixed_hard_disk 
     | 3l -> return Dynamic_hard_disk
     | 4l -> return Differencing_hard_disk
@@ -416,7 +416,7 @@ module Footer = struct
     { t with checksum }
 
   let unmarshal (buf: Cstruct.t) =
-    let open Vhd_result in
+    let open Result in
     let magic' = copy_footer_magic buf in
     ( if magic' <> magic
       then fail (Failure (Printf.sprintf "Unsupported footer cookie: expected %s, got %s" magic magic'))
@@ -476,7 +476,7 @@ module Platform_code = struct
   let macx = 0x4d616358l
 
   let of_int32 =
-    let open Vhd_result in function
+    let open Result in function
     | 0l -> `Ok None
     | x when x = wi2r -> `Ok Wi2r
     | x when x = wi2k -> `Ok Wi2k
@@ -582,7 +582,7 @@ module Parent_locator = struct
     set_header_platform_data_offset buf t.platform_data_offset
 
   let unmarshal (buf: Cstruct.t) =
-    let open Vhd_result in
+    let open Result in
     Platform_code.of_int32 (get_header_platform_code buf) >>= fun platform_code ->
     let platform_data_space_original = get_header_platform_data_space buf in
     (* The spec says this field should be stored in sectors. However some viridian vhds
@@ -755,7 +755,7 @@ module Header = struct
     { t with checksum }
 
   let unmarshal (buf: Cstruct.t) =
-    let open Vhd_result in
+    let open Result in
     let magic' = copy_header_magic buf in
     ( if magic' <> magic
       then fail (Failure (Printf.sprintf "Expected cookie %s, got %s" magic magic'))
@@ -923,7 +923,7 @@ module Batmap_header = struct
   }
 
   let unmarshal (buf: Cstruct.t) =
-    let open Vhd_result in
+    let open Result in
     let magic' = copy_header_magic buf in
     ( if magic' <> magic
       then fail (Failure (Printf.sprintf "Expected cookie %s, got %s" magic magic'))
@@ -975,7 +975,7 @@ module Batmap = struct
     byte land mask <> mask
 
   let unmarshal (buf: Cstruct.t) (h: Header.t) (bh: Batmap_header.t) =
-    let open Vhd_result in
+    let open Result in
     let needed = Cstruct.sub buf 0 (sizeof_bytes h) in
     let checksum = Checksum.of_cstruct buf in
     ( if checksum <> bh.Batmap_header.checksum
