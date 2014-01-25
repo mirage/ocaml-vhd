@@ -13,14 +13,14 @@ Library vhd
   Path:               lib
   Findlibname:        vhd-format
   Modules:            F, S, Result, Element, Patterns
-  BuildDepends:       lwt, lwt.unix, uuidm, cstruct
+  BuildDepends:       lwt, lwt.unix, uuidm, cstruct, io-page
 
 Library vhd_lwt
   CompiledObject:     best
   Path:               lib
   Findlibname:        lwt
   Findlibparent:      vhd
-  Modules:            Vhd_lwt, Memory, File, Patterns_lwt, Block
+  Modules:            Vhd_lwt, File, Patterns_lwt, Block
   BuildDepends:       lwt, lwt.unix, cstruct.lwt, oUnit, mirage-types.lwt
   CSources:           odirect_stubs.c, blkgetsize64_stubs.c
 
@@ -38,7 +38,7 @@ Executable parse_test
   MainIs:             parse_test.ml
   Custom:             true
   Install:            false
-  BuildDepends:       lwt, lwt.unix, vhd-format, vhd-format.lwt, cstruct, oUnit
+  BuildDepends:       lwt, lwt.unix, vhd-format, vhd-format.lwt, cstruct, oUnit, io-page.unix
 
 Test parse_test
   Command:            ./parse_test.native

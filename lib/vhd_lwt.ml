@@ -51,15 +51,13 @@ module Input = struct
     let offset = 0L in
     { fd; offset }
 
-  include Memory
-
   let read fd buf =
     lwt () = complete "read" (Some fd.offset) Lwt_bytes.read fd.fd buf in
     fd.offset <- Int64.(add fd.offset (of_int (Cstruct.len buf)));
     return ()
 
   let skip_to fd n =
-    let buf = Memory.alloc 4096 in
+    let buf = Io_page.(to_cstruct (get 1)) in
     let rec loop remaining =
       if remaining = 0L
       then return ()
@@ -112,7 +110,7 @@ module Fd = struct
       raise (Not_sector_aligned n)
     end
 
-  let really_read_into { fd; filename; lock } offset (* in file *) buf =
+  let really_read { fd; filename; lock } offset (* in file *) buf =
     (* All reads and writes should be sector-aligned *)
     assert_sector_aligned offset;
     assert_sector_aligned (Int64.of_int buf.Cstruct.off);
@@ -122,8 +120,7 @@ module Fd = struct
       (fun () ->
         try_lwt
           lwt _ = Lwt_unix.LargeFile.lseek fd offset Unix.SEEK_SET in
-          lwt () = complete "read" (Some offset) Lwt_bytes.read fd buf in
-          return buf
+          complete "read" (Some offset) Lwt_bytes.read fd buf
         with
         | Unix.Unix_error(Unix.EINVAL, "read", "") as e ->
           Printf.fprintf stderr "really_read offset = %Ld len = %d: EINVAL (alignment?)\n%!" offset (Cstruct.len buf);
@@ -132,10 +129,6 @@ module Fd = struct
           Printf.fprintf stderr "really_read offset = %Ld len = %d: End_of_file\n%!" offset (Cstruct.len buf);
           fail e 
       )
-
-  let really_read fd offset n =
-    let buf = Memory.alloc n in
-    really_read_into fd offset buf
 
   let really_write { fd; filename; lock } offset (* in file *) buf =
     (* All reads and writes should be sector-aligned *)
@@ -185,7 +178,6 @@ module IO = struct
     with e -> fail e
 
   include Fd
-  include Memory
 end
 
 include IO

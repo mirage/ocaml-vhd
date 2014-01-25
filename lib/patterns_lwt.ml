@@ -20,6 +20,16 @@ open Vhd_lwt
 open Impl
 open Patterns
 
+module Memory = struct
+  let alloc bytes =
+    if bytes = 0
+    then Cstruct.create 0
+    else
+      let n = max 1 ((bytes + 4095) / 4096) in
+      let pages = Io_page.(to_cstruct (get n)) in
+      Cstruct.sub pages 0 bytes
+end
+
 let disk_name_stem = "/tmp/dynamic."
 let disk_suffix = ".vhd"
 
@@ -82,7 +92,8 @@ let check_raw_stream_contents ~allow_empty t expected =
     | `Copy(handle, offset', len) ->
       (* all sectors in [offset, offset + len - 1] should be in the contents list *)
       (* XXX: this won't cope with very large copy requests *)
-      really_read handle (Int64.(mul offset' 512L)) (Int64.to_int len * 512) >>= fun data ->
+      let data = Memory.alloc (Int64.to_int len * 512) in
+      really_read handle (Int64.(mul offset' 512L)) data >>= fun () ->
       let rec check i =
         if i >= (Int64.to_int len) then ()
         else
@@ -136,7 +147,8 @@ let verify t contents =
           really_write fd offset data >>= fun () ->
           return (Int64.(add offset (of_int (Cstruct.len data))))
         | `Copy(fd', offset', len') ->
-          really_read fd' (Int64.mul offset' 512L) (Int64.to_int len' * 512) >>= fun buf ->
+          let buf = Memory.alloc (Int64.to_int len' * 512) in
+          really_read fd' (Int64.mul offset' 512L) buf >>= fun () ->
           really_write fd offset buf >>= fun () ->
           return (Int64.(add offset (of_int (Cstruct.len buf))))
       ) 0L stream.elements in

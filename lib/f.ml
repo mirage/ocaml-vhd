@@ -34,6 +34,16 @@ let cstruct_equal a b =
 
 exception Invalid_sector of int64 * int64
 
+module Memory = struct
+  let alloc bytes =
+    if bytes = 0
+    then Cstruct.create 0
+    else
+      let n = (bytes + 4095) / 4096 in
+      let pages = Io_page.(to_cstruct (get n)) in
+      Cstruct.sub pages 0 bytes
+end
+
 module Int64 = struct
   include Int64
   let ( ++ ) = add
@@ -1312,6 +1322,8 @@ module From_input = functor (I: S.INPUT) -> struct
   (* Operator to avoid bracket overload *)
   let (>+>) m f = return (Cons(m, f))
 
+  open Memory
+
   let openstream fd =
     let buffer = alloc Footer.sizeof in
     read fd buffer >>= fun () ->
@@ -1398,7 +1410,8 @@ module From_file = functor(F: S.FILE) -> struct
   let rec unaligned_really_write fd offset buffer =
     let open Int64 in
     let sector_start = (offset lsr sector_shift) lsl sector_shift in
-    really_read fd sector_start sector_size >>= fun current ->
+    let current = Memory.alloc sector_size in
+    really_read fd sector_start current >>= fun () ->
     let adjusted_len = offset ++ (of_int (Cstruct.len buffer)) -- sector_start in
     let write_this_time = max adjusted_len 512L in
     let remaining_to_write = adjusted_len -- write_this_time in
@@ -1414,7 +1427,8 @@ module From_file = functor(F: S.FILE) -> struct
     open Footer
 
     let read fd pos =
-      really_read fd pos Footer.sizeof >>= fun buf ->
+      let buf = Memory.alloc Footer.sizeof in
+      really_read fd pos buf >>= fun () ->
       Footer.unmarshal buf >>|= fun x ->
       return x
 
@@ -1432,7 +1446,10 @@ module From_file = functor(F: S.FILE) -> struct
       let l_rounded = roundup_sector l in
       ( if l_rounded = 0
         then return (Cstruct.create 0)
-        else really_read fd t.platform_data_offset l_rounded ) >>= fun platform_data ->
+        else 
+          let platform_data = Memory.alloc l_rounded in
+          really_read fd t.platform_data_offset platform_data >>= fun () ->
+          return platform_data ) >>= fun platform_data ->
       let platform_data = Cstruct.sub platform_data 0 l in
       return { t with platform_data }
 
@@ -1465,7 +1482,8 @@ module From_file = functor(F: S.FILE) -> struct
       test [] 0
 
     let read fd pos =
-      really_read fd pos sizeof >>= fun buf ->
+      let buf = Memory.alloc sizeof in
+      really_read fd pos buf >>= fun () ->
       unmarshal buf >>|= fun t -> 
       (* Read the parent_locator data *)
       let rec read_parent_locator = function
@@ -1498,7 +1516,8 @@ module From_file = functor(F: S.FILE) -> struct
     open BAT
 
     let read fd (header: Header.t) =
-      really_read fd header.Header.table_offset (sizeof_bytes header) >>= fun buf ->
+      let buf = Memory.alloc (sizeof_bytes header) in
+      really_read fd header.Header.table_offset buf >>= fun () ->
       return (unmarshal buf header)
 
     let write buf fd (header: Header.t) t =
@@ -1510,11 +1529,13 @@ module From_file = functor(F: S.FILE) -> struct
     open Batmap
 
     let read fd (header: Header.t) =
-      really_read fd (Batmap_header.offset header) Batmap_header.sizeof >>= fun buf ->
+      let buf = Memory.alloc Batmap_header.sizeof in
+      really_read fd (Batmap_header.offset header) buf >>= fun () ->
       match Batmap_header.unmarshal buf with
       | `Error _ -> return None
       | `Ok h ->
-        ( really_read fd h.Batmap_header.offset (h.Batmap_header.size_in_sectors * sector_size) >>= fun batmap ->
+        let batmap = Memory.alloc (h.Batmap_header.size_in_sectors * sector_size) in
+        ( really_read fd h.Batmap_header.offset batmap >>= fun () ->
           match Batmap.unmarshal batmap header h with
           | `Error _ -> return None
           | `Ok batmap ->
@@ -1527,7 +1548,8 @@ module From_file = functor(F: S.FILE) -> struct
     let read fd (header: Header.t) (bat: BAT.t) (block: int) =
       let open Int64 in
       let pos = (of_int32 (BAT.get bat block)) lsl sector_shift in
-      really_read fd pos (Header.sizeof_bitmap header) >>= fun bitmap ->
+      let bitmap = Memory.alloc (Header.sizeof_bitmap header) in
+      really_read fd pos bitmap >>= fun () ->
       return (Partial bitmap)
   end
 
@@ -1541,16 +1563,16 @@ module From_file = functor(F: S.FILE) -> struct
       return ()
     
     let write t =
-      let footer_buf = F.alloc Footer.sizeof in
+      let footer_buf = Memory.alloc Footer.sizeof in
       Footer_IO.write footer_buf t.Vhd.handle 0L t.Vhd.footer >>= fun footer ->
       (* This causes the file size to be increased so we can successfully
          read empty blocks in places like the parent locators *)
       write_trailing_footer footer_buf t.Vhd.handle t >>= fun () ->
       let t ={ t with Vhd.footer } in
-      let buf = F.alloc Header.sizeof in
+      let buf = Memory.alloc Header.sizeof in
       Header_IO.write buf t.Vhd.handle t.Vhd.footer.Footer.data_offset t.Vhd.header >>= fun header ->
       let t = { t with Vhd.header } in
-      let buf = F.alloc (BAT.sizeof_bytes header) in
+      let buf = Memory.alloc (BAT.sizeof_bytes header) in
       BAT_IO.write buf t.Vhd.handle t.Vhd.header t.Vhd.bat >>= fun () ->
       (* Assume the data is there, or will be written later *)
       return t
@@ -1575,7 +1597,7 @@ module From_file = functor(F: S.FILE) -> struct
       let size = (of_int header.Header.max_table_entries) lsl (header.Header.block_size_sectors_shift + sector_shift) in
       let footer = Footer.create ~features ~data_offset ~current_size:size ~disk_type:Disk_type.Dynamic_hard_disk ~uid:uuid ~saved_state () in
 
-      let bat_buffer = F.alloc (BAT.sizeof_bytes header) in
+      let bat_buffer = Memory.alloc (BAT.sizeof_bytes header) in
       let bat = BAT.of_buffer header bat_buffer in
       let batmap = None in
       F.create filename >>= fun handle ->
@@ -1631,7 +1653,7 @@ module From_file = functor(F: S.FILE) -> struct
         ~parent_time_stamp
         ~parent_unicode_name:(UTF16.of_utf8 parent.Vhd.filename)
         ~parent_locators () in
-      let bat_buffer = F.alloc (BAT.sizeof_bytes header) in
+      let bat_buffer = Memory.alloc (BAT.sizeof_bytes header) in
       let bat = BAT.of_buffer header bat_buffer in
       F.create filename >>= fun handle ->
       (* Re-open the parent file to avoid sharing the underlying file descriptor and
@@ -1723,11 +1745,12 @@ module From_file = functor(F: S.FILE) -> struct
       else get_sector_location t sector >>= function
       | None -> return None
       | Some (t, offset) ->
-        really_read t.Vhd.handle (offset lsl sector_shift) sector_size >>= fun data ->
+        let data = Memory.alloc sector_size in
+        really_read t.Vhd.handle (offset lsl sector_shift) data >>= fun () ->
         return (Some data)
 
     let constant size v =
-      let buf = F.alloc size in
+      let buf = Memory.alloc size in
       for i = 0 to size - 1 do
         Cstruct.set_uint8 buf i v
       done;
@@ -1748,7 +1771,7 @@ module From_file = functor(F: S.FILE) -> struct
       ( if bitmap_size = 512
         then really_write handle (bitmap_sector lsl sector_shift) all_zeroes
         else begin
-          let bitmap = F.alloc bitmap_size in
+          let bitmap = Memory.alloc bitmap_size in
           for i = 0 to bitmap_size - 1 do
             Cstruct.set_uint8 bitmap i 0
           done;
@@ -1791,15 +1814,15 @@ module From_file = functor(F: S.FILE) -> struct
         if BAT.get t.Vhd.bat block_num = BAT.unused then begin
           BAT.set t.Vhd.bat block_num (Vhd.get_free_sector t.Vhd.header t.Vhd.bat);
           write_zero_block t.Vhd.handle t block_num >>= fun () ->
-          let bat_buffer = F.alloc (BAT.sizeof_bytes t.Vhd.header) in
+          let bat_buffer = Memory.alloc (BAT.sizeof_bytes t.Vhd.header) in
           BAT_IO.write bat_buffer t.Vhd.handle t.Vhd.header t.Vhd.bat >>= fun () ->
-          let footer_buffer = F.alloc Footer.sizeof in
+          let footer_buffer = Memory.alloc Footer.sizeof in
           write_trailing_footer footer_buffer t.Vhd.handle t >>= fun () ->
           update_sector (BAT.get t.Vhd.bat block_num)
         end else begin
           update_sector (BAT.get t.Vhd.bat block_num)
         end
-  end
+      end
 
   module Raw_IO = struct
     open Raw
@@ -1883,7 +1906,7 @@ module From_file = functor(F: S.FILE) -> struct
         let rec copy sector_start sector_len =
           let this = to_int (min sector_len (of_int twomib_sectors)) in
           let data = Cstruct.sub buffer 0 (this * 512) in
-          really_read_into h (sector_start ** 512L) data >>= fun data ->
+          really_read h (sector_start ** 512L) data >>= fun () ->
           let sector_start = sector_start ++ (of_int this) in
           let sector_len = sector_len -- (of_int this) in
           let next () = if sector_len > 0L then copy sector_start sector_len else expand_copy_elements buffer (next ()) in
@@ -1894,7 +1917,7 @@ module From_file = functor(F: S.FILE) -> struct
   let expand_copy s =
     let open Int64 in
     let size = { s.size with copy = 0L; metadata = s.size.metadata ++ s.size.copy } in
-    let buffer = alloc twomib_bytes in
+    let buffer = Memory.alloc twomib_bytes in
     expand_copy_elements buffer (return s.elements) >>= fun elements ->
     return { elements; size }
 
@@ -2018,14 +2041,14 @@ module From_file = functor(F: S.FILE) -> struct
           ~parent_locators () in
         return h ) >>= fun header ->
 
-    let bat_buffer = F.alloc (BAT.sizeof_bytes header) in
+    let bat_buffer = Memory.alloc (BAT.sizeof_bytes header) in
     let bat = BAT.of_buffer header bat_buffer in
 
     let sizeof_bat = BAT.sizeof_bytes header in
 
     let sizeof_bitmap = Header.sizeof_bitmap header in
     (* We'll always set all bitmap bits *)
-    let bitmap = F.alloc sizeof_bitmap in
+    let bitmap = Memory.alloc sizeof_bitmap in
     for i = 0 to sizeof_bitmap - 1 do
       Cstruct.set_uint8 bitmap i 0xff
     done;
@@ -2038,8 +2061,8 @@ module From_file = functor(F: S.FILE) -> struct
        rounded up to the next sector boundary. *)
     let next_free_sector_in_bytes = Int64.(table_offset ++ (of_int sizeof_bat)) in
 
-    let batmap_header = F.alloc Batmap_header.sizeof in
-    let batmap = F.alloc (Batmap.sizeof header) in
+    let batmap_header = Memory.alloc Batmap_header.sizeof in
+    let batmap = Memory.alloc (Batmap.sizeof header) in
     for i = 0 to Batmap.sizeof header - 1 do
       Cstruct.set_uint8 batmap i 0
     done;
@@ -2097,7 +2120,7 @@ module From_file = functor(F: S.FILE) -> struct
     assert(Footer.sizeof = 512);
     assert(Header.sizeof = 1024);
 
-    let buf = F.alloc (max Footer.sizeof (max Header.sizeof sizeof_bat)) in
+    let buf = Memory.alloc (max Footer.sizeof (max Header.sizeof sizeof_bat)) in
     let (_: Footer.t) = Footer.marshal buf footer in
     coalesce_request None (return (Cons(`Sectors(Cstruct.sub buf 0 Footer.sizeof), fun () ->
       let (_: Header.t) = Header.marshal buf header in
@@ -2159,14 +2182,14 @@ module From_file = functor(F: S.FILE) -> struct
 
        let current_size = Int64.(shift_left (of_int header.Header.max_table_entries) (header.Header.block_size_sectors_shift + sector_shift)) in
        let footer = Footer.create ~data_offset ~current_size ~disk_type:Disk_type.Dynamic_hard_disk () in
-       let bat_buffer = F.alloc (BAT.sizeof_bytes header) in
+       let bat_buffer = Memory.alloc (BAT.sizeof_bytes header) in
        let bat = BAT.of_buffer header bat_buffer in
 
        let sizeof_bat = BAT.sizeof_bytes header in
 
        let sizeof_bitmap = Header.sizeof_bitmap header in
        (* We'll always set all bitmap bits *)
-       let bitmap = F.alloc sizeof_bitmap in
+       let bitmap = Memory.alloc sizeof_bitmap in
        for i = 0 to sizeof_bitmap - 1 do
          Cstruct.set_uint8 bitmap i 0xff
        done;
@@ -2196,7 +2219,7 @@ module From_file = functor(F: S.FILE) -> struct
        assert(Footer.sizeof = 512);
        assert(Header.sizeof = 1024);
 
-       let buf = F.alloc (max Footer.sizeof (max Header.sizeof sizeof_bat)) in
+       let buf = Memory.alloc (max Footer.sizeof (max Header.sizeof sizeof_bat)) in
        let (_: Footer.t) = Footer.marshal buf footer in
        coalesce_request None (return (Cons(`Sectors(Cstruct.sub buf 0 Footer.sizeof), fun () ->
          let (_: Header.t) = Header.marshal buf header in
