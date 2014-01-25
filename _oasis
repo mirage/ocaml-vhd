@@ -13,7 +13,7 @@ Library vhd
   Path:               lib
   Findlibname:        vhd-format
   Modules:            F, S, Result, Element, Patterns
-  BuildDepends:       lwt, lwt.unix, uuidm, cstruct, io-page
+  BuildDepends:       uuidm, cstruct, io-page
 
 Library vhd_lwt
   CompiledObject:     best

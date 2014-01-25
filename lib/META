@@ -1,8 +1,8 @@
 # OASIS_START
-# DO NOT EDIT (digest: 989559b6d2e32cb6946652d4593635e0)
+# DO NOT EDIT (digest: 0cbab13a97e5d6c05af2c200cc17cb13)
 version = "0.5.0"
 description = ".vhd file manipulation"
-requires = "lwt lwt.unix uuidm cstruct io-page"
+requires = "uuidm cstruct io-page"
 archive(byte) = "vhd.cma"
 archive(byte, plugin) = "vhd.cma"
 archive(native) = "vhd.cmxa"
