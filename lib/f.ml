@@ -1745,16 +1745,15 @@ module From_file = functor(F: S.FILE) -> struct
           | Disk_type.Fixed_hard_disk, _ -> fail (Failure "Fixed disks are not supported")
         end  
 
-    let read_sector t sector =
+    let read_sector t sector data =
       let open Int64 in
       if sector < 0L || (sector lsl sector_shift >= t.Vhd.footer.Footer.current_size)
       then fail (Invalid_sector(sector, t.Vhd.footer.Footer.current_size lsr sector_shift))
       else get_sector_location t sector >>= function
-      | None -> return None
+      | None -> return false
       | Some (t, offset) ->
-        let data = Memory.alloc sector_size in
         really_read t.Vhd.handle (offset lsl sector_shift) data >>= fun () ->
-        return (Some data)
+        return true
 
     let constant size v =
       let buf = Memory.alloc size in

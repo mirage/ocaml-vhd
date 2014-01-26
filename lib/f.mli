@@ -402,10 +402,11 @@ module From_file : functor (F : S.FILE) -> sig
         the vhd [t'] (where [t'] may be any vhd on the path from [t] to the
         root of the tree. If no sector is present, this returns [None]. *)
 
-    val read_sector : fd Vhd.t -> int64 -> Cstruct.t option t
-    (** [read_sector t sector] returns [Some data] where [data] is the byte
-        data stored at [sector] in the virtual disk, if any such data exists.
-        If no data is stored at [sector], this returns [None] *)
+    val read_sector : fd Vhd.t -> int64 -> Cstruct.t -> bool t
+    (** [read_sector t sector buffer]: if any data exists at [sector] in the
+        virtual disk, reads it into [buffer] and returns true. If no data exists
+        (i.e. the data should be interpreted as zeros) the function returns false
+        but does not write into [buffer]. *)
 
     val write_sector : fd Vhd.t -> int64 -> Cstruct.t -> unit t
     (** [write_sector t sector data] writes [data] at [sector] in [t] and

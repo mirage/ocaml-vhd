@@ -63,16 +63,19 @@ let absolute_sector_of vhd { block; sector } =
 let cstruct_to_string c = String.escaped (Cstruct.to_string c)
 
 (* Verify that vhd [t] contains the sectors [expected] *)
-let rec check_written_sectors t expected = match expected with
+let check_written_sectors t expected =
+  let y = Memory.alloc 512 in
+  let rec loop = function
   | [] -> return ()
   | (x, data) :: xs ->
-    Vhd_IO.read_sector t x >>= fun y ->
-    ( match y with
-    | None -> fail (Failure "read after write failed")
-    | Some y ->
+    Vhd_IO.read_sector t x y >>= fun empty ->
+    ( match empty with
+    | false -> fail (Failure "read after write failed")
+    | true ->
       assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal data y;
       return () ) >>= fun () ->
-    check_written_sectors t xs
+      loop xs in
+  loop expected
 
 let empty_sector = Memory.alloc 512
 
