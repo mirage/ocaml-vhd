@@ -264,6 +264,14 @@ module Bitmap : sig
 
 end
 
+module Bitmap_cache : sig
+  type t = {
+    cache: (int * Bitmap.t) option ref; (* effective only for streaming *)
+    all_zeroes: Cstruct.t;
+    all_ones: Cstruct.t;
+  }
+end
+
 module Sector : sig
   type t = Cstruct.t
   val dump : Cstruct.t -> unit
@@ -279,7 +287,7 @@ module Vhd : sig
     parent : 'a t option;
     bat : BAT.t;
     batmap : (Batmap_header.t * Batmap.t) option;
-    bitmap_cache : (int * Bitmap.t) option ref;
+    bitmap_cache : Bitmap_cache.t
   }
 
   val check_overlapping_blocks : 'a t -> unit
@@ -408,8 +416,8 @@ module From_file : functor (F : S.FILE) -> sig
         (i.e. the data should be interpreted as zeros) the function returns false
         but does not write into [buffer]. *)
 
-    val write_sector : fd Vhd.t -> int64 -> Cstruct.t -> unit t
-    (** [write_sector t sector data] writes [data] at [sector] in [t] and
+    val write : fd Vhd.t -> int64 -> Cstruct.t list -> unit t
+    (** [write t sector data] writes [data] at [sector] in [t] and
         updates all file metadata to preserve consistency. *)
   end
 

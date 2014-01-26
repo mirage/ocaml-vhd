@@ -106,6 +106,4 @@ let read t offset bufs = match t.vhd with
 
 let write t offset bufs = match t.vhd with
   | None -> return (`Error `Disconnected)
-  | Some vhd ->
-    forall_sectors (Vhd_IO.write_sector vhd) offset bufs >>= fun () ->
-    return (`Ok ())
+  | Some vhd -> Vhd_IO.write vhd offset bufs >>= fun () -> return (`Ok ())
