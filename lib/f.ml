@@ -1709,6 +1709,14 @@ module From_file = functor(F: S.FILE) -> struct
         | Some p -> close p in
       close t
 
+    (* Fetch a block bitmap via the cache *)
+    let get_bitmap t block_num = match !(t.Vhd.bitmap_cache) with
+    | Some (block_num', bitmap) when block_num' = block_num -> return bitmap
+    | _ ->
+      Bitmap_IO.read t.Vhd.handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
+      t.Vhd.bitmap_cache := Some(block_num, bitmap);
+      return bitmap
+
     (* Converts a virtual sector offset into a physical sector offset *)
     let rec get_sector_location t sector =
       let open Int64 in
@@ -1727,12 +1735,7 @@ module From_file = functor(F: S.FILE) -> struct
         if BAT.get t.Vhd.bat block_num = BAT.unused
         then maybe_get_from_parent ()
         else begin
-          ( match !(t.Vhd.bitmap_cache) with
-            | Some (block_num', bitmap) when block_num' = block_num -> return bitmap
-            | _ ->
-              Bitmap_IO.read t.Vhd.handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
-              t.Vhd.bitmap_cache := Some(block_num, bitmap);
-              return bitmap ) >>= fun bitmap ->
+          get_bitmap t block_num >>= fun bitmap ->
           let in_this_bitmap = Bitmap.get bitmap sector_in_block in
           match t.Vhd.footer.Footer.disk_type, in_this_bitmap with
           | _, true ->
@@ -1811,7 +1814,7 @@ module From_file = functor(F: S.FILE) -> struct
         let update_sector bitmap_sector =
           let bitmap_sector = of_int32 bitmap_sector in
           let data_sector = bitmap_sector ++ (of_int (Header.sizeof_bitmap t.Vhd.header) lsr sector_shift) ++ sector_in_block in
-          Bitmap_IO.read t.Vhd.handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
+          get_bitmap t block_num >>= fun bitmap ->
           really_write t.Vhd.handle (data_sector lsl sector_shift) data >>= fun () ->
           match Bitmap.set bitmap sector_in_block with
           | None -> return ()
