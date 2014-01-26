@@ -144,3 +144,5 @@ module IO = struct
 end
 
 include IO
+
+let to_file_descr x = x.Fd.fd

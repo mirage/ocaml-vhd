@@ -12,7 +12,11 @@
  * GNU Lesser General Public License for more details.
  *)
 
+(** Lwt file I/O *)
+
 val debug_io: bool ref
 
 include S.FILE
   with type 'a t = 'a Lwt.t
+
+val to_file_descr: fd -> Lwt_unix.file_descr
