@@ -44,6 +44,19 @@ module Memory = struct
       Cstruct.sub pages 0 bytes
 end
 
+let constant size v =
+  let buf = Memory.alloc size in
+  for i = 0 to size - 1 do
+    Cstruct.set_uint8 buf i v
+  done;
+  buf
+
+let sectors_in_2mib = 2 * 1024 * 2
+let empty_2mib = constant (sectors_in_2mib * 512) 0
+
+let sector_all_zeroes = constant 512 0
+let sector_all_ones   = constant 512 0xff
+ 
 module Int64 = struct
   include Int64
   let ( ++ ) = add
@@ -1025,6 +1038,51 @@ module Bitmap = struct
         let sector_start = (byte_offset lsr sector_shift) lsl sector_shift in
         Some (Int64.of_int sector_start, Cstruct.sub buf sector_start sector_size)
       end
+
+  let setv t sector_in_block remaining =
+    let rec loop updates sector remaining = match updates, remaining with
+    | None, 0L -> None
+    | Some (offset, bufs), 0L -> Some (offset, List.rev bufs)
+    | _, n ->
+      let sector' = Int64.succ sector in
+      let remaining' = Int64.pred remaining in
+      begin match updates, set t sector with
+      | _, None ->
+        loop updates sector' remaining'
+      | Some (offset, _), Some (offset', _) when offset = offset' ->
+        loop updates sector' remaining'
+      | Some (offset, bufs), Some (offset', buf) when offset' = Int64.succ offset ->
+        loop (Some(offset, buf :: bufs)) sector' remaining'
+      | None, Some (offset', buf) ->
+        loop (Some (offset', [ buf ])) sector' remaining'  
+      | _, _ ->
+        assert false (* bitmap sector offsets must be contiguous by construction *)
+      end in
+    loop None sector_in_block remaining
+end
+
+module Bitmap_cache = struct
+  type t = {
+    cache: (int * Bitmap.t) option ref; (* effective only for streaming *)
+    all_zeroes: Cstruct.t;
+    all_ones: Cstruct.t;
+  }
+  let all_ones size =
+    if size = Cstruct.len sector_all_ones
+    then sector_all_ones
+    else constant size 0xff
+
+  let all_zeroes size =
+    if size = Cstruct.len sector_all_zeroes
+    then sector_all_zeroes
+    else constant size 0x0
+ 
+  let make t =
+    let sizeof_bitmap = Header.sizeof_bitmap t in
+    let cache = ref None in
+    let all_ones = all_ones sizeof_bitmap in
+    let all_zeroes = all_zeroes sizeof_bitmap in
+    { cache; all_ones; all_zeroes }
 end
 
 module Sector = struct
@@ -1053,7 +1111,7 @@ module Vhd = struct
     parent: 'a t option;
     bat: BAT.t;
     batmap: (Batmap_header.t * Batmap.t) option;
-    bitmap_cache: (int * Bitmap.t) option ref; (* effective only for streaming *)
+    bitmap_cache: Bitmap_cache.t;
   }
 
   let rec dump t =
@@ -1563,7 +1621,7 @@ module From_file = functor(F: S.FILE) -> struct
       Footer_IO.write buf handle offset t.Vhd.footer >>= fun _ ->
       return ()
     
-    let write t =
+    let write_metadata t =
       let footer_buf = Memory.alloc Footer.sizeof in
       Footer_IO.write footer_buf t.Vhd.handle 0L t.Vhd.footer >>= fun footer ->
       (* This causes the file size to be increased so we can successfully
@@ -1601,9 +1659,10 @@ module From_file = functor(F: S.FILE) -> struct
       let bat_buffer = Memory.alloc (BAT.sizeof_bytes header) in
       let bat = BAT.of_buffer header bat_buffer in
       let batmap = None in
+      let bitmap_cache = Bitmap_cache.make header in
       F.create filename >>= fun handle ->
-      let t = { filename; rw = true; handle; header; footer; parent = None; bat; batmap; bitmap_cache = ref None } in
-      write t >>= fun t ->
+      let t = { filename; rw = true; handle; header; footer; parent = None; bat; batmap; bitmap_cache } in
+      write_metadata t >>= fun t ->
       return t
 
     let make_relative_path base target =
@@ -1662,8 +1721,9 @@ module From_file = functor(F: S.FILE) -> struct
       F.openfile parent.Vhd.filename false >>= fun parent_handle ->
       let parent = { parent with handle = parent_handle } in
       let batmap = None in
-      let t = { filename; rw = true; handle; header; footer; parent = Some parent; bat; batmap; bitmap_cache = ref None } in
-      write t >>= fun t ->
+      let bitmap_cache = Bitmap_cache.make header in
+      let t = { filename; rw = true; handle; header; footer; parent = Some parent; bat; batmap; bitmap_cache } in
+      write_metadata t >>= fun t ->
       return t
 
     let rec openchain ?(path = ["."]) filename rw =
@@ -1684,7 +1744,8 @@ module From_file = functor(F: S.FILE) -> struct
           | _ ->
             return None) >>= fun parent ->
         Batmap_IO.read handle header >>= fun batmap ->
-        return { filename; rw; handle; header; footer; bat; bitmap_cache = ref None; batmap; parent }
+        let bitmap_cache = Bitmap_cache.make header in
+        return { filename; rw; handle; header; footer; bat; bitmap_cache; batmap; parent }
 
     let openfile filename rw =
       F.openfile filename rw >>= fun handle ->
@@ -1692,7 +1753,8 @@ module From_file = functor(F: S.FILE) -> struct
       Header_IO.read handle (Int64.of_int Footer.sizeof) >>= fun header ->
       BAT_IO.read handle header >>= fun bat ->
       Batmap_IO.read handle header >>= fun batmap ->
-      return { filename; rw; handle; header; footer; bat; bitmap_cache = ref None; batmap; parent = None }
+      let bitmap_cache = Bitmap_cache.make header in
+      return { filename; rw; handle; header; footer; bat; bitmap_cache; batmap; parent = None }
 
     let close t =
       (* We avoided rewriting the footer for speed, this is where it is repaired. *)
@@ -1710,11 +1772,11 @@ module From_file = functor(F: S.FILE) -> struct
       close t
 
     (* Fetch a block bitmap via the cache *)
-    let get_bitmap t block_num = match !(t.Vhd.bitmap_cache) with
+    let get_bitmap t block_num = match !(t.Vhd.bitmap_cache.Bitmap_cache.cache) with
     | Some (block_num', bitmap) when block_num' = block_num -> return bitmap
     | _ ->
       Bitmap_IO.read t.Vhd.handle t.Vhd.header t.Vhd.bat block_num >>= fun bitmap ->
-      t.Vhd.bitmap_cache := Some(block_num, bitmap);
+      t.Vhd.bitmap_cache.Bitmap_cache.cache := Some(block_num, bitmap);
       return bitmap
 
     (* Converts a virtual sector offset into a physical sector offset *)
@@ -1758,78 +1820,125 @@ module From_file = functor(F: S.FILE) -> struct
         really_read t.Vhd.handle (offset lsl sector_shift) data >>= fun () ->
         return true
 
-    let constant size v =
-      let buf = Memory.alloc size in
-      for i = 0 to size - 1 do
-        Cstruct.set_uint8 buf i v
-      done;
-      buf
+    let parallel f xs =
+      let ts = List.map f xs in
+      let rec join = function
+      | [] -> return ()
+      | t :: ts -> t >>= fun () -> join ts in
+      join ts
 
-    let sectors_in_2mib = 2 * 1024 * 2
-    let empty_2mib = constant (sectors_in_2mib * 512) 0
+    let rec write_physical t (offset, bufs) = match bufs with
+      | [] -> return ()
+      | b :: bs ->
+        really_write t offset b >>= fun () ->
+        write_physical t (Int64.(add offset (of_int (Cstruct.len b))), bs)
 
-    let all_zeroes = constant 512 0
-    let all_ones   = constant 512 0xff
- 
-    let write_zero_block handle t block_num =
-      let block_size_in_sectors = 1 lsl t.Vhd.header.Header.block_size_sectors_shift in
+    let count_sectors bufs =
+      let rec loop acc = function
+      | [] -> acc
+      | b :: bs -> loop (Cstruct.len b / sector_size + acc) bs in
+      loop 0 bufs
+
+    (* quantise the (offset, buffer) into within-block chunks *)
+    let quantise block_size_in_sectors offset bufs =
       let open Int64 in
-      let bitmap_size = Header.sizeof_bitmap t.Vhd.header in
-      let bitmap_sector = of_int32 (BAT.get t.Vhd.bat block_num) in
-
-      ( if bitmap_size = 512
-        then really_write handle (bitmap_sector lsl sector_shift) all_zeroes
-        else begin
-          let bitmap = Memory.alloc bitmap_size in
-          for i = 0 to bitmap_size - 1 do
-            Cstruct.set_uint8 bitmap i 0
-          done;
-          really_write handle (bitmap_sector lsl sector_shift) bitmap
-        end )
-      >>= fun () ->
-
-      let rec loop n =
-        let pos = (bitmap_sector lsl sector_shift) ++ (of_int bitmap_size) ++ (of_int (sector_size * n)) in
-        if n + sectors_in_2mib <= block_size_in_sectors
-        then
-          really_write handle pos empty_2mib >>= fun () ->
-          loop (n + sectors_in_2mib)
+      (* our starting position in (block, sector) co-ordinates *)
+      let block = to_int (div offset (of_int block_size_in_sectors)) in
+      let sector = to_int (rem offset (of_int block_size_in_sectors)) in
+      let rec loop acc (offset, bufs) (block, sector) = function
+      | [] ->
+        let acc = if bufs = [] then acc else (offset, bufs) :: acc in
+        List.rev acc
+      | b :: bs ->
+        let remaining_this_block = block_size_in_sectors - sector in
+        let available = Cstruct.len b / sector_size in
+        if available = 0
+        then loop acc (offset, bufs) (block, sector) bs
+        else if available < remaining_this_block
+        then loop acc (offset, b :: bufs) (block, sector + available) bs
+        else if available = remaining_this_block
+        then loop ((offset, List.rev (b :: bufs)) :: acc) (add offset (of_int available), []) (block + 1, 0) bs
         else
-          if n >= block_size_in_sectors
-          then return ()
-          else
-            really_write handle pos all_zeroes >>= fun () ->
-            loop (n + 1) in
-      loop 0
+          let b' = Cstruct.sub b 0 (remaining_this_block * sector_size) in
+          let b'' = Cstruct.shift b (remaining_this_block * sector_size) in
+          loop ((offset, List.rev (b' :: bufs)) :: acc) (add offset (of_int remaining_this_block), []) (block + 1, 0) (b'' :: bs) in
+      List.rev (loop [] (offset, []) (block, sector) bufs)
 
-    let write_sector t sector data =
+    let write t offset bufs =
       let block_size_in_sectors = 1 lsl t.Vhd.header.Header.block_size_sectors_shift in
-      let open Int64 in
-      if sector < 0L || (sector lsl sector_shift >= t.Vhd.footer.Footer.current_size)
-      then fail (Invalid_sector(sector, t.Vhd.footer.Footer.current_size lsr sector_shift))
-      else
-        let block_num = to_int (sector lsr t.Vhd.header.Header.block_size_sectors_shift) in
-        assert (block_num < (BAT.length t.Vhd.bat));
-        let sector_in_block = rem sector (of_int block_size_in_sectors) in
-        let update_sector bitmap_sector =
-          let bitmap_sector = of_int32 bitmap_sector in
-          let data_sector = bitmap_sector ++ (of_int (Header.sizeof_bitmap t.Vhd.header) lsr sector_shift) ++ sector_in_block in
-          get_bitmap t block_num >>= fun bitmap ->
-          really_write t.Vhd.handle (data_sector lsl sector_shift) data >>= fun () ->
-          match Bitmap.set bitmap sector_in_block with
-          | None -> return ()
-          | Some (offset, buf) -> really_write t.Vhd.handle ((bitmap_sector lsl sector_shift) ++ offset) buf in
+      let bitmap_size = Header.sizeof_bitmap t.Vhd.header in
+      (* quantise the (offset, buffer) into within-block chunks *)
 
-        if BAT.get t.Vhd.bat block_num = BAT.unused then begin
-          BAT.set t.Vhd.bat block_num (Vhd.get_free_sector t.Vhd.header t.Vhd.bat);
-          write_zero_block t.Vhd.handle t block_num >>= fun () ->
-          let bat_buffer = Memory.alloc (BAT.sizeof_bytes t.Vhd.header) in
-          BAT_IO.write bat_buffer t.Vhd.handle t.Vhd.header t.Vhd.bat >>= fun () ->
-          update_sector (BAT.get t.Vhd.bat block_num)
+      (* We permute data and bitmap sector writes, but only flush the BAT at the end.
+         In the event of a crash during this operation, arbitrary data sectors will
+         have been written but we will never expose garbage (as would happen if we flushed
+         the BAT before writing the data blocks. *)
+
+      let open Int64 in
+      let rec loop (write_bat, acc) = function
+      | [] -> return (write_bat, acc)
+      | (offset, bufs) :: rest ->
+        let block_num = to_int (offset lsr t.Vhd.header.Header.block_size_sectors_shift) in
+        assert (block_num < (BAT.length t.Vhd.bat));
+        let nsectors = of_int (count_sectors bufs) in
+
+        ( let size_sectors = t.Vhd.footer.Footer.current_size lsr sector_shift in
+          if offset < 0L
+          then fail (Invalid_sector(offset, size_sectors))
+          else if (add offset nsectors) > size_sectors
+          then fail (Invalid_sector(add offset nsectors, size_sectors))
+          else return () ) >>= fun () ->
+
+        let sector_in_block = rem offset (of_int block_size_in_sectors) in
+        if BAT.get t.Vhd.bat block_num <> BAT.unused then begin
+          let bitmap_sector = of_int32 (BAT.get t.Vhd.bat block_num) in
+          let data_sector = bitmap_sector ++ (of_int (Header.sizeof_bitmap t.Vhd.header) lsr sector_shift) ++ sector_in_block in
+          let data_writes = [ (data_sector lsl sector_shift), bufs ] in
+          ( get_bitmap t block_num >>= fun bitmap ->
+            match Bitmap.setv bitmap sector_in_block nsectors with
+              | None -> return []
+              | Some (offset, bufs) -> return [ (bitmap_sector lsl sector_shift) ++ offset, bufs] 
+          ) >>= fun bitmap_writes ->
+          loop (write_bat, acc @ bitmap_writes @ data_writes) rest
         end else begin
-          update_sector (BAT.get t.Vhd.bat block_num)
-        end
-      end
+          BAT.set t.Vhd.bat block_num (Vhd.get_free_sector t.Vhd.header t.Vhd.bat);
+          let bitmap_sector = of_int32 (BAT.get t.Vhd.bat block_num) in
+          let block_start = bitmap_sector ++ (of_int (Header.sizeof_bitmap t.Vhd.header) lsr sector_shift) in
+          let data_sector = block_start ++ sector_in_block in
+          let data_writes = [ (data_sector lsl sector_shift), bufs ] in
+          (* We will have to write the bitmap anyway, but if we have no parent then we
+             write all 1s since we're expected to physically zero the block. *)
+          let bitmap_writes =
+            if t.Vhd.parent = None
+            then [ (bitmap_sector lsl sector_shift), [ t.Vhd.bitmap_cache.Bitmap_cache.all_ones ] ]
+            else
+              let bitmap_size = Header.sizeof_bitmap t.Vhd.header in
+              let bitmap = Memory.alloc bitmap_size in
+              Cstruct.blit t.Vhd.bitmap_cache.Bitmap_cache.all_zeroes 0 bitmap 0 bitmap_size;
+              ignore (Bitmap.setv (Bitmap.Partial bitmap) sector_in_block nsectors);
+              [ (bitmap_sector lsl sector_shift), [ bitmap ] ] in
+          let zeroes offset length =
+            let rec zero acc remaining =
+              if remaining = 0L
+              then acc
+              else
+                let this = min remaining (Int64.of_int sectors_in_2mib) in
+                let buf = Cstruct.sub empty_2mib 0 (Int64.to_int this * sector_size) in
+                zero (buf :: acc) (Int64.sub remaining this) in
+           [ offset lsl sector_shift, zero [] length ] in
+         let before = zeroes block_start sector_in_block in
+         let trailing_sectors = sub (of_int block_size_in_sectors) (add sector_in_block nsectors) in
+         let after = zeroes (add (add block_start sector_in_block) nsectors) trailing_sectors in
+         loop (true, (acc @ bitmap_writes @ before @ data_writes @ after)) rest
+       end in
+     loop (false, []) (quantise block_size_in_sectors offset bufs) >>= fun (write_bat, data_writes) ->
+     parallel (write_physical t.Vhd.handle) data_writes >>= fun () ->
+     if write_bat then begin
+       let bat_buffer = Memory.alloc (BAT.sizeof_bytes t.Vhd.header) in
+       BAT_IO.write bat_buffer t.Vhd.handle t.Vhd.header t.Vhd.bat
+     end else return ()
+     (* XXX; only write the bits of the bat which changed *)
+  end
 
   module Raw_IO = struct
     open Raw

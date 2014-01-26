@@ -70,7 +70,7 @@ let check_written_sectors t expected =
   | (x, data) :: xs ->
     Vhd_IO.read_sector t x y >>= fun empty ->
     ( match empty with
-    | false -> fail (Failure "read after write failed")
+    | false -> fail (Failure "read empty sector, expected data")
     | true ->
       assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal data y;
       return () ) >>= fun () ->
@@ -80,9 +80,9 @@ let check_written_sectors t expected =
 let empty_sector = Memory.alloc 512
 
 (* Verify the raw data stream from [t] contains exactly [expected] and no more.
-   If ~allow_empty then we accept sectors which are present (in the bitmap) but
-   physically empty. *)
-let check_raw_stream_contents ~allow_empty t expected =
+   We consider sectors missing from the bitmap as being identical to sectors
+   present in the bitmap but which are full of zeroes. *)
+let check_raw_stream_contents t expected =
   Vhd_input.raw t >>= fun stream ->
   fold_left (fun offset x -> match x with
     | `Empty y -> 
@@ -104,9 +104,7 @@ let check_raw_stream_contents ~allow_empty t expected =
           let actual = Cstruct.sub data (i * 512) 512 in
 
           if not(List.mem_assoc sector expected) then begin
-            if not allow_empty
-            then failwith (Printf.sprintf "Sector %Ld is not supposed to be written to" sector)
-            else assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal empty_sector actual
+            assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal empty_sector actual
           end else begin
             let expected = List.assoc sector expected in
             assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal expected actual;
@@ -141,7 +139,7 @@ let verify t contents =
       else return () ) >>= fun () ->
 
     check_written_sectors t contents >>= fun () ->
-    check_raw_stream_contents ~allow_empty:false t contents >>= fun () ->
+    check_raw_stream_contents t contents >>= fun () ->
 
     let write_stream fd stream =
       fold_left (fun offset x -> match x with
@@ -165,7 +163,7 @@ let verify t contents =
     (* Check the contents look correct *)
     Vhd_IO.openchain filename false >>= fun t' ->
     check_written_sectors t' contents >>= fun () ->
-    check_raw_stream_contents ~allow_empty:true t' contents >>= fun () ->
+    check_raw_stream_contents t' contents >>= fun () ->
     Vhd_IO.close t' >>= fun () ->
     (* Stream the contents as a fresh vhd with a batmap *)
     let filename = make_new_filename () in
@@ -176,7 +174,7 @@ let verify t contents =
     (* Check the contents look correct *)
     Vhd_IO.openchain filename false >>= fun t' ->
     check_written_sectors t' contents >>= fun () ->
-    check_raw_stream_contents ~allow_empty:true t' contents >>= fun () ->
+    check_raw_stream_contents t' contents >>= fun () ->
     Vhd_IO.close t'
 
 

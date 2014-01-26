@@ -163,7 +163,7 @@ let execute state = function
     | None -> failwith "no vhd open" in
     begin match absolute_sector_of vhd position with
       | Some sector ->
-        Vhd_IO.write_sector vhd sector data >>= fun () ->
+        Vhd_IO.write vhd sector [ data ] >>= fun () ->
         (* Overwrite means we forget any previous contents *)
         let contents = List.filter (fun (x, _) -> x <> sector) state.contents in
         return { state with contents = (sector, data) :: contents }
