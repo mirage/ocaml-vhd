@@ -12,6 +12,11 @@
  * GNU Lesser General Public License for more details.
  *)
 
-val alloc: int -> Cstruct.t
-(** [alloc size] allocates a page-aligned Cstruct.t of size exactly [size]
-    bytes *)
+(** Lwt file I/O *)
+
+val debug_io: bool ref
+
+include S.FILE
+  with type 'a t = 'a Lwt.t
+
+val to_file_descr: fd -> Lwt_unix.file_descr

@@ -14,11 +14,21 @@
 open OUnit
 open Lwt
 
-module Impl = Vhd.Make(Vhd_lwt)
+module Impl = Vhd.F.From_file(IO)
+open Vhd.F
+open IO
 open Impl
-open Vhd
-open Vhd_lwt
 open Patterns
+
+module Memory = struct
+  let alloc bytes =
+    if bytes = 0
+    then Cstruct.create 0
+    else
+      let n = max 1 ((bytes + 4095) / 4096) in
+      let pages = Io_page.(to_cstruct (get n)) in
+      Cstruct.sub pages 0 bytes
+end
 
 let disk_name_stem = "/tmp/dynamic."
 let disk_suffix = ".vhd"
@@ -53,36 +63,40 @@ let absolute_sector_of vhd { block; sector } =
 let cstruct_to_string c = String.escaped (Cstruct.to_string c)
 
 (* Verify that vhd [t] contains the sectors [expected] *)
-let rec check_written_sectors t expected = match expected with
+let check_written_sectors t expected =
+  let y = Memory.alloc 512 in
+  let rec loop = function
   | [] -> return ()
   | (x, data) :: xs ->
-    Vhd_IO.read_sector t x >>= fun y ->
-    ( match y with
-    | None -> fail (Failure "read after write failed")
-    | Some y ->
+    Vhd_IO.read_sector t x y >>= fun empty ->
+    ( match empty with
+    | false -> fail (Failure "read empty sector, expected data")
+    | true ->
       assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal data y;
       return () ) >>= fun () ->
-    check_written_sectors t xs
+      loop xs in
+  loop expected
 
 let empty_sector = Memory.alloc 512
 
 (* Verify the raw data stream from [t] contains exactly [expected] and no more.
-   If ~allow_empty then we accept sectors which are present (in the bitmap) but
-   physically empty. *)
-let check_raw_stream_contents ~allow_empty t expected =
+   We consider sectors missing from the bitmap as being identical to sectors
+   present in the bitmap but which are full of zeroes. *)
+let check_raw_stream_contents t expected =
   Vhd_input.raw t >>= fun stream ->
   fold_left (fun offset x -> match x with
-    | Element.Empty y -> 
+    | `Empty y -> 
      (* all sectors in [offset, offset + y = 1] should not be in the contents list *)
       List.iter (fun (x, _) ->
         if x >= offset && x < (Int64.add offset y)
         then failwith (Printf.sprintf "Sector %Ld is not supposed to be empty" x)
       ) expected;
       return (Int64.add offset y)
-    | Element.Copy(handle, offset', len) ->
+    | `Copy(handle, offset', len) ->
       (* all sectors in [offset, offset + len - 1] should be in the contents list *)
       (* XXX: this won't cope with very large copy requests *)
-      Fd.really_read handle (Int64.(mul offset' 512L)) (Int64.to_int len * 512) >>= fun data ->
+      let data = Memory.alloc (Int64.to_int len * 512) in
+      really_read handle (Int64.(mul offset' 512L)) data >>= fun () ->
       let rec check i =
         if i >= (Int64.to_int len) then ()
         else
@@ -90,9 +104,7 @@ let check_raw_stream_contents ~allow_empty t expected =
           let actual = Cstruct.sub data (i * 512) 512 in
 
           if not(List.mem_assoc sector expected) then begin
-            if not allow_empty
-            then failwith (Printf.sprintf "Sector %Ld is not supposed to be written to" sector)
-            else assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal empty_sector actual
+            assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal empty_sector actual
           end else begin
             let expected = List.assoc sector expected in
             assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal expected actual;
@@ -100,7 +112,7 @@ let check_raw_stream_contents ~allow_empty t expected =
           check (i + 1) in
       check 0;
       return (Int64.(add offset len))
-    | Element.Sectors data ->
+    | `Sectors data ->
       let rec loop offset remaining =
         if Cstruct.len remaining = 0
         then return offset
@@ -127,41 +139,42 @@ let verify t contents =
       else return () ) >>= fun () ->
 
     check_written_sectors t contents >>= fun () ->
-    check_raw_stream_contents ~allow_empty:false t contents >>= fun () ->
+    check_raw_stream_contents t contents >>= fun () ->
 
     let write_stream fd stream =
       fold_left (fun offset x -> match x with
-        | Element.Empty y -> return (Int64.(add offset (mul y 512L)))
-        | Element.Sectors data ->
-          Fd.really_write fd offset data >>= fun () ->
+        | `Empty y -> return (Int64.(add offset (mul y 512L)))
+        | `Sectors data ->
+          really_write fd offset data >>= fun () ->
           return (Int64.(add offset (of_int (Cstruct.len data))))
-        | Element.Copy(fd', offset', len') ->
-          really_read fd' (Int64.mul offset' 512L) (Int64.to_int len' * 512) >>= fun buf ->
-          Fd.really_write fd offset buf >>= fun () ->
+        | `Copy(fd', offset', len') ->
+          let buf = Memory.alloc (Int64.to_int len' * 512) in
+          really_read fd' (Int64.mul offset' 512L) buf >>= fun () ->
+          really_write fd offset buf >>= fun () ->
           return (Int64.(add offset (of_int (Cstruct.len buf))))
       ) 0L stream.elements in
 
     (* Stream the contents as a fresh vhd *)
     let filename = make_new_filename () in
-    Fd.create filename >>= fun fd ->
+    create filename >>= fun fd ->
     Vhd_input.vhd t >>= fun stream ->
     write_stream fd stream >>= fun _ ->
-    Fd.close fd >>= fun () ->
+    close fd >>= fun () ->
     (* Check the contents look correct *)
-    Vhd_IO.openfile filename false >>= fun t' ->
+    Vhd_IO.openchain filename false >>= fun t' ->
     check_written_sectors t' contents >>= fun () ->
-    check_raw_stream_contents ~allow_empty:true t' contents >>= fun () ->
+    check_raw_stream_contents t' contents >>= fun () ->
     Vhd_IO.close t' >>= fun () ->
     (* Stream the contents as a fresh vhd with a batmap *)
     let filename = make_new_filename () in
-    Fd.create filename >>= fun fd ->
+    create filename >>= fun fd ->
     Vhd_input.vhd ~emit_batmap:true t >>= fun stream ->
     write_stream fd stream >>= fun _ ->
-    Fd.close fd >>= fun () ->
+    close fd >>= fun () ->
     (* Check the contents look correct *)
-    Vhd_IO.openfile filename false >>= fun t' ->
+    Vhd_IO.openchain filename false >>= fun t' ->
     check_written_sectors t' contents >>= fun () ->
-    check_raw_stream_contents ~allow_empty:true t' contents >>= fun () ->
+    check_raw_stream_contents t' contents >>= fun () ->
     Vhd_IO.close t'
 
 

@@ -1,9 +1,22 @@
-trunk (unreleased)
+0.7.0 (30-Jan-2014)
 * vhd: always interpret relative paths in parent locators as being relative to
   the current directory of the file containing the locator first, and then search
   the general search path after.
 * deltas: handle cases where parent filenames are different strings but refer
   to the same file (e.g. "foo", "./foo")
+* vhd: rename Vhd_input.hybrid -> Hybrid_input.raw
+* vhd: add Hybrid_input.vhd to output vhd-formatted data
+* vhd: fix stream size calculation, so progress reports (bars?) will be more accurate
+* vhd: rename 'openfile' to 'openchain' to reflect that it opens an entire chain,
+  or fails trying
+* vhd: add 'openfile' which only opens a single file
+* switch result type to a polymorphic variant
+* switch Element type to a polymorphic variant
+* rename the module Vhd to module F
+* pack Vhd modules
+* vhd: user passes in buffers to read and write, to control allocation
+* vhd: write now uses the bitmap cache
+* vhd: read and write now try to issue I/O in parallel (experimental)
 
 0.6.4 (2013-11-06)
 * vhd: we expect parent locators to have prefix "file://", rather than "file://./"

@@ -121,7 +121,7 @@ module Footer: sig
 
   val sizeof : int
   val marshal : Cstruct.t -> t -> t
-  val unmarshal : Cstruct.t -> (t, exn) Vhd_result.t
+  val unmarshal : Cstruct.t -> (t, exn) Result.t
 
   val to_string: t -> string
 end
@@ -163,7 +163,7 @@ module Parent_locator : sig
 
   val sizeof : int
   val marshal : Cstruct.t -> t -> unit
-  val unmarshal : Cstruct.t -> (t, exn) Vhd_result.t
+  val unmarshal : Cstruct.t -> (t, exn) Result.t
 end
 
 module Header : sig
@@ -210,7 +210,7 @@ module Header : sig
   val sizeof : int
 
   val marshal : Cstruct.t -> t -> t
-  val unmarshal : Cstruct.t -> (t, exn) Vhd_result.t
+  val unmarshal : Cstruct.t -> (t, exn) Result.t
 end
 
 module BAT : sig
@@ -226,6 +226,9 @@ module BAT : sig
 
   val set: t -> int -> int32 -> unit
   (** [set t i j] sets the [i]th entry to [j] *)
+
+  val fold: (int -> int32 -> 'a -> 'a) -> t -> 'a -> 'a
+  (** [fold f t initial] folds [f] across all valid entries *)
 
   val length: t -> int
   (** [length t] the number of entries in the table *)
@@ -261,6 +264,14 @@ module Bitmap : sig
 
 end
 
+module Bitmap_cache : sig
+  type t = {
+    cache: (int * Bitmap.t) option ref; (* effective only for streaming *)
+    all_zeroes: Cstruct.t;
+    all_ones: Cstruct.t;
+  }
+end
+
 module Sector : sig
   type t = Cstruct.t
   val dump : Cstruct.t -> unit
@@ -269,13 +280,14 @@ end
 module Vhd : sig
   type 'a t = {
     filename : string;
+    rw: bool;
     handle : 'a;
     header : Header.t;
     footer : Footer.t;
     parent : 'a t option;
     bat : BAT.t;
     batmap : (Batmap_header.t * Batmap.t) option;
-    bitmap_cache : (int * Bitmap.t) option ref;
+    bitmap_cache : Bitmap_cache.t
   }
 
   val check_overlapping_blocks : 'a t -> unit
@@ -333,15 +345,44 @@ module Stream : functor(A: S.ASYNC) -> sig
 
 end
 
-module Make : functor (File : S.IO) -> sig
-  open File
+module Fragment : sig
+  type t =
+    | Header of Header.t
+    | Footer of Footer.t
+    | BAT of BAT.t
+    | Batmap of Batmap.t
+    | Block of int64 * Cstruct.t  (** sector offset * data block *)
+
+  (** a fragment of a vhd-formatted stream/file *)
+
+end
+
+module From_input : functor (I: S.INPUT) -> sig
+  open I
+
+  type 'a ll =
+    | Cons of 'a * (unit -> 'a ll t)
+    | End
+  (** a lazy list *)
+
+  val openstream : fd -> Fragment.t ll t
+  (** produce a stream of Fragment.ts from a vhd stream, using constant space *)
+end
+
+
+module From_file : functor (F : S.FILE) -> sig
+  open F
 
   module Vhd_IO : sig
-    val openfile : ?path:string list -> string -> bool -> fd Vhd.t t
-    (** [openfile ?path filename] reads the vhd metadata from [filename] (and other
+    val openchain : ?path:string list -> string -> bool -> fd Vhd.t t
+    (** [openchain ?path filename] reads the vhd metadata from [filename] (and other
         files on the path from [filename] to the root of the tree). If [filename]
         or any of the parent locators have relative paths, then they will be
         searched for on the ?path. *)
+
+    val openfile : string -> bool -> fd Vhd.t t
+    (** [openfile filename] reads the vhd metadata from [filename], but not any
+        other files on the path to the root of the tree. *)
 
     val close : fd Vhd.t -> unit t
     (** [close t] frees all resources associated with [t] *)
@@ -369,13 +410,14 @@ module Make : functor (File : S.IO) -> sig
         the vhd [t'] (where [t'] may be any vhd on the path from [t] to the
         root of the tree. If no sector is present, this returns [None]. *)
 
-    val read_sector : fd Vhd.t -> int64 -> Cstruct.t option t
-    (** [read_sector t sector] returns [Some data] where [data] is the byte
-        data stored at [sector] in the virtual disk, if any such data exists.
-        If no data is stored at [sector], this returns [None] *)
+    val read_sector : fd Vhd.t -> int64 -> Cstruct.t -> bool t
+    (** [read_sector t sector buffer]: if any data exists at [sector] in the
+        virtual disk, reads it into [buffer] and returns true. If no data exists
+        (i.e. the data should be interpreted as zeros) the function returns false
+        but does not write into [buffer]. *)
 
-    val write_sector : fd Vhd.t -> int64 -> Cstruct.t -> unit t
-    (** [write_sector t sector data] writes [data] at [sector] in [t] and
+    val write : fd Vhd.t -> int64 -> Cstruct.t list -> unit t
+    (** [write t sector data] writes [data] at [sector] in [t] and
         updates all file metadata to preserve consistency. *)
   end
 
@@ -430,8 +472,19 @@ module Make : functor (File : S.IO) -> sig
         [from] into [t]. If ?emit_batmap is set then the resulting vhd will have
         the non-standard 'BATmap' metadata included. *)
 
-    val hybrid: ?from: fd Vhd.t -> fd -> fd Vhd.t -> fd stream t
-    (** [hybrid ?from raw vhd] creates a raw-formatted stream representing
+  end
+
+  module Hybrid_input : sig
+
+    val raw: ?from: fd Vhd.t -> fd -> fd Vhd.t -> fd stream t
+    (** [raw ?from raw vhd] creates a raw-formatted stream representing
+        the consolidated data present in the virtual disk [t], in terms of
+        copies from the virtual disk [raw]. If [from] is provided then the
+        stream will contain only the virtual updates required to transform
+        [from] into [t] *)
+
+    val vhd: ?from: fd Vhd.t -> fd -> fd Vhd.t -> fd stream t
+    (** [vhd ?from raw vhd] creates a vhd-formatted stream representing
         the consolidated data present in the virtual disk [t], in terms of
         copies from the virtual disk [raw]. If [from] is provided then the
         stream will contain only the virtual updates required to transform

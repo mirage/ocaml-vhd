@@ -1,5 +1,5 @@
 (*
- * Copyright (C) 2011-2013 Citrix Inc
+ * Copyright (C) 2013 Citrix Inc
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published
@@ -12,18 +12,13 @@
  * GNU Lesser General Public License for more details.
  *)
 
-(** A disk can be streamed as a sequence of elements *)
-type 'a t = [
-  | `Copy of ('a * int64 * int64)
-  (** [Copy (t, offset, len)] copies [len] sectors from sector [offset]
-      from the file [t] *)
-  | `Sectors of Cstruct.t
-  (** a new sector (e.g. for metadata) *)
-  | `Empty of int64
-  (** empty space in sectors *)
-]
+let vhd_util = "vhd-util"
 
-val to_string: 'a t -> string
-
-val len: 'a t -> int64
-(** [len t] is the length of [t] in sectors *)
+let create ~name ~size ?(reserve=false) ?max_size () =
+  let args = [ "-n"; name; "-s"; string_of_int size ] @
+    (if reserve then [ "-r" ] else []) @
+    (match max_size with None -> [] | Some s -> [ "-S"; string_of_int s ]) in
+  let cmdline = vhd_util ^ " " ^ (String.concat " " args) in
+  let result = Sys.command cmdline in
+  if result <> 0
+  then failwith (Printf.sprintf "%s: exitted with %d" cmdline result)

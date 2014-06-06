@@ -15,8 +15,6 @@
 let debug_io = ref false
 
 let complete name offset op fd buffer =
-  if !debug_io
-  then Printf.fprintf stderr "%s offset=%s length=%d\n%!" name (match offset with Some x -> Int64.to_string x | None -> "None") (Cstruct.len buffer);
   let open Lwt in
   let ofs = buffer.Cstruct.off in
   let len = buffer.Cstruct.len in
@@ -29,6 +27,13 @@ let complete name offset op fd buffer =
     then return acc'
     else loop acc' fd buf (ofs + n) len' in
   loop 0 fd buf ofs len >>= fun n ->
+  if !debug_io
+  then Printf.fprintf stderr "%s offset=%s buffer = [%s](%d)\n%!"
+    name (match offset with Some x -> Int64.to_string x | None -> "None")
+    (if Cstruct.len buffer > 16
+     then (String.escaped (Cstruct.(to_string (sub buffer 0 13)))) ^ "..."
+     else (String.escaped (Cstruct.to_string buffer)))
+    (Cstruct.len buffer);
   if n = 0 && len <> 0
   then fail End_of_file
   else return ()
@@ -73,7 +78,7 @@ module Fd = struct
       raise (Not_sector_aligned n)
     end
 
-  let really_read_into { fd; filename; lock } offset (* in file *) buf =
+  let really_read { fd; filename; lock } offset (* in file *) buf =
     (* All reads and writes should be sector-aligned *)
     assert_sector_aligned offset;
     assert_sector_aligned (Int64.of_int buf.Cstruct.off);
@@ -83,8 +88,7 @@ module Fd = struct
       (fun () ->
         try_lwt
           lwt _ = Lwt_unix.LargeFile.lseek fd offset Unix.SEEK_SET in
-          lwt () = complete "read" (Some offset) Lwt_bytes.read fd buf in
-          return buf
+          complete "read" (Some offset) Lwt_bytes.read fd buf
         with
         | Unix.Unix_error(Unix.EINVAL, "read", "") as e ->
           Printf.fprintf stderr "really_read offset = %Ld len = %d: EINVAL (alignment?)\n%!" offset (Cstruct.len buf);
@@ -93,10 +97,6 @@ module Fd = struct
           Printf.fprintf stderr "really_read offset = %Ld len = %d: End_of_file\n%!" offset (Cstruct.len buf);
           fail e 
       )
-
-  let really_read fd offset n =
-    let buf = Memory.alloc n in
-    really_read_into fd offset buf
 
   let really_write { fd; filename; lock } offset (* in file *) buf =
     (* All reads and writes should be sector-aligned *)
@@ -146,7 +146,8 @@ module IO = struct
     with e -> fail e
 
   include Fd
-  include Memory
 end
 
 include IO
+
+let to_file_descr x = x.Fd.fd

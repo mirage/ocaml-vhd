@@ -14,12 +14,12 @@
 open OUnit
 open Lwt
 
-module Impl = Vhd.Make(Vhd_lwt)
+open Vhd.Patterns
+module Impl = Vhd.F.From_file(Vhd_lwt.IO)
 open Impl
-open Vhd
-open Vhd_lwt
-open Patterns
-open Patterns_lwt
+open Vhd.F
+open Vhd_lwt.IO
+open Vhd_lwt.Patterns_lwt
 
 let create () =
   let _ = Create_vhd.disk in
@@ -44,7 +44,7 @@ let make_new_filename =
 let check_empty_disk size =
   let filename = make_new_filename () in
   Vhd_IO.create_dynamic ~filename ~size () >>= fun vhd ->
-  Vhd_IO.openfile filename false >>= fun vhd' ->
+  Vhd_IO.openchain filename false >>= fun vhd' ->
   assert_equal ~printer:Header.to_string ~cmp:Header.equal vhd.Vhd.header vhd'.Vhd.header;
   assert_equal ~printer:Footer.to_string vhd.Vhd.footer vhd'.Vhd.footer;
   assert_equal ~printer:BAT.to_string ~cmp:BAT.equal vhd.Vhd.bat vhd'.Vhd.bat;
@@ -57,7 +57,7 @@ let check_empty_snapshot size =
   Vhd_IO.create_dynamic ~filename ~size () >>= fun vhd ->
   let filename = make_new_filename () in
   Vhd_IO.create_difference ~filename ~parent:vhd () >>= fun vhd' ->
-  Vhd_IO.openfile filename false >>= fun vhd'' ->
+  Vhd_IO.openchain filename false >>= fun vhd'' ->
   assert_equal ~printer:Header.to_string ~cmp:Header.equal vhd'.Vhd.header vhd''.Vhd.header;
   assert_equal ~printer:Footer.to_string vhd'.Vhd.footer vhd''.Vhd.footer;
   assert_equal ~printer:BAT.to_string ~cmp:BAT.equal vhd'.Vhd.bat vhd''.Vhd.bat;
@@ -74,7 +74,7 @@ let check_parent_parent_dir () =
   (try Unix.mkdir leaf_dir 0o0755 with _ -> ());
   Vhd_IO.create_difference ~filename:leaf_path ~parent:vhd ~relative_path:true () >>= fun vhd' ->
   (* Make sure we can open the leaf *)
-  Vhd_IO.openfile leaf_path false >>= fun vhd'' ->
+  Vhd_IO.openchain leaf_path false >>= fun vhd'' ->
   Vhd_IO.close vhd'' >>= fun () ->
   Vhd_IO.close vhd' >>= fun () ->
   Vhd_IO.close vhd
@@ -85,11 +85,12 @@ let check_readonly () =
   Vhd_IO.create_dynamic ~filename ~size:0L () >>= fun vhd ->
   Vhd_IO.close vhd >>= fun () ->
   Unix.chmod filename 0o444;
-  Vhd_IO.openfile filename false >>= fun vhd ->
+  Vhd_IO.openchain filename false >>= fun vhd ->
   Vhd_IO.close vhd
 
 let fill_sector_with pattern =
-  let b = Memory.alloc 512 in
+  let b = Io_page.(to_cstruct (get 1)) in
+  let b = Cstruct.sub b 0 512 in
   for i = 0 to 511 do
     Cstruct.set_char b i (pattern.[i mod (String.length pattern)])
   done;
@@ -162,7 +163,7 @@ let execute state = function
     | None -> failwith "no vhd open" in
     begin match absolute_sector_of vhd position with
       | Some sector ->
-        Vhd_IO.write_sector vhd sector data >>= fun () ->
+        Vhd_IO.write vhd sector [ data ] >>= fun () ->
         (* Overwrite means we forget any previous contents *)
         let contents = List.filter (fun (x, _) -> x <> sector) state.contents in
         return { state with contents = (sector, data) :: contents }
