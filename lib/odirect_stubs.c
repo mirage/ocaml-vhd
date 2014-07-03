@@ -12,7 +12,7 @@
  * GNU Lesser General Public License for more details.
  */
 
-#define _GNU_SOURCE
+#define _GNU_SOURCE /* needed for O_DIRECT */
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -40,7 +40,10 @@ CAMLprim value stub_openfile_direct(value filename, value rw, value perm){
   const char *filename_c = strdup(String_val(filename));
 
   enter_blocking_section();
-  int flags = O_DIRECT;
+  int flags = 0;
+#if defined(O_DIRECT)
+  flags |= O_DIRECT;
+#endif
   if (Bool_val(rw)) {
     flags |= O_RDWR;
   } else {
