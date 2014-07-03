@@ -1961,7 +1961,9 @@ module From_file = functor(F: S.FILE) -> struct
 
   (* Test whether a block is in any BAT in the path to the root. If so then we will
      look up all sectors. *)
-  let rec in_any_bat vhd i = match BAT.get vhd.Vhd.bat i <> BAT.unused, vhd.Vhd.parent with
+  let rec in_any_bat vhd i =
+    i < vhd.Vhd.header.Header.max_table_entries &&
+    match BAT.get vhd.Vhd.bat i <> BAT.unused, vhd.Vhd.parent with
     | true, _ -> true
     | false, Some parent -> in_any_bat parent i
     | false, None -> false

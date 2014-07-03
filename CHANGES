@@ -1,5 +1,6 @@
 0.7.1 (unreleased)
 * build fixes for OS X
+* fix block access after a resize
 
 0.7.0 (30-Jan-2014)
 * vhd: always interpret relative paths in parent locators as being relative to
