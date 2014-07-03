@@ -42,7 +42,7 @@ CAMLprim value stub_openfile_direct(value filename, value rw, value perm){
   enter_blocking_section();
   int flags = 0;
 #if defined(O_DIRECT)
-  int flags |= O_DIRECT;
+  flags |= O_DIRECT;
 #endif
   if (Bool_val(rw)) {
     flags |= O_RDWR;
