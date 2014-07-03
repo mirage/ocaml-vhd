@@ -30,33 +30,60 @@
 #include <caml/callback.h>
 #include <caml/bigarray.h>
 
-#include <linux/fs.h>
+#ifdef __linux__
+# include <linux/fs.h>
+#endif
+#ifdef __APPLE__
+# include <sys/ioctl.h>
+# include <sys/disk.h>
+#endif
 
 /* ocaml/ocaml/unixsupport.c */
 extern void uerror(char *cmdname, value cmdarg);
 #define Nothing ((value) 0)
 
+#define NOT_IMPLEMENTED (-1)
+#define TRIED_AND_FAILED (1)
+#define OK 0
+
 CAMLprim value stub_blkgetsize64(value filename){
   CAMLparam1(filename);
   CAMLlocal1(result);
   uint64_t size_in_bytes;
+  uint64_t size_in_sectors;
   int fd;
-  int success = -1;
-
+  int rc = NOT_IMPLEMENTED;
   const char *filename_c = strdup(String_val(filename));
 
   enter_blocking_section();
   fd = open(filename_c, O_RDONLY, 0);
-  if (ioctl(fd, BLKGETSIZE64, &size_in_bytes) == 0)
-    success = 0;
-  close(fd);
+  if (fd >= 0) {
+#if defined(BLKGETSIZE64)
+    rc = TRIED_AND_FAILED;
+    if (ioctl(fd, BLKGETSIZE64, &size_in_bytes) == 0)
+      rc = OK;
+#elif defined(DKIOCGETBLOCKCOUNT)
+    rc = TRIED_AND_FAILED;
+    if (ioctl(fd, DKIOCGETBLOCKCOUNT, &size_in_sectors) == 0) {
+      size_in_bytes = size_in_sectors << 9;
+      rc = OK;
+    }
+#endif
+    close(fd);
+  }
   leave_blocking_section();
-
   free((void*)filename_c);
 
   if (fd == -1) uerror("open", filename);
-  if (success == -1) uerror("BLKGETSIZE64", filename);
-
+  switch (rc) {
+    case NOT_IMPLEMENTED:
+      caml_failwith("I don't know how to determine the size of a block device on this platform.");
+      break;
+    case TRIED_AND_FAILED:
+      uerror("BLKGETSIZE64", filename);
+      break;
+    default: break;
+  }
   result = caml_copy_int64(size_in_bytes);
   CAMLreturn(result);
 }
