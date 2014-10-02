@@ -1,3 +1,7 @@
+0.7.2 (2-Oct-2014)
+* vhd: add ability to resize (i.e. shrink) a vhd
+* vhd: add ability to marshal (and hence update) a parent locator
+
 0.7.1 (3-Jul-2014)
 * build fixes for OS X
 * fix block access after a resize
