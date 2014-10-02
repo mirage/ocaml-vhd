@@ -290,6 +290,12 @@ module Vhd : sig
     bitmap_cache : Bitmap_cache.t
   }
 
+  val resize: 'a t -> int64 -> 'a t
+  (** [resize t new_size] changes the current virtual size of [t] to [new_size].
+      Note that [new_size] must be less than or equal to the original size of
+      the vhd -- otherwise there wouldn't be enough room for the on-disk
+      structures. *)
+
   val check_overlapping_blocks : 'a t -> unit
 
   module Field : sig

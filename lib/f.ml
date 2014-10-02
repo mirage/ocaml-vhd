@@ -1114,6 +1114,10 @@ module Vhd = struct
     bitmap_cache: Bitmap_cache.t;
   }
 
+  let resize t new_size =
+    if new_size > t.footer.Footer.original_size then invalid_arg "Vhd.resize";
+    { t with footer = { t.footer with Footer.current_size = new_size } }
+
   let rec dump t =
     Printf.printf "VHD file: %s\n" t.filename;
     Header.dump t.header;
