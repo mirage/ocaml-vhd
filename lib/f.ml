@@ -1763,9 +1763,7 @@ module From_file = functor(F: S.FILE) -> struct
     let close t =
       (* We avoided rewriting the footer for speed, this is where it is repaired. *)
       ( if t.Vhd.rw
-        then
-          let footer_buffer = Memory.alloc Footer.sizeof in
-          write_trailing_footer footer_buffer t.Vhd.handle t
+        then (write_metadata t >>= fun _ -> return ())
         else return ()
       ) >>= fun () ->
       let rec close t =
