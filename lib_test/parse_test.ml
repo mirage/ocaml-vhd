@@ -51,6 +51,17 @@ let check_empty_disk size =
   Vhd_IO.close vhd' >>= fun () ->
   Vhd_IO.close vhd
 
+(* Create a disk, resize it, check headers *)
+let check_resize size =
+  let newsize = max 0L (Int64.pred size) in
+  let filename = make_new_filename () in
+  Vhd_IO.create_dynamic ~filename ~size () >>= fun vhd ->
+  let vhd = Vhd.resize vhd newsize in
+  Vhd_IO.close vhd >>= fun () ->
+  Vhd_IO.openchain filename false >>= fun vhd' ->
+  assert_equal ~printer:Int64.to_string newsize vhd.Vhd.footer.Footer.current_size;
+  Vhd_IO.close vhd'
+
 (* Create a snapshot, check headers *)
 let check_empty_snapshot size =
   let filename = make_new_filename () in
@@ -202,6 +213,10 @@ let _ =
     Printf.sprintf "check_empty_disk_%Ld" size
     >:: (fun () -> Lwt_main.run (check_empty_disk size)) in
 
+  let check_resize size =
+    Printf.sprintf "check_resize_%Ld" size
+    >:: (fun () -> Lwt_main.run (check_resize size)) in
+
   let check_empty_snapshot size =
     Printf.sprintf "check_empty_snapshot_%Ld" size
     >:: (fun () -> Lwt_main.run (check_empty_snapshot size)) in
@@ -220,6 +235,7 @@ let _ =
       "check_parent_parent_dir" >:: (fun () -> Lwt_main.run (check_parent_parent_dir ()));
       "check_readonly" >:: (fun () -> Lwt_main.run (check_readonly ()));
      ] @ (List.map check_empty_disk sizes)
+       @ (List.map check_resize sizes)
        @ (List.map check_empty_snapshot sizes)
        @ all_program_tests in
   run_test_tt ~verbose:!verbose suite
