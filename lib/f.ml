@@ -698,6 +698,24 @@ module Header = struct
           true
         with _ -> false)
 
+  let set_parent t filename =
+    let parent_locators = Parent_locator.from_filename filename in
+    let parent_unicode_name = UTF16.of_utf8 filename in
+
+    (* Safety check: this code assumes the single parent locator
+       points to data in the same place. *)
+    let not_implemented x = failwith (Printf.sprintf "unexpected vhd parent locators: %s" x) in
+    for i = 1 to Array.length parent_locators - 1 do
+      if not(Parent_locator.equal t.parent_locators.(i) parent_locators.(i))
+      then not_implemented (string_of_int i)
+    done;
+    if parent_locators.(0).Parent_locator.platform_data_space <> t.parent_locators.(0).Parent_locator.platform_data_space
+    then not_implemented "platform_data_space";
+    if parent_locators.(0).Parent_locator.platform_data_offset <> t.parent_locators.(0).Parent_locator.platform_data_offset
+    then not_implemented "platform_data_offset";
+
+    { t with parent_locators; parent_unicode_name }
+
   (* 1 bit per each 512 byte sector within the block *)
   let sizeof_bitmap t = 1 lsl (t.block_size_sectors_shift - 3)
 
@@ -1113,6 +1131,10 @@ module Vhd = struct
     batmap: (Batmap_header.t * Batmap.t) option;
     bitmap_cache: Bitmap_cache.t;
   }
+
+  let resize t new_size =
+    if new_size > t.footer.Footer.original_size then invalid_arg "Vhd.resize";
+    { t with footer = { t.footer with Footer.current_size = new_size } }
 
   let rec dump t =
     Printf.printf "VHD file: %s\n" t.filename;
@@ -1759,9 +1781,7 @@ module From_file = functor(F: S.FILE) -> struct
     let close t =
       (* We avoided rewriting the footer for speed, this is where it is repaired. *)
       ( if t.Vhd.rw
-        then
-          let footer_buffer = Memory.alloc Footer.sizeof in
-          write_trailing_footer footer_buffer t.Vhd.handle t
+        then (write_metadata t >>= fun _ -> return ())
         else return ()
       ) >>= fun () ->
       let rec close t =

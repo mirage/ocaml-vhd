@@ -21,6 +21,8 @@ open Vhd.F
 open Vhd_lwt.IO
 open Vhd_lwt.Patterns_lwt
 
+let cstruct_to_string c = String.escaped (Cstruct.to_string c)
+
 let create () =
   let _ = Create_vhd.disk in
   ()
@@ -40,6 +42,14 @@ let make_new_filename =
     incr counter;
     disk_name_stem ^ (string_of_int this) ^ disk_suffix
 
+let fill_sector_with pattern =
+  let b = Io_page.(to_cstruct (get 1)) in
+  let b = Cstruct.sub b 0 512 in
+  for i = 0 to 511 do
+    Cstruct.set_char b i (pattern.[i mod (String.length pattern)])
+  done;
+  b
+
 (* Create a dynamic disk, check headers *)
 let check_empty_disk size =
   let filename = make_new_filename () in
@@ -50,6 +60,17 @@ let check_empty_disk size =
   assert_equal ~printer:BAT.to_string ~cmp:BAT.equal vhd.Vhd.bat vhd'.Vhd.bat;
   Vhd_IO.close vhd' >>= fun () ->
   Vhd_IO.close vhd
+
+(* Create a disk, resize it, check headers *)
+let check_resize size =
+  let newsize = max 0L (Int64.pred size) in
+  let filename = make_new_filename () in
+  Vhd_IO.create_dynamic ~filename ~size () >>= fun vhd ->
+  let vhd = Vhd.resize vhd newsize in
+  Vhd_IO.close vhd >>= fun () ->
+  Vhd_IO.openchain filename false >>= fun vhd' ->
+  assert_equal ~printer:Int64.to_string newsize vhd.Vhd.footer.Footer.current_size;
+  Vhd_IO.close vhd'
 
 (* Create a snapshot, check headers *)
 let check_empty_snapshot size =
@@ -63,6 +84,42 @@ let check_empty_snapshot size =
   assert_equal ~printer:BAT.to_string ~cmp:BAT.equal vhd'.Vhd.bat vhd''.Vhd.bat;
   Vhd_IO.close vhd'' >>= fun () ->
   Vhd_IO.close vhd' >>= fun () ->
+  Vhd_IO.close vhd
+
+(* Check changing the parent works *)
+let check_reparent () =
+  let all_ones = fill_sector_with "1" in
+  let all_twos = fill_sector_with "2" in
+  let p1 = make_new_filename () in
+  let size = Int64.mul 1024L 1024L in
+  Vhd_IO.create_dynamic ~filename:p1 ~size () >>= fun vhd ->
+  (* write '1' into block 0 *)
+  Vhd_IO.write vhd 0L [ all_ones ] >>= fun () ->
+  Vhd_IO.close vhd >>= fun () ->
+  let p2 = make_new_filename () in
+  Vhd_IO.create_dynamic ~filename:p2 ~size () >>= fun vhd ->
+  (* write '2' into block 0 *)
+  Vhd_IO.write vhd 0L [ all_twos ] >>= fun () ->
+  Vhd_IO.close vhd >>= fun () ->
+  let l = make_new_filename () in
+  Vhd_IO.openchain p1 false >>= fun vhd ->
+  Vhd_IO.create_difference ~filename:l ~parent:vhd () >>= fun vhd' ->
+  (* Verify block 0 has '1' *)
+  let sector = fill_sector_with "0" in
+  Vhd_IO.read_sector vhd' 0L sector >>= fun _ ->
+  assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal all_ones sector;
+  Vhd_IO.close vhd' >>= fun () ->
+  Vhd_IO.close vhd >>= fun () ->
+  (* Flip the parent locator *)
+  Vhd_IO.openfile l true >>= fun vhd' ->
+  let header = Header.set_parent vhd'.Vhd.header p2 in
+  let vhd' = { vhd' with Vhd.header } in
+  Vhd_IO.close vhd' >>= fun () ->
+  Vhd_IO.openchain l false >>= fun vhd ->
+  (* Verify block 0 has '2' *)
+  let sector = fill_sector_with "0" in
+  Vhd_IO.read_sector vhd 0L sector >>= fun _ ->
+  assert_equal ~printer:cstruct_to_string ~cmp:cstruct_equal all_twos sector;
   Vhd_IO.close vhd
 
 (* Check ../ works in parent locator *)
@@ -87,14 +144,6 @@ let check_readonly () =
   Unix.chmod filename 0o444;
   Vhd_IO.openchain filename false >>= fun vhd ->
   Vhd_IO.close vhd
-
-let fill_sector_with pattern =
-  let b = Io_page.(to_cstruct (get 1)) in
-  let b = Cstruct.sub b 0 512 in
-  for i = 0 to 511 do
-    Cstruct.set_char b i (pattern.[i mod (String.length pattern)])
-  done;
-  b
 
 let absolute_sector_of vhd { block; sector } =
   if vhd.Vhd.header.Header.max_table_entries = 0
@@ -202,6 +251,10 @@ let _ =
     Printf.sprintf "check_empty_disk_%Ld" size
     >:: (fun () -> Lwt_main.run (check_empty_disk size)) in
 
+  let check_resize size =
+    Printf.sprintf "check_resize_%Ld" size
+    >:: (fun () -> Lwt_main.run (check_resize size)) in
+
   let check_empty_snapshot size =
     Printf.sprintf "check_empty_snapshot_%Ld" size
     >:: (fun () -> Lwt_main.run (check_empty_snapshot size)) in
@@ -219,7 +272,9 @@ let _ =
       "create" >:: create;
       "check_parent_parent_dir" >:: (fun () -> Lwt_main.run (check_parent_parent_dir ()));
       "check_readonly" >:: (fun () -> Lwt_main.run (check_readonly ()));
+      "check_reparent" >:: (fun () -> Lwt_main.run (check_reparent ()));
      ] @ (List.map check_empty_disk sizes)
+       @ (List.map check_resize sizes)
        @ (List.map check_empty_snapshot sizes)
        @ all_program_tests in
   run_test_tt ~verbose:!verbose suite
