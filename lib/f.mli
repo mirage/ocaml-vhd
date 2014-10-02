@@ -200,6 +200,10 @@ module Header : sig
 
   val to_string: t -> string
 
+  val set_parent: t -> string -> t
+  (** [set_parent t new_parent] updates the parent locators and
+      unicode name *)
+
   val compute_checksum: t -> int32
   (** compute the expected checksum value *)
 
