@@ -175,9 +175,37 @@ let verify state = match state.child with
   | None -> return ()
   | Some t -> verify t state.contents
 
+module In = From_input(Input)
+open In
+
+let stream_vhd filename =
+  Vhd_lwt.IO.openfile filename false >>= fun fd ->
+  let rec loop = function
+    | End -> return ()
+    | Cons (hd, tl) ->
+(*      begin match hd with
+      | Fragment.Header x ->
+        Printf.printf "Header\n%!"
+      | Fragment.Footer x ->
+        Printf.printf "Footer\n%!"
+      | Fragment.BAT x ->
+        Printf.printf "BAT\n%!"
+      | Fragment.Batmap x ->
+        Printf.printf "batmap\n%!"
+      | Fragment.Block (offset, buffer) ->
+        Printf.printf "Block %Ld (len %d)\n%!" offset (Cstruct.len buffer)
+	end;*)
+      tl () >>= fun x ->
+      loop x in
+  openstream (Input.of_fd (Vhd_lwt.IO.to_file_descr fd)) >>= fun stream ->
+  loop stream >>= fun () -> Vhd_lwt.IO.close fd
+
+let stream_test state =
+  Lwt_list.iter_s stream_vhd state.to_unlink
+
 let cleanup state =
   List.iter Unix.unlink state.to_unlink;
-  Lwt_list.iter_s Vhd_IO.close state.to_close
+  Lwt.return ()
 
 let run program =
   let single_instruction state x =
@@ -185,6 +213,11 @@ let run program =
     verify state' >>= fun () ->
     return state' in
   Lwt_list.fold_left_s single_instruction initial program >>= fun final_state ->
+  Lwt_list.iter_s Vhd_IO.close final_state.to_close >>= fun () ->
+  Lwt.catch
+    (fun () -> stream_test final_state)
+    (fun e -> Printf.fprintf stderr "Caught: %s\n%!" (Printexc.to_string e); fail e)
+  >>= fun () ->
   cleanup final_state
 
 let all_program_tests = List.map (fun p ->
