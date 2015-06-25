@@ -1420,7 +1420,7 @@ module From_input = functor (I: S.INPUT) -> struct
         let length_of_span from =
           let this = Bitmap.get bitmap (Int64.of_int from) in
           let rec loop length i =
-            if Bitmap.get bitmap (Int64.of_int i) = this
+            if i < num_sectors && Bitmap.get bitmap (Int64.of_int i) = this
             then loop (length+1) (i+1)
             else length in
           loop 0 from in
