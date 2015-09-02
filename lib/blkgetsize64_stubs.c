@@ -50,7 +50,9 @@ CAMLprim value stub_blkgetsize64(value filename){
   CAMLparam1(filename);
   CAMLlocal1(result);
   uint64_t size_in_bytes;
+#if defined(DKIOCGETBLOCKCOUNT)
   uint64_t size_in_sectors;
+#endif
   int fd;
   int rc = NOT_IMPLEMENTED;
   const char *filename_c = strdup(String_val(filename));
