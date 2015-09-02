@@ -2334,19 +2334,33 @@ module From_file = functor(F: S.FILE) -> struct
 
        let sizeof_data = 1 lsl (header.Header.block_size_sectors_shift + sector_shift) in
 
-       let include_block i = true in
+       let include_block i =
+         let length = Int64.(shift_left 1L (sector_shift + header.Header.block_size_sectors_shift)) in
+         let offset = Int64.(shift_left (of_int i) (sector_shift + header.Header.block_size_sectors_shift)) in
+         (* is the next data byte in the next block? *)
+         F.lseek_data t.Raw.handle offset
+         >>= fun data ->
+         return (Int64.add offset length > data) in
 
        (* Calculate where the first data block will go. Note the sizeof_bat is already
           rounded up to the next sector boundary. *)
        let first_block = Int64.(table_offset ++ (of_int sizeof_bat)) in
        let next_byte = ref first_block in
        let blocks = header.Header.max_table_entries in
-       for i = 0 to blocks - 1 do
-         if include_block i then begin
-           BAT.set bat i (Int64.(to_int32(!next_byte lsr sector_shift)));
-           next_byte := Int64.(!next_byte ++ (of_int sizeof_bitmap) ++ (of_int sizeof_data))
-         end
-       done;
+       let rec loop i =
+         if i = blocks
+         then return ()
+         else
+           include_block i
+           >>= function
+           | true ->
+             BAT.set bat i (Int64.(to_int32(!next_byte lsr sector_shift)));
+             next_byte := Int64.(!next_byte ++ (of_int sizeof_bitmap) ++ (of_int sizeof_data));
+             loop (i+1)
+           | false ->
+             loop (i+1) in
+       loop 0
+       >>= fun () ->
 
        let rec write_sectors buf from andthen =
          return(Cons(`Sectors buf, andthen)) in
@@ -2354,11 +2368,14 @@ module From_file = functor(F: S.FILE) -> struct
          if i >= blocks
          then andthen ()
          else
-           if include_block i then begin
+           include_block i
+           >>= function
+           | true ->
              let length = Int64.(shift_left 1L header.Header.block_size_sectors_shift) in
              let sector = Int64.(shift_left (of_int i) header.Header.block_size_sectors_shift) in
              return (Cons(`Sectors bitmap, fun () -> return (Cons(`Copy(t.Raw.handle, sector, length), fun () -> block (i+1) andthen))))
-           end else block (i + 1) andthen in
+           | false ->
+             block (i + 1) andthen in
 
        assert(Footer.sizeof = 512);
        assert(Header.sizeof = 1024);
