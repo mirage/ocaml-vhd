@@ -2388,7 +2388,27 @@ module From_file = functor(F: S.FILE) -> struct
          empty = 0L;
          copy = bytes;
        } in
-       let elements = Cons(`Copy(t.handle, 0L, bytes lsr sector_shift), fun () -> return End) in
+       let rec copy sector_start sector_len =
+         if sector_len = 0L
+         then return End
+         else
+           let bytes_start = Int64.shift_left sector_start sector_shift in
+           F.lseek_data t.handle bytes_start
+           >>= fun bytes_next_data_start ->
+           let sector_next_data_start = Int64.shift_right bytes_next_data_start sector_shift in
+           let empty_sectors = Int64.sub sector_next_data_start sector_start in
+           if empty_sectors > 0L
+           then return (Cons(`Empty empty_sectors, fun () -> copy sector_next_data_start (Int64.sub sector_len empty_sectors)))
+           else
+             (* We want to copy at least one sector, so we're not interested in holes "closer"
+                than that. *)
+             F.lseek_hole t.handle Int64.(shift_left (succ sector_next_data_start) sector_shift)
+             >>= fun bytes_next_hole_start ->
+             let sector_next_hole_start = Int64.shift_right bytes_next_hole_start sector_shift in
+             let sector_data_length = Int64.sub sector_next_hole_start sector_next_data_start in
+             return (Cons(`Copy(t.handle, sector_next_data_start, sector_data_length), fun () -> copy sector_next_hole_start (Int64.sub sector_len sector_data_length))) in
+       copy 0L (bytes lsr sector_shift)
+       >>= fun elements ->
        return { size; elements }
    end
 end
