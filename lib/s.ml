@@ -46,6 +46,9 @@ module type FILE = sig
   val get_file_size: string -> int64 t
   val get_modification_time: string -> int32 t
 
+  val lseek: fd -> int64 -> Unix.seek_command -> int64 t
+  val lseek_data: fd -> int64 -> int64 t
+  val lseek_hole: fd -> int64 -> int64 t
 end
 
 module type INPUT = sig

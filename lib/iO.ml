@@ -117,6 +117,10 @@ module Fd = struct
           Printf.fprintf stderr "really_write offset = %Ld len = %d: End_of_file\n%!" offset (Cstruct.len buf);
           fail e 
       )
+
+  let lseek { fd } ofs cmd = Lwt_unix.LargeFile.lseek fd ofs cmd
+  let lseek_data { fd } ofs = Lwt_preemptive.detach (File.lseek_data (Lwt_unix.unix_file_descr fd)) ofs
+  let lseek_hole { fd } ofs = Lwt_preemptive.detach (File.lseek_hole (Lwt_unix.unix_file_descr fd)) ofs
 end
 
 module IO = struct

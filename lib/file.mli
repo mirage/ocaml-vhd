@@ -26,3 +26,13 @@ val get_file_size: string -> int64
 val fsync: Unix.file_descr -> unit
 (** [fsync fd] ensures that any buffered data is written to disk
     and throws a Unix_error if any error has been recorded. *)
+
+val lseek_data: Unix.file_descr -> int64 -> int64
+(** [lseek_data fd from] sets the file pointer to the next block
+    of data greater than or equal to [from]. *)
+
+val lseek_hole: Unix.file_descr -> int64 -> int64
+(** [lseek_hold fd from] sets the file pointer to the next hole
+    of data greater than or equal to [from]. If there are no holes
+    after [from], then the file offset will be set to the end of
+    the file (i.e. there is an implicit hole at the end of the file) *)

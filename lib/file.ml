@@ -34,3 +34,5 @@ let get_file_size x =
 
 external fsync : Unix.file_descr -> unit = "stub_fsync"
 
+external lseek_data: Unix.file_descr -> int64 -> int64 = "stub_lseek64_data"
+external lseek_hole: Unix.file_descr -> int64 -> int64 = "stub_lseek64_hole"

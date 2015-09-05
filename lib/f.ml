@@ -2334,15 +2334,33 @@ module From_file = functor(F: S.FILE) -> struct
 
        let sizeof_data = 1 lsl (header.Header.block_size_sectors_shift + sector_shift) in
 
+       let include_block i =
+         let length = Int64.(shift_left 1L (sector_shift + header.Header.block_size_sectors_shift)) in
+         let offset = Int64.(shift_left (of_int i) (sector_shift + header.Header.block_size_sectors_shift)) in
+         (* is the next data byte in the next block? *)
+         F.lseek_data t.Raw.handle offset
+         >>= fun data ->
+         return (Int64.add offset length > data) in
+
        (* Calculate where the first data block will go. Note the sizeof_bat is already
           rounded up to the next sector boundary. *)
        let first_block = Int64.(table_offset ++ (of_int sizeof_bat)) in
        let next_byte = ref first_block in
        let blocks = header.Header.max_table_entries in
-       for i = 0 to blocks - 1 do
-         BAT.set bat i (Int64.(to_int32(!next_byte lsr sector_shift)));
-         next_byte := Int64.(!next_byte ++ (of_int sizeof_bitmap) ++ (of_int sizeof_data))
-       done;
+       let rec loop i =
+         if i = blocks
+         then return ()
+         else
+           include_block i
+           >>= function
+           | true ->
+             BAT.set bat i (Int64.(to_int32(!next_byte lsr sector_shift)));
+             next_byte := Int64.(!next_byte ++ (of_int sizeof_bitmap) ++ (of_int sizeof_data));
+             loop (i+1)
+           | false ->
+             loop (i+1) in
+       loop 0
+       >>= fun () ->
 
        let rec write_sectors buf from andthen =
          return(Cons(`Sectors buf, andthen)) in
@@ -2350,9 +2368,14 @@ module From_file = functor(F: S.FILE) -> struct
          if i >= blocks
          then andthen ()
          else
-           let length = Int64.(shift_left 1L header.Header.block_size_sectors_shift) in
-           let sector = Int64.(shift_left (of_int i) header.Header.block_size_sectors_shift) in
-           return (Cons(`Sectors bitmap, fun () -> return (Cons(`Copy(t.Raw.handle, sector, length), fun () -> block (i+1) andthen)))) in
+           include_block i
+           >>= function
+           | true ->
+             let length = Int64.(shift_left 1L header.Header.block_size_sectors_shift) in
+             let sector = Int64.(shift_left (of_int i) header.Header.block_size_sectors_shift) in
+             return (Cons(`Sectors bitmap, fun () -> return (Cons(`Copy(t.Raw.handle, sector, length), fun () -> block (i+1) andthen))))
+           | false ->
+             block (i + 1) andthen in
 
        assert(Footer.sizeof = 512);
        assert(Header.sizeof = 1024);
@@ -2388,7 +2411,27 @@ module From_file = functor(F: S.FILE) -> struct
          empty = 0L;
          copy = bytes;
        } in
-       let elements = Cons(`Copy(t.handle, 0L, bytes lsr sector_shift), fun () -> return End) in
+       let rec copy sector_start sector_len =
+         if sector_len = 0L
+         then return End
+         else
+           let bytes_start = Int64.shift_left sector_start sector_shift in
+           F.lseek_data t.handle bytes_start
+           >>= fun bytes_next_data_start ->
+           let sector_next_data_start = Int64.shift_right bytes_next_data_start sector_shift in
+           let empty_sectors = Int64.sub sector_next_data_start sector_start in
+           if empty_sectors > 0L
+           then return (Cons(`Empty empty_sectors, fun () -> copy sector_next_data_start (Int64.sub sector_len empty_sectors)))
+           else
+             (* We want to copy at least one sector, so we're not interested in holes "closer"
+                than that. *)
+             F.lseek_hole t.handle Int64.(shift_left (succ sector_next_data_start) sector_shift)
+             >>= fun bytes_next_hole_start ->
+             let sector_next_hole_start = Int64.shift_right bytes_next_hole_start sector_shift in
+             let sector_data_length = Int64.sub sector_next_hole_start sector_next_data_start in
+             return (Cons(`Copy(t.handle, sector_next_data_start, sector_data_length), fun () -> copy sector_next_hole_start (Int64.sub sector_len sector_data_length))) in
+       copy 0L (bytes lsr sector_shift)
+       >>= fun elements ->
        return { size; elements }
    end
 end
