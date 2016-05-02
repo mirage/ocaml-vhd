@@ -46,12 +46,10 @@ CAMLprim value stub_lseek64_data(value fd, value ofs) {
   off_t c_ret;
 
   caml_enter_blocking_section();
-#if defined(SEEK_DATA)
   c_ret = lseek(c_fd, c_ofs, SEEK_DATA);
-#else
-  /* Set the file pointer to ofs; pretend there is data */
-  c_ret = lseek(c_fd, c_ofs, SEEK_SET);
-#endif
+  /* If there is no SEEK_DATA support, 
+     set the file pointer to ofs; pretend there is data */
+  if (c_ret == -1) c_ret = lseek(c_fd, c_ofs, SEEK_SET);
   caml_leave_blocking_section();
   if (c_ret == -1) uerror("lseek", Nothing);
 
@@ -67,13 +65,10 @@ CAMLprim value stub_lseek64_hole(value fd, value ofs) {
   off_t c_ret;
 
   caml_enter_blocking_section();
-#if defined(SEEK_HOLE)
   c_ret = lseek(c_fd, c_ofs, SEEK_HOLE);
-#else
-  /* Set the file pointer to the end of the file; pretend
-     there is no hole */
-  c_ret = lseek(c_fd, 0, SEEK_END);
-#endif
+  /* If there is no SEEK_HOLE support, set the file pointer 
+     to the end of the file; pretend there is no hole */
+  if (c_ret == -1) c_ret = lseek(c_fd, 0, SEEK_END);
   caml_leave_blocking_section();
   if (c_ret == -1) uerror("lseek", Nothing);
   result = caml_copy_int64(c_ret);
