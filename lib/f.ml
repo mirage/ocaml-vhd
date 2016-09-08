@@ -2093,7 +2093,7 @@ module From_file = functor(F: S.FILE) -> struct
         let from_branch = make from in
         let to_include = BATS.(union (diff t_branch from_branch) (diff from_branch t_branch)) in
         fun i ->
-          BATS.fold (fun (_, bat) acc -> acc || (BAT.get bat i <> BAT.unused)) to_include false
+          BATS.fold (fun (_, bat) acc -> acc || (i < BAT.length bat && BAT.get bat i <> BAT.unused)) to_include false
 
   let raw_common ?from ?(raw: 'a) (vhd: fd Vhd.t) =
     let block_size_sectors_shift = vhd.Vhd.header.Header.block_size_sectors_shift in
