@@ -1,6 +1,6 @@
 OASISFormat: 0.3
 Name:        vhd-format
-Version:     0.7.3
+Version:     0.7.4
 Synopsis:    .vhd file manipulation
 Authors:     Jonathan Ludlam and David Scott
 License:     LGPL-2.1 with OCaml linking exception
