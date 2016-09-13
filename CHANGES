@@ -1,3 +1,7 @@
+0.7.4 (13-09-2016)
+* Bug fixes for SEEK_DATA and SEEK_HOLE (@lesserevil and @lindig)
+* Bug fixes for when the VHD chain contains different sized VHDs (@zli)
+
 0.7.3 (11-09-2015)
 * add explicit `connect` to interface (@talex5)
 * add tests for streaming code (@jonludlam)
