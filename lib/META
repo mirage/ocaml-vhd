@@ -1,15 +1,15 @@
 # OASIS_START
-# DO NOT EDIT (digest: e60a2ef255559ad003c88968625badce)
-version = "0.7.3"
+# DO NOT EDIT (digest: bbfd647391c9f917c833bb630690cf1e)
+version = "0.7.4"
 description = ".vhd file manipulation"
-requires = "uuidm cstruct io-page"
+requires = "uuidm cstruct io-page cstruct.ppx"
 archive(byte) = "vhd.cma"
 archive(byte, plugin) = "vhd.cma"
 archive(native) = "vhd.cmxa"
 archive(native, plugin) = "vhd.cmxs"
 exists_if = "vhd.cma"
 package "lwt" (
- version = "0.7.3"
+ version = "0.7.4"
  description = ".vhd file manipulation"
  requires =
  "lwt lwt.unix lwt.preemptive threads cstruct.lwt oUnit mirage-types.lwt"
