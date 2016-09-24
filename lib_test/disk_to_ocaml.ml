@@ -15,9 +15,8 @@
 open Lwt
 
 let main filename =
-  lwt d = Disk.of_file filename in
-  Disk.print_ocaml stdout d;
-  return ()
+  Disk.of_file filename >|=
+  Disk.print_ocaml stdout
 
 let _ =
   if Array.length Sys.argv <> 2 then begin
