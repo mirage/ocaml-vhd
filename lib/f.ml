@@ -389,26 +389,27 @@ module Footer = struct
     Printf.printf "uid                 : %s\n" (Uuidm.to_string t.uid);
     Printf.printf "saved_state         : %b\n\n" t.saved_state
 
-  cstruct footer {
-    uint8_t magic[8];
-    uint32_t features;
-    uint32_t version;
-    uint64_t data_offset;
-    uint32_t time_stamp;
-    uint8_t creator_application[4];
-    uint32_t creator_version;
-    uint32_t creator_host_os;
-    uint64_t original_size;
-    uint64_t current_size;
-    uint16_t cylinders;
-    uint8_t heads;
-    uint8_t sectors;
-    uint32_t disk_type;
-    uint32_t checksum;
-    uint8_t uid[16];
-    uint8_t saved_state
+[%%cstruct
+type footer = {
+    magic: uint8_t [@len 8];
+    features: uint32_t;
+    version: uint32_t;
+    data_offset: uint64_t;
+    time_stamp: uint32_t;
+    creator_application: uint8_t [@len 4];
+    creator_version: uint32_t;
+    creator_host_os: uint32_t;
+    original_size: uint64_t;
+    current_size: uint64_t;
+    cylinders: uint16_t;
+    heads: uint8_t;
+    sectors: uint8_t;
+    disk_type: uint32_t;
+    checksum: uint32_t;
+    uid: uint8_t [@len 8];
+    saved_state: uint8_t;
     (* 427 zeroed *)
-  } as big_endian
+  } [@@big_endian]]
 
   let sizeof = 512
 
@@ -587,13 +588,14 @@ module Parent_locator = struct
       else None
     | _ -> None
 
-  cstruct header {
-    uint32_t platform_code;
-    uint32_t platform_data_space;
-    uint32_t platform_data_length;
-    uint32_t reserved;
-    uint64_t platform_data_offset
-  } as big_endian
+[%%cstruct
+  type header = {
+    platform_code: uint32_t;
+    platform_data_space: uint32_t;
+    platform_data_length: uint32_t;
+    reserved: uint32_t;
+    platform_data_offset: uint64_t;
+  } [@@big_endian]]
 
   let sizeof = sizeof_header
 
@@ -746,21 +748,21 @@ module Header = struct
     Printf.printf "parent_locators     : %s\n" 
       (String.concat "\n                      " (List.map Parent_locator.to_string (Array.to_list t.parent_locators)))
 
-  cstruct header {
-    uint8_t magic[8];
-    uint64_t data_offset;
-    uint64_t table_offset;
-    uint32_t header_version;
-    uint32_t max_table_entries;
-    uint32_t block_size;
-    uint32_t checksum;
-    uint8_t parent_unique_id[16];
-    uint32_t parent_time_stamp;
-    uint32_t reserved;
-    uint8_t parent_unicode_name[512]
+  [%%cstruct type header = {
+    magic: uint8_t [@len 8];
+    data_offset: uint64_t;
+    table_offset: uint64_t;
+    header_version: uint32_t;
+    max_table_entries: uint32_t;
+    block_size: uint32_t;
+    checksum: uint32_t;
+    parent_unique_id: uint8_t [@len 16];
+    parent_time_stamp: uint32_t;
+    reserved: uint32_t;
+    parent_unicode_name: uint8_t [@len 512];
     (* 8 parent locators *)
     (* 256 reserved *)
-  } as big_endian
+  } [@@big_endian]]
 
   let sizeof = sizeof_header + (8 * Parent_locator.sizeof) + 256
 
@@ -937,15 +939,15 @@ end
 
 module Batmap_header = struct
 
-  cstruct header {
-    uint8_t magic[8];
-    uint64_t offset;
-    uint32_t size_in_sectors;
-    uint16_t major_version;
-    uint16_t minor_version;
-    uint32_t checksum;
-    uint8_t marker
-  } as big_endian
+  [%%cstruct type header = {
+    magic: uint8_t [@len 8];
+    offset: uint64_t;
+    size_in_sectors: uint32_t;
+    major_version: uint16_t;
+    minor_version: uint16_t;
+    checksum: uint32_t;
+    marker: uint8_t;
+  } [@@big_endian]]
 
   let magic = "tdbatmap"
 
