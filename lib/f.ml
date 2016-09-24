@@ -406,7 +406,7 @@ type footer = {
     sectors: uint8_t;
     disk_type: uint32_t;
     checksum: uint32_t;
-    uid: uint8_t [@len 8];
+    uid: uint8_t [@len 16];
     saved_state: uint8_t;
     (* 427 zeroed *)
   } [@@big_endian]]
