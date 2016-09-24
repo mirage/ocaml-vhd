@@ -7,7 +7,6 @@ sudo: false
 env:
  global:
    - PACKAGE="vhd-format"
-   - REVDEPS="true"
  matrix:
    - DISTRO=debian-stable OCAML_VERSION=4.03.0
    - DISTRO=debian-testing OCAML_VERSION=4.02.3
