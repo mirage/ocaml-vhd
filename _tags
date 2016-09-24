@@ -1,5 +1,5 @@
 # OASIS_START
-# DO NOT EDIT (digest: 1f95a393eb0b7c9686cb5e8a0af92cb3)
+# DO NOT EDIT (digest: 95fedb73f6ba09a9447e3ff28c81ffd3)
 # Ignore VCS directories, you can use the same kind of rule outside
 # OASIS_START/STOP if you want to exclude directories that contains
 # useless stuff for the build process
@@ -22,6 +22,7 @@ true: annot, bin_annot
 "lib/element.cmx": for-pack(Vhd)
 "lib/patterns.cmx": for-pack(Vhd)
 <lib/*.ml{,i,y}>: pkg_cstruct
+<lib/*.ml{,i,y}>: pkg_cstruct.ppx
 <lib/*.ml{,i,y}>: pkg_io-page
 <lib/*.ml{,i,y}>: pkg_uuidm
 # Library vhd_lwt
@@ -62,6 +63,7 @@ true: annot, bin_annot
 # Executable disk_to_ocaml
 <lib_test/disk_to_ocaml.{native,byte}>: pkg_cstruct
 <lib_test/disk_to_ocaml.{native,byte}>: pkg_cstruct.lwt
+<lib_test/disk_to_ocaml.{native,byte}>: pkg_cstruct.ppx
 <lib_test/disk_to_ocaml.{native,byte}>: pkg_io-page
 <lib_test/disk_to_ocaml.{native,byte}>: pkg_lwt
 <lib_test/disk_to_ocaml.{native,byte}>: pkg_lwt.preemptive
@@ -76,9 +78,11 @@ true: annot, bin_annot
 # Executable parse_test
 <lib_test/parse_test.{native,byte}>: pkg_cstruct
 <lib_test/parse_test.{native,byte}>: pkg_cstruct.lwt
+<lib_test/parse_test.{native,byte}>: pkg_cstruct.ppx
 <lib_test/parse_test.{native,byte}>: pkg_io-page
 <lib_test/parse_test.{native,byte}>: pkg_io-page.unix
 <lib_test/parse_test.{native,byte}>: pkg_lwt
+<lib_test/parse_test.{native,byte}>: pkg_lwt.ppx
 <lib_test/parse_test.{native,byte}>: pkg_lwt.preemptive
 <lib_test/parse_test.{native,byte}>: pkg_lwt.unix
 <lib_test/parse_test.{native,byte}>: pkg_mirage-types.lwt
@@ -89,9 +93,11 @@ true: annot, bin_annot
 <lib_test/parse_test.{native,byte}>: use_vhd_lwt
 <lib_test/*.ml{,i,y}>: pkg_cstruct
 <lib_test/*.ml{,i,y}>: pkg_cstruct.lwt
+<lib_test/*.ml{,i,y}>: pkg_cstruct.ppx
 <lib_test/*.ml{,i,y}>: pkg_io-page
 <lib_test/*.ml{,i,y}>: pkg_io-page.unix
 <lib_test/*.ml{,i,y}>: pkg_lwt
+<lib_test/*.ml{,i,y}>: pkg_lwt.ppx
 <lib_test/*.ml{,i,y}>: pkg_lwt.preemptive
 <lib_test/*.ml{,i,y}>: pkg_lwt.unix
 <lib_test/*.ml{,i,y}>: pkg_mirage-types.lwt
@@ -102,8 +108,4 @@ true: annot, bin_annot
 <lib_test/*.ml{,i,y}>: use_vhd_lwt
 <lib_test/parse_test.{native,byte}>: custom
 # OASIS_STOP
-<lib/*>: syntax_camlp4o, pkg_lwt.syntax, pkg_cstruct.syntax
-<lib_test/*>: syntax_camlp4o, pkg_lwt.syntax
-<cli/*>: syntax_camlp4o, pkg_lwt.syntax
-<cli/chunked.ml{,i}>: syntax_camlp4o, pkg_cstruct.syntax
-#<lib/*>: pkg_bitstring.syntax, pkg_lwt.syntax
+true: debug, strict_sequence

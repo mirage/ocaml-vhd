@@ -58,13 +58,13 @@ module Fd = struct
     File.fsync fd'
 
   let size_of_file t =
-    lwt s = Lwt_unix.LargeFile.fstat t.fd in
+    Lwt_unix.LargeFile.fstat t.fd >>= fun s ->
     return s.Lwt_unix.LargeFile.st_size
 
   let create filename =
     (* First create the file as normal *)
-    lwt fd = Lwt_unix.openfile filename [ Unix.O_RDWR; Unix.O_CREAT; Unix.O_TRUNC ] 0o644 in
-    lwt () = Lwt_unix.close fd in
+    Lwt_unix.openfile filename [ Unix.O_RDWR; Unix.O_CREAT; Unix.O_TRUNC ] 0o644 >>=
+    Lwt_unix.close >>= fun () ->
     (* Then re-open using our new API *)
     openfile filename true
 
@@ -86,16 +86,17 @@ module Fd = struct
 
     Lwt_mutex.with_lock lock
       (fun () ->
-        try_lwt
-          lwt _ = Lwt_unix.LargeFile.lseek fd offset Unix.SEEK_SET in
+        Lwt.catch (fun () ->
+          Lwt_unix.LargeFile.lseek fd offset Unix.SEEK_SET >>= fun _ ->
           complete "read" (Some offset) Lwt_bytes.read fd buf
-        with
+        ) (function
         | Unix.Unix_error(Unix.EINVAL, "read", "") as e ->
           Printf.fprintf stderr "really_read offset = %Ld len = %d: EINVAL (alignment?)\n%!" offset (Cstruct.len buf);
           fail e
         | End_of_file as e ->
           Printf.fprintf stderr "really_read offset = %Ld len = %d: End_of_file\n%!" offset (Cstruct.len buf);
           fail e 
+        )
       )
 
   let really_write { fd; filename; lock } offset (* in file *) buf =
@@ -106,16 +107,17 @@ module Fd = struct
 
     Lwt_mutex.with_lock lock
       (fun () ->
-        try_lwt
-          lwt _ = Lwt_unix.LargeFile.lseek fd offset Unix.SEEK_SET in
+        Lwt.catch (fun () ->
+          Lwt_unix.LargeFile.lseek fd offset Unix.SEEK_SET >>= fun _ ->
           complete "write" (Some offset) Lwt_bytes.write fd buf
-        with
+        ) (function
         | Unix.Unix_error(Unix.EINVAL, "write", "") as e ->
           Printf.fprintf stderr "really_write offset = %Ld len = %d: EINVAL (alignment?)\n%!" offset (Cstruct.len buf);
           fail e
         | End_of_file as e ->
           Printf.fprintf stderr "really_write offset = %Ld len = %d: End_of_file\n%!" offset (Cstruct.len buf);
           fail e 
+        )
       )
 
   let lseek { fd } ofs cmd = Lwt_unix.LargeFile.lseek fd ofs cmd
@@ -142,7 +144,7 @@ module IO = struct
     get_vhd_time time
 
   let get_modification_time x =
-    lwt st = Lwt_unix.LargeFile.stat x in
+    Lwt_unix.LargeFile.stat x >>= fun st ->
     return (get_vhd_time (st.Lwt_unix.LargeFile.st_mtime))
 
   let get_file_size x =

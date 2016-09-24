@@ -32,23 +32,24 @@ let write_string t ofs s =
 
 let of_file filename =
   let result = ref Int64Map.empty in
-  lwt fd = Lwt_unix.openfile filename [ Unix.O_RDONLY ] 0o0 in
-
+  Lwt_unix.openfile filename [ Unix.O_RDONLY ] 0o0 >>= fun fd ->
   let buf = String.make sector_size '\000' in
   let i = ref 0L in
   let finished = ref false in
-  lwt () = while_lwt not !finished do
-    lwt n = Lwt_unix.read fd buf 0 sector_size in
-    finished := n <> sector_size;
-    if buf <> empty_sector then begin
-      let sector = Cstruct.create n in
-      Cstruct.blit_from_string buf 0 sector 0 n;
-      result := Int64Map.add !i sector !result;
-    end;
-    i := Int64.add !i 1L;
-    return ()
-  done in
-  lwt () = Lwt_unix.close fd in
+  let%lwt () =
+    while%lwt not !finished do
+      let%lwt n = Lwt_unix.read fd buf 0 sector_size in
+      finished := n <> sector_size;
+      if buf <> empty_sector then begin
+        let sector = Cstruct.create n in
+        Cstruct.blit_from_string buf 0 sector 0 n;
+        result := Int64Map.add !i sector !result;
+      end;
+      i := Int64.add !i 1L;
+      Lwt.return_unit
+    done 
+  in
+  let%lwt () = Lwt_unix.close fd in
   return (!result)
 
 let print_ocaml out t =
