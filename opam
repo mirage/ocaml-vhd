@@ -18,6 +18,7 @@ depends: [
   "io-page"
   "uuidm"
   "ounit"
+  "ppx_tools" {build}
   "ocamlbuild" {build}
 ]
 dev-repo: "git://github.com/djs55/ocaml-vhd"
