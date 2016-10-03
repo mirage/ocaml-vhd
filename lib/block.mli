@@ -13,6 +13,5 @@
  *)
 
 include V1_LWT.BLOCK
-  with type id = string
 
 val connect : string -> t io

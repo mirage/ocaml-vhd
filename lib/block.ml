@@ -18,8 +18,6 @@ open M
 
 type 'a io = 'a Lwt.t
 
-type id = string
-
 type error = [
   | `Unknown of string
   | `Unimplemented
@@ -38,10 +36,8 @@ type info = {
 type t = {
   mutable vhd: IO.fd Vhd.F.Vhd.t option;
   info: info;
-  id: id;
+  id: string;
 }
-
-let id t = t.id
 
 let connect path =
   Lwt_unix.LargeFile.stat path >>= fun _ ->
