@@ -18,8 +18,6 @@ open M
 
 type 'a io = 'a Lwt.t
 
-type id = string
-
 type error = [
   | `Unknown of string
   | `Unimplemented
@@ -38,19 +36,11 @@ type info = {
 type t = {
   mutable vhd: IO.fd Vhd.F.Vhd.t option;
   info: info;
-  id: id;
+  id: string;
 }
 
-let id t = t.id
-
 let connect path =
-  Lwt.catch
-    (fun () -> Lwt_unix.LargeFile.stat path >>= fun _ -> return true)
-    (fun _ -> return false)
-  >>= fun exists ->
-  if not exists
-  then return (`Error (`Unknown (Printf.sprintf "File does not exist: %s" path)))
-  else
+  Lwt_unix.LargeFile.stat path >>= fun _ ->
   Lwt.catch
     (fun () -> Lwt_unix.access path [ Lwt_unix.W_OK ] >>= fun () -> return true)
     (fun _ -> return false)
@@ -61,7 +51,7 @@ let connect path =
   let size_sectors = Int64.div vhd.Vhd.footer.Footer.current_size 512L in
   let info = { read_write; sector_size; size_sectors } in
   let id = path in
-  return (`Ok { vhd = Some vhd; info; id })
+  return ({ vhd = Some vhd; info; id })
 
 let disconnect t = match t.vhd with
   | None -> return ()
