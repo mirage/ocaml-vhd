@@ -6,6 +6,7 @@ services:
 sudo: false
 env:
  global:
+   - EXTRA_REMOTES="https://github.com/mirage/mirage-dev.git"
    - PACKAGE="vhd-format"
  matrix:
    - DISTRO=debian-stable OCAML_VERSION=4.03.0
