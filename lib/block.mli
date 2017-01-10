@@ -12,6 +12,6 @@
  * GNU Lesser General Public License for more details.
  *)
 
-include V1_LWT.BLOCK
+include Mirage_types_lwt.BLOCK
 
 val connect : string -> t io
