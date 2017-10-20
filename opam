@@ -21,6 +21,7 @@ depends: [
   "uuidm"
   "ounit"
   "rresult"
+  "ppx_cstruct" {build}
   "ppx_tools" {build}
   "ocamlbuild" {build}
 ]
