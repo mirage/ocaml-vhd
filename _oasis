@@ -22,7 +22,7 @@ Library vhd_lwt
   Findlibname:        lwt
   Findlibparent:      vhd
   Modules:            IO, File, Patterns_lwt, Block
-  BuildDepends:       lwt, lwt.unix, lwt.preemptive, threads, cstruct.lwt, oUnit, mirage-types.lwt
+  BuildDepends:       lwt, lwt.unix, lwt.preemptive, threads, cstruct.lwt, oUnit, mirage-types-lwt
   CSources:           odirect_stubs.c, blkgetsize64_stubs.c, lseek64_stubs.c
 
 Executable disk_to_ocaml
