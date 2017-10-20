@@ -18,6 +18,7 @@ depends: [
   "mirage-types-lwt" {>= "3.0.0"}
   "ipaddr"
   "io-page"
+  "io-page-unix"
   "uuidm"
   "ounit"
   "rresult"
