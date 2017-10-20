@@ -83,7 +83,7 @@ let zero =
   buf
 
 let read t offset bufs = match t.vhd with
-  | None -> return (`Error `Disconnected)
+  | None -> return (Rresult.R.error `Disconnected)
   | Some vhd ->
     forall_sectors
       (fun offset sector ->
@@ -92,8 +92,8 @@ let read t offset bufs = match t.vhd with
           | true -> return () ) >>= fun () ->
         return ()
       ) offset bufs >>= fun () ->
-    return (`Ok ())
+    return (Rresult.R.ok ())
 
 let write t offset bufs = match t.vhd with
-  | None -> return (`Error `Disconnected)
-  | Some vhd -> Vhd_IO.write vhd offset bufs >>= fun () -> return (`Ok ())
+  | None -> return (Rresult.R.error `Disconnected)
+  | Some vhd -> Vhd_IO.write vhd offset bufs >>= fun () -> return (Rresult.R.ok ())

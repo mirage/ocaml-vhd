@@ -12,8 +12,8 @@ Library vhd
   CompiledObject:     best
   Path:               lib
   Findlibname:        vhd-format
-  Modules:            F, S, Vhd_result, Element, Patterns
-  BuildDepends:       uuidm, cstruct, io-page, cstruct.ppx
+  Modules:            F, S, Element, Patterns
+  BuildDepends:       uuidm, cstruct, io-page, cstruct.ppx, rresult
 
 Library vhd_lwt
   Pack:               true
