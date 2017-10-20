@@ -1,5 +1,5 @@
 # OASIS_START
-# DO NOT EDIT (digest: bb6e6c89fdc74d9a557e4fdf4e9943fb)
+# DO NOT EDIT (digest: ec904a89e58a93a16498dbe5cabaa338)
 # Ignore VCS directories, you can use the same kind of rule outside
 # OASIS_START/STOP if you want to exclude directories that contains
 # useless stuff for the build process
@@ -18,7 +18,7 @@ true: annot, bin_annot
 "lib/vhd.cmxs": use_vhd
 "lib/f.cmx": for-pack(Vhd)
 "lib/s.cmx": for-pack(Vhd)
-"lib/result.cmx": for-pack(Vhd)
+"lib/vhd_result.cmx": for-pack(Vhd)
 "lib/element.cmx": for-pack(Vhd)
 "lib/patterns.cmx": for-pack(Vhd)
 <lib/*.ml{,i,y}>: pkg_cstruct
