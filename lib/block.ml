@@ -18,20 +18,17 @@ open M
 
 type 'a io = 'a Lwt.t
 
-type error = [
-  | `Unknown of string
-  | `Unimplemented
-  | `Is_read_only
-  | `Disconnected
-]
+type error = Mirage_block.error
+
+let pp_error = Mirage_block.pp_error
+
+type write_error = Mirage_block.write_error
+
+let pp_write_error = Mirage_block.pp_write_error
 
 type page_aligned_buffer = Cstruct.t
 
-type info = {
-  read_write: bool;
-  sector_size: int;
-  size_sectors: int64;
-}
+type info = Mirage_block.info
 
 type t = {
   mutable vhd: IO.fd Vhd.F.Vhd.t option;
@@ -49,7 +46,7 @@ let connect path =
   let open Vhd.F in
   let sector_size = 512 in
   let size_sectors = Int64.div vhd.Vhd.footer.Footer.current_size 512L in
-  let info = { read_write; sector_size; size_sectors } in
+  let info = Mirage_block.{ read_write; sector_size; size_sectors } in
   let id = path in
   return ({ vhd = Some vhd; info; id })
 
@@ -83,7 +80,7 @@ let zero =
   buf
 
 let read t offset bufs = match t.vhd with
-  | None -> return (`Error `Disconnected)
+  | None -> return (Rresult.R.error `Disconnected)
   | Some vhd ->
     forall_sectors
       (fun offset sector ->
@@ -92,8 +89,8 @@ let read t offset bufs = match t.vhd with
           | true -> return () ) >>= fun () ->
         return ()
       ) offset bufs >>= fun () ->
-    return (`Ok ())
+    return (Rresult.R.ok ())
 
 let write t offset bufs = match t.vhd with
-  | None -> return (`Error `Disconnected)
-  | Some vhd -> Vhd_IO.write vhd offset bufs >>= fun () -> return (`Ok ())
+  | None -> return (Rresult.R.error `Disconnected)
+  | Some vhd -> Vhd_IO.write vhd offset bufs >>= fun () -> return (Rresult.R.ok ())

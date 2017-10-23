@@ -110,11 +110,11 @@ module Disk_type = struct
   exception Unknown of int32
 
   let of_int32 =
-    let open Result in function
-    | 2l -> return Fixed_hard_disk 
-    | 3l -> return Dynamic_hard_disk
-    | 4l -> return Differencing_hard_disk
-    | x -> fail (Unknown x)
+    let open Rresult in function
+    | 2l -> R.ok Fixed_hard_disk 
+    | 3l -> R.ok Dynamic_hard_disk
+    | 4l -> R.ok Differencing_hard_disk
+    | x -> R.error (Unknown x)
 
   let to_int32 = function
     | Fixed_hard_disk -> 2l
@@ -251,9 +251,9 @@ module UTF16 = struct
 
   let to_utf8 x =
     try
-      `Ok (to_utf8_exn x)
+      Rresult.R.ok (to_utf8_exn x)
     with e ->
-      `Error e
+      Rresult.R.error e
 
   let to_string x = Printf.sprintf "[| %s |]" (String.concat "; " (List.map string_of_int (Array.to_list x)))
 
@@ -318,9 +318,9 @@ module UTF16 = struct
         inner ofs' n'
       end in
     try
-      `Ok (inner pos 0)
+      Rresult.R.ok (inner pos 0)
     with e ->
-      `Error e
+      Rresult.R.error e
 end
 
 module Footer = struct
@@ -440,16 +440,16 @@ type footer = {
     { t with checksum }
 
   let unmarshal (buf: Cstruct.t) =
-    let open Result in
+    let open Rresult in
     let magic' = copy_footer_magic buf in
     ( if magic' <> magic
-      then fail (Failure (Printf.sprintf "Unsupported footer cookie: expected %s, got %s" magic magic'))
-      else return () ) >>= fun () ->
+      then R.error (Failure (Printf.sprintf "Unsupported footer cookie: expected %s, got %s" magic magic'))
+      else R.ok () ) >>= fun () ->
     let features = Feature.of_int32 (get_footer_features buf) in
     let format_version = get_footer_version buf in
     ( if format_version <> expected_version
-      then fail (Failure (Printf.sprintf "Unsupported footer version: expected %lx, got %lx" expected_version format_version))
-      else return () ) >>= fun () ->
+      then R.error (Failure (Printf.sprintf "Unsupported footer version: expected %lx, got %lx" expected_version format_version))
+      else R.ok () ) >>= fun () ->
     let data_offset = get_footer_data_offset buf in
     let time_stamp = get_footer_time_stamp buf in
     let creator_application = copy_footer_creator_application buf in
@@ -465,14 +465,14 @@ type footer = {
     let checksum = get_footer_checksum buf in
     let bytes = copy_footer_uid buf in
     ( match Uuidm.of_bytes bytes with
-      | None -> fail (Failure (Printf.sprintf "Failed to decode UUID: %s" (String.escaped bytes)))
-      | Some uid -> return uid ) >>= fun uid ->
+      | None -> R.error (Failure (Printf.sprintf "Failed to decode UUID: %s" (String.escaped bytes)))
+      | Some uid -> R.ok uid ) >>= fun uid ->
     let saved_state = get_footer_saved_state buf = 1 in
     let expected_checksum = Checksum.(sub_int32 (of_cstruct (Cstruct.sub buf 0 sizeof)) checksum) in
     ( if checksum <> expected_checksum
-      then fail (Failure (Printf.sprintf "Invalid checksum. Expected %08lx got %08lx" expected_checksum checksum))
-      else return () ) >>= fun () ->
-    return { features; data_offset; time_stamp; creator_version; creator_application;
+      then R.error (Failure (Printf.sprintf "Invalid checksum. Expected %08lx got %08lx" expected_checksum checksum))
+      else R.ok () ) >>= fun () ->
+    R.ok { features; data_offset; time_stamp; creator_version; creator_application;
       creator_host_os; original_size; current_size; geometry; disk_type; checksum; uid; saved_state }
 
   let compute_checksum t =
@@ -500,15 +500,15 @@ module Platform_code = struct
   let macx = 0x4d616358l
 
   let of_int32 =
-    let open Result in function
-    | 0l -> `Ok None
-    | x when x = wi2r -> `Ok Wi2r
-    | x when x = wi2k -> `Ok Wi2k
-    | x when x = w2ru -> `Ok W2ru
-    | x when x = w2ku -> `Ok W2ku
-    | x when x = mac -> `Ok Mac
-    | x when x = macx -> `Ok MacX
-    | x -> `Error (Failure (Printf.sprintf "unknown platform_code: %lx" x))
+    let open Rresult in function
+    | 0l -> R.ok None
+    | x when x = wi2r -> R.ok Wi2r
+    | x when x = wi2k -> R.ok Wi2k
+    | x when x = w2ru -> R.ok W2ru
+    | x when x = w2ku -> R.ok W2ku
+    | x when x = mac -> R.ok Mac
+    | x when x = macx -> R.ok MacX
+    | x -> R.error (Failure (Printf.sprintf "unknown platform_code: %lx" x))
 
   let to_int32 = function
     | None -> 0l
@@ -607,7 +607,7 @@ module Parent_locator = struct
     set_header_platform_data_offset buf t.platform_data_offset
 
   let unmarshal (buf: Cstruct.t) =
-    let open Result in
+    let open Rresult.R.Infix in
     Platform_code.of_int32 (get_header_platform_code buf) >>= fun platform_code ->
     let platform_data_space_original = get_header_platform_data_space buf in
     (* The spec says this field should be stored in sectors. However some viridian vhds
@@ -621,7 +621,7 @@ module Parent_locator = struct
       else platform_data_space_original in
     let platform_data_length = get_header_platform_data_length buf in
     let platform_data_offset = get_header_platform_data_offset buf in
-    return { platform_code; platform_data_space_original; platform_data_space;
+    Rresult.R.return { platform_code; platform_data_space_original; platform_data_space;
       platform_data_length; platform_data_offset;
       platform_data = Cstruct.create 0 }
 
@@ -742,8 +742,8 @@ module Header = struct
     Printf.printf "parent_unique_id    : %s\n" (Uuidm.to_string t.parent_unique_id);
     Printf.printf "parent_time_stamp   : %lu\n" t.parent_time_stamp;
     let s = match UTF16.to_utf8 t.parent_unicode_name with
-      | `Ok s -> s
-      | `Error e -> Printf.sprintf "<Unable to decode UTF-16: %s>" (String.concat " " (List.map (fun x -> Printf.sprintf "%02x" x) (Array.to_list t.parent_unicode_name))) in
+      | Ok s -> s
+      | Error e -> Printf.sprintf "<Unable to decode UTF-16: %s>" (String.concat " " (List.map (fun x -> Printf.sprintf "%02x" x) (Array.to_list t.parent_unicode_name))) in
     Printf.printf "parent_unicode_name : '%s' (%d bytes)\n" s (Array.length t.parent_unicode_name);
     Printf.printf "parent_locators     : %s\n" 
       (String.concat "\n                      " (List.map Parent_locator.to_string (Array.to_list t.parent_locators)))
@@ -798,43 +798,44 @@ module Header = struct
     { t with checksum }
 
   let unmarshal (buf: Cstruct.t) =
-    let open Result in
+    let open Rresult in
+    let open Rresult.R.Infix in
     let magic' = copy_header_magic buf in
     ( if magic' <> magic
-      then fail (Failure (Printf.sprintf "Expected cookie %s, got %s" magic magic'))
-      else return () ) >>= fun () ->
+      then R.error (Failure (Printf.sprintf "Expected cookie %s, got %s" magic magic'))
+      else R.ok () ) >>= fun () ->
     let data_offset = get_header_data_offset buf in
     ( if data_offset <> expected_data_offset
-      then fail (Failure (Printf.sprintf "Expected header data_offset %Lx, got %Lx" expected_data_offset data_offset))
-      else return () ) >>= fun () ->
+      then R.error (Failure (Printf.sprintf "Expected header data_offset %Lx, got %Lx" expected_data_offset data_offset))
+      else R.ok () ) >>= fun () ->
     let table_offset = get_header_table_offset buf in
     let header_version = get_header_header_version buf in
     ( if header_version <> expected_version
-      then fail (Failure (Printf.sprintf "Expected header_version %lx, got %lx" expected_version header_version))
-      else return () ) >>= fun () ->
+      then R.error (Failure (Printf.sprintf "Expected header_version %lx, got %lx" expected_version header_version))
+      else R.ok () ) >>= fun () ->
     let max_table_entries = get_header_max_table_entries buf in
     ( if Int64.of_int32 max_table_entries > Int64.of_int Sys.max_array_length
-      then fail (Failure (Printf.sprintf "expected max_table_entries < %d, got %ld" Sys.max_array_length max_table_entries))
-      else return (Int32.to_int max_table_entries) ) >>= fun max_table_entries ->
+      then R.error (Failure (Printf.sprintf "expected max_table_entries < %d, got %ld" Sys.max_array_length max_table_entries))
+      else R.ok (Int32.to_int max_table_entries) ) >>= fun max_table_entries ->
     let block_size = get_header_block_size buf in
     let rec to_shift acc = function
-      | 0 -> fail (Failure "block size is zero")
-      | 1 -> return acc
-      | n when n mod 2 = 1 -> fail (Failure (Printf.sprintf "block_size is not a power of 2: %lx" block_size))
+      | 0 -> R.error (Failure "block size is zero")
+      | 1 -> R.ok acc
+      | n when n mod 2 = 1 -> R.error (Failure (Printf.sprintf "block_size is not a power of 2: %lx" block_size))
       | n -> to_shift (acc + 1) (n / 2) in
     to_shift 0 (Int32.to_int block_size) >>= fun block_size_shift ->
     let block_size_sectors_shift = block_size_shift - sector_shift in
     let checksum = get_header_checksum buf in
     let bytes = copy_header_parent_unique_id buf in
     ( match (Uuidm.of_bytes bytes) with
-      | None -> fail (Failure (Printf.sprintf "Failed to decode UUID: %s" (String.escaped bytes)))
-      | Some x -> return x ) >>= fun parent_unique_id ->
+      | None -> R.error (Failure (Printf.sprintf "Failed to decode UUID: %s" (String.escaped bytes)))
+      | Some x -> R.ok x ) >>= fun parent_unique_id ->
     let parent_time_stamp = get_header_parent_time_stamp buf in
     UTF16.unmarshal (Cstruct.sub buf unicode_offset 512) 512 >>= fun parent_unicode_name ->
     let parent_locators_buf = Cstruct.shift buf (unicode_offset + 512) in
     let parent_locators = Array.create 8 Parent_locator.null in
     let rec loop = function
-      | 8 -> return ()
+      | 8 -> R.ok ()
       | i ->
         let buf = Cstruct.shift parent_locators_buf (Parent_locator.sizeof * i) in
         Parent_locator.unmarshal buf >>= fun p ->
@@ -843,9 +844,9 @@ module Header = struct
     loop 0 >>= fun () ->
     let expected_checksum = Checksum.(sub_int32 (of_cstruct (Cstruct.sub buf 0 sizeof)) checksum) in
     ( if checksum <> expected_checksum
-      then fail (Failure (Printf.sprintf "Invalid checksum. Expected %08lx got %08lx" expected_checksum checksum))
-      else return () ) >>= fun () ->
-    return { table_offset; max_table_entries; block_size_sectors_shift; checksum; parent_unique_id;
+      then R.error (Failure (Printf.sprintf "Invalid checksum. Expected %08lx got %08lx" expected_checksum checksum))
+      else R.ok () ) >>= fun () ->
+    R.ok { table_offset; max_table_entries; block_size_sectors_shift; checksum; parent_unique_id;
       parent_time_stamp; parent_unicode_name; parent_locators }
 
   let compute_checksum t =
@@ -966,21 +967,22 @@ module Batmap_header = struct
   }
 
   let unmarshal (buf: Cstruct.t) =
-    let open Result in
+    let open Rresult in
+    let open Rresult.R.Infix in
     let magic' = copy_header_magic buf in
     ( if magic' <> magic
-      then fail (Failure (Printf.sprintf "Expected cookie %s, got %s" magic magic'))
-      else return () ) >>= fun () ->
+      then R.error (Failure (Printf.sprintf "Expected cookie %s, got %s" magic magic'))
+      else R.ok () ) >>= fun () ->
     let offset = get_header_offset buf in
     let size_in_sectors = Int32.to_int (get_header_size_in_sectors buf) in
     let major_version = get_header_major_version buf in
     let minor_version = get_header_minor_version buf in
     ( if major_version <> current_major_version || minor_version <> current_minor_version
-      then fail (Failure (Printf.sprintf "Unexpected BATmap version: %d.%d" major_version minor_version))
-      else return () ) >>= fun () ->
+      then R.error (Failure (Printf.sprintf "Unexpected BATmap version: %d.%d" major_version minor_version))
+      else R.ok () ) >>= fun () ->
     let checksum = get_header_checksum buf in
     let marker = get_header_marker buf in
-    return { offset; size_in_sectors; major_version; minor_version; checksum; marker }
+    R.ok { offset; size_in_sectors; major_version; minor_version; checksum; marker }
 
   let marshal (buf: Cstruct.t) (t: t) =
     for i = 0 to Cstruct.len buf - 1 do
@@ -1018,13 +1020,14 @@ module Batmap = struct
     byte land mask <> mask
 
   let unmarshal (buf: Cstruct.t) (h: Header.t) (bh: Batmap_header.t) =
-    let open Result in
+    let open Rresult in
+    let open Rresult.R.Infix in
     let needed = Cstruct.sub buf 0 (sizeof_bytes h) in
     let checksum = Checksum.of_cstruct buf in
     ( if checksum <> bh.Batmap_header.checksum
-      then fail (Failure (Printf.sprintf "Invalid checksum. Expected %08lx got %08lx" bh.Batmap_header.checksum checksum))
-      else return () ) >>= fun () ->
-    return needed
+      then R.error (Failure (Printf.sprintf "Invalid checksum. Expected %08lx got %08lx" bh.Batmap_header.checksum checksum))
+      else R.ok () ) >>= fun () ->
+    R.ok needed
 
 end
 
@@ -1397,10 +1400,10 @@ module From_input = functor (I: S.INPUT) -> struct
     | Cons of 'a * (unit -> 'a ll t)
     | End
 
-  (* Convert Result.Error values into failed threads *)
+  (* Convert Error values into failed threads *)
   let (>>|=) m f = match m with
-    | `Error e -> fail e
-    | `Ok x -> f x
+    | Error e -> fail e
+    | Ok x -> f x
 
   (* Operator to avoid bracket overload *)
   let (>+>) m f = return (Cons(m, f))
@@ -1472,10 +1475,10 @@ end
 module From_file = functor(F: S.FILE) -> struct
   open F
 
-  (* Convert Result.Error values into failed threads *)
+  (* Convert Error values into failed threads *)
   let (>>|=) m f = match m with
-    | `Error e -> fail e
-    | `Ok x -> f x
+    | Error e -> fail e
+    | Ok x -> f x
 
   (* Search a path for a filename *)
   let search filename path =
@@ -1615,13 +1618,13 @@ module From_file = functor(F: S.FILE) -> struct
       let buf = Memory.alloc Batmap_header.sizeof in
       really_read fd (Batmap_header.offset header) buf >>= fun () ->
       match Batmap_header.unmarshal buf with
-      | `Error _ -> return None
-      | `Ok h ->
+      | Error _ -> return None
+      | Ok h ->
         let batmap = Memory.alloc (h.Batmap_header.size_in_sectors * sector_size) in
         ( really_read fd h.Batmap_header.offset batmap >>= fun () ->
           match Batmap.unmarshal batmap header h with
-          | `Error _ -> return None
-          | `Ok batmap ->
+          | Error _ -> return None
+          | Ok batmap ->
             return (Some (h, batmap)))
   end
 
