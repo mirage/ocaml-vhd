@@ -1,0 +1,11 @@
+(executable
+  ((name disk_to_ocaml)
+   (package vhd-lwt)
+   (libraries
+     (cstruct
+      disk
+      lwt
+      lwt.unix
+      vhd
+      vhd-lwt))
+   (preprocess (pps (lwt.ppx)))))
