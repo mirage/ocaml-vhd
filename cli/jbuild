@@ -1,6 +1,6 @@
 (executable
   ((name disk_to_ocaml)
-   (package vhd-lwt)
+   (package vhd-format-lwt)
    (libraries
      (cstruct
       disk
