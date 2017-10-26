@@ -23,4 +23,4 @@ doc:
 	jbuilder build @doc
 
 reindent:
-	git ls-files '*.ml' '*.mli' | xargs ocp-indent --syntax cstruct --syntax lwt -i
+	git ls-files '*.ml' '*.mli' | xargs ocp-indent -i
