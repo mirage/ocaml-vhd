@@ -9,8 +9,8 @@ Example usage
 To initialise your environment in utop:
 ```
 open Lwt;;
-#require "vhd";;
-#require "vhd-lwt";;
+#require "vhd-format";;
+#require "vhd-format-lwt";;
 module V = Vhd.Make(Vhd_lwt);;
 ```
 
