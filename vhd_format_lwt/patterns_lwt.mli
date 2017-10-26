@@ -12,7 +12,7 @@
  * GNU Lesser General Public License for more details.
  *)
 
-val verify: IO.fd Vhd.F.Vhd.t -> (int64 * Cstruct.t) list -> unit Lwt.t
+val verify: IO.fd Vhd_format.F.Vhd.t -> (int64 * Cstruct.t) list -> unit Lwt.t
 (** [verify vhd sectors] performs various checks on [vhd] to ensure it has
     exactly the content given by [sectors], an association list of sector
     number to 512-byte block. *)

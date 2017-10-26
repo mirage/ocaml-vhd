@@ -1,6 +1,6 @@
 (library
- ((name vhd)
-  (public_name vhd)
+ ((name vhd_format)
+  (public_name vhd-format)
   (libraries
    (cstruct
     io-page

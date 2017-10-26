@@ -6,6 +6,6 @@
       disk
       lwt
       lwt.unix
-      vhd
-      vhd-lwt))
+      vhd-format
+      vhd-format-lwt))
    (preprocess (pps (lwt.ppx)))))

@@ -14,8 +14,8 @@
 open OUnit
 open Lwt
 
-module Impl = Vhd.F.From_file(IO)
-module F = Vhd.F
+module Impl = Vhd_format.F.From_file(IO)
+module F = Vhd_format.F
 module Field = F.Vhd.Field
 open Impl
 
@@ -46,7 +46,7 @@ let fill_sector_with pattern =
   done;
   b
 
-let absolute_sector_of vhd Vhd.Patterns.{ block; sector } =
+let absolute_sector_of vhd Vhd_format.Patterns.{ block; sector } =
   let open F in
   if vhd.Vhd.header.Header.max_table_entries = 0
   then None

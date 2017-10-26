@@ -15,7 +15,7 @@ depends: [
   "lwt" {>= "2.4.3"}
   "mirage-block"
   "mirage-types-lwt" {>= "3.0.0"}
-  "vhd"
+  "vhd-format"
   "io-page-unix" {test}
   "ounit" {test}
 ]
