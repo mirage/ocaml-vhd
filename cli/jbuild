@@ -2,10 +2,5 @@
   ((name disk_to_ocaml)
    (package vhd-format-lwt)
    (libraries
-     (cstruct
-      disk
-      lwt
-      lwt.unix
-      vhd_format
-      vhd_format_lwt))
-   (preprocess (pps (lwt.ppx)))))
+     (disk
+      lwt))))
