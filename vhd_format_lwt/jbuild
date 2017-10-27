@@ -9,7 +9,6 @@
     mirage-block
     mirage-types-lwt
     oUnit
-    threads
     vhd_format))
   (c_names (blkgetsize64_stubs lseek64_stubs odirect_stubs))
  )
