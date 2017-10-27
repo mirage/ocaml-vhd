@@ -2,7 +2,7 @@
  ((name vhd_format_lwt)
   (public_name vhd-format-lwt)
   (libraries
-   (cstruct.lwt
+   (cstruct
     lwt
     lwt.preemptive
     lwt.unix

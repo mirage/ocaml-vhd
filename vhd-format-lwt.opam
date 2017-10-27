@@ -11,13 +11,13 @@ dev-repo: "git://github.com/mirage/ocaml-vhd"
 build: [[ "jbuilder" "build" "-p" name "-j" jobs ]]
 build-test: [[ "jbuilder" "runtest" ]]
 depends: [
-  "cstruct-lwt" {>= "1.9"}
+  "cstruct"
   "lwt" {>= "2.4.3"}
   "mirage-block"
   "mirage-types-lwt" {>= "3.0.0"}
+  "ounit"
   "vhd-format"
   "io-page-unix" {test}
-  "ounit" {test}
 ]
 depexts: [
  [["alpine"]["linux-headers"]]
