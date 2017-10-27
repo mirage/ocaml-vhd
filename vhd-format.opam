@@ -15,7 +15,6 @@ depends: [
   "rresult"
   "uuidm"
   "ppx_cstruct" {build}
-  "ppx_tools" {build}
 ]
 depexts: [
  [["alpine"]["linux-headers"]]
