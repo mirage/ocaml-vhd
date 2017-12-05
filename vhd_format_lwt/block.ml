@@ -13,7 +13,7 @@
  *)
 open Lwt
 
-module M = Vhd.F.From_file(IO)
+module M = Vhd_format.F.From_file(IO)
 open M
 
 type 'a io = 'a Lwt.t
@@ -31,7 +31,7 @@ type page_aligned_buffer = Cstruct.t
 type info = Mirage_block.info
 
 type t = {
-  mutable vhd: IO.fd Vhd.F.Vhd.t option;
+  mutable vhd: IO.fd Vhd_format.F.Vhd.t option;
   info: info;
   id: string;
 }
@@ -43,7 +43,7 @@ let connect path =
     (fun _ -> return false)
   >>= fun read_write ->
   Vhd_IO.openchain path read_write >>= fun vhd ->
-  let open Vhd.F in
+  let open Vhd_format.F in
   let sector_size = 512 in
   let size_sectors = Int64.div vhd.Vhd.footer.Footer.current_size 512L in
   let info = Mirage_block.{ read_write; sector_size; size_sectors } in

@@ -12,7 +12,11 @@
  * GNU Lesser General Public License for more details.
  *)
 
-val verify: IO.fd Vhd.F.Vhd.t -> (int64 * Cstruct.t) list -> unit Lwt.t
-(** [verify vhd sectors] performs various checks on [vhd] to ensure it has
-    exactly the content given by [sectors], an association list of sector
-    number to 512-byte block. *)
+(** Lwt file I/O *)
+
+val debug_io: bool ref
+
+include Vhd_format.S.FILE
+  with type 'a t = 'a Lwt.t
+
+val to_file_descr: fd -> Lwt_unix.file_descr

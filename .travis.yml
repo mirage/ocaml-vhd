@@ -8,6 +8,7 @@ env:
  global:
    - EXTRA_REMOTES="https://github.com/mirage/mirage-dev.git"
    - PACKAGE="vhd-format"
+   - PINS="vhd-format:. vhd-format-lwt:."
  matrix:
    - DISTRO=debian-stable OCAML_VERSION=4.04.2
    - DISTRO=ubuntu-16.04 OCAML_VERSION=4.03.0

@@ -57,11 +57,6 @@ type operation =
   | Write of (position * string) (* Write copies of a given string over a specific sector *)
 
 let descr_of_operation = function
-  | Create x -> Printf.sprintf "create a disk of size %Ld bytes; open it" x
-  | Snapshot -> "take a snapshot; open it"
-  | Write (p, message) -> Printf.sprintf "write \"%s\"to the %s sector of the %s block" (String.escaped message) (string_of_choice p.sector) (string_of_choice p.block)
-
-let descr_of_operation = function
   | Create x -> [
       Printf.sprintf "filename := Vhd.create(size = %Ld)" x;
       "current := Vhd.open(filename)"
