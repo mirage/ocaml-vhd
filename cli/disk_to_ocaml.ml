@@ -12,11 +12,18 @@
  * GNU Lesser General Public License for more details.
  *)
 
-(** Lwt file I/O *)
+open Lwt
 
-val debug_io: bool ref
+let main filename =
+  Disk.of_file filename >|=
+  Disk.print_ocaml stdout
 
-include S.FILE
-  with type 'a t = 'a Lwt.t
+let _ =
+  if Array.length Sys.argv <> 2 then begin
+    Printf.fprintf stderr "Usage:\n";
+    Printf.fprintf stderr "  %s <disk filename>\n" Sys.argv.(0);
+    exit 1;
+  end;
+  let filename = Sys.argv.(1) in
+  Lwt_main.run(main filename)
 
-val to_file_descr: fd -> Lwt_unix.file_descr

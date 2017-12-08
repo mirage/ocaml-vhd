@@ -1,5 +1,5 @@
 (*
- * Copyright (C) 2011-2013 Citrix Inc
+ * Copyright (C) Citrix Systems Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published
@@ -12,7 +12,6 @@
  * GNU Lesser General Public License for more details.
  *)
 
-val verify: IO.fd Vhd.F.Vhd.t -> (int64 * Cstruct.t) list -> unit Lwt.t
-(** [verify vhd sectors] performs various checks on [vhd] to ensure it has
-    exactly the content given by [sectors], an association list of sector
-    number to 512-byte block. *)
+include Mirage_types_lwt.BLOCK
+
+val connect : string -> t io

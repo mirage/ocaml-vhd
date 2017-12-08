@@ -1,5 +1,5 @@
 (*
- * Copyright (C) Citrix Systems Inc.
+ * Copyright (C) 2011-2013 Citrix Inc
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published
@@ -12,7 +12,7 @@
  * GNU Lesser General Public License for more details.
  *)
 
-include V1_LWT.BLOCK
-  with type id = string
-
-val connect : string -> [`Ok of t | `Error of error] io
+val verify: IO.fd Vhd_format.F.Vhd.t -> (int64 * Cstruct.t) list -> unit Lwt.t
+(** [verify vhd sectors] performs various checks on [vhd] to ensure it has
+    exactly the content given by [sectors], an association list of sector
+    number to 512-byte block. *)

@@ -13,55 +13,42 @@
  *)
 open Lwt
 
-module M = Vhd.F.From_file(IO)
+module M = Vhd_format.F.From_file(IO)
 open M
 
 type 'a io = 'a Lwt.t
 
-type id = string
+type error = Mirage_block.error
 
-type error = [
-  | `Unknown of string
-  | `Unimplemented
-  | `Is_read_only
-  | `Disconnected
-]
+let pp_error = Mirage_block.pp_error
+
+type write_error = Mirage_block.write_error
+
+let pp_write_error = Mirage_block.pp_write_error
 
 type page_aligned_buffer = Cstruct.t
 
-type info = {
-  read_write: bool;
-  sector_size: int;
-  size_sectors: int64;
-}
+type info = Mirage_block.info
 
 type t = {
-  mutable vhd: IO.fd Vhd.F.Vhd.t option;
+  mutable vhd: IO.fd Vhd_format.F.Vhd.t option;
   info: info;
-  id: id;
+  id: string;
 }
 
-let id t = t.id
-
 let connect path =
-  Lwt.catch
-    (fun () -> Lwt_unix.LargeFile.stat path >>= fun _ -> return true)
-    (fun _ -> return false)
-  >>= fun exists ->
-  if not exists
-  then return (`Error (`Unknown (Printf.sprintf "File does not exist: %s" path)))
-  else
+  Lwt_unix.LargeFile.stat path >>= fun _ ->
   Lwt.catch
     (fun () -> Lwt_unix.access path [ Lwt_unix.W_OK ] >>= fun () -> return true)
     (fun _ -> return false)
   >>= fun read_write ->
   Vhd_IO.openchain path read_write >>= fun vhd ->
-  let open Vhd.F in
+  let open Vhd_format.F in
   let sector_size = 512 in
   let size_sectors = Int64.div vhd.Vhd.footer.Footer.current_size 512L in
-  let info = { read_write; sector_size; size_sectors } in
+  let info = Mirage_block.{ read_write; sector_size; size_sectors } in
   let id = path in
-  return (`Ok { vhd = Some vhd; info; id })
+  return ({ vhd = Some vhd; info; id })
 
 let disconnect t = match t.vhd with
   | None -> return ()
@@ -93,7 +80,7 @@ let zero =
   buf
 
 let read t offset bufs = match t.vhd with
-  | None -> return (`Error `Disconnected)
+  | None -> return (Rresult.R.error `Disconnected)
   | Some vhd ->
     forall_sectors
       (fun offset sector ->
@@ -102,8 +89,8 @@ let read t offset bufs = match t.vhd with
           | true -> return () ) >>= fun () ->
         return ()
       ) offset bufs >>= fun () ->
-    return (`Ok ())
+    return (Rresult.R.ok ())
 
 let write t offset bufs = match t.vhd with
-  | None -> return (`Error `Disconnected)
-  | Some vhd -> Vhd_IO.write vhd offset bufs >>= fun () -> return (`Ok ())
+  | None -> return (Rresult.R.error `Disconnected)
+  | Some vhd -> Vhd_IO.write vhd offset bufs >>= fun () -> return (Rresult.R.ok ())
