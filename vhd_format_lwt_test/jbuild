@@ -7,7 +7,7 @@
       lwt
       lwt.unix
       oUnit
-      vhd_format
+      vhd-format
       vhd_format_lwt))
    (preprocess (pps (lwt.ppx)))))
 

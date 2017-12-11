@@ -1,3 +1,6 @@
+0.9.1 (2017-12-11)
+* Fix build of vhd-format-lwt package
+
 0.9.0 (2017-12-08)
 * Update to Mirage 3
 * Port to jbuilder
