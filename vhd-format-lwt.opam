@@ -9,7 +9,7 @@ homepage: "https://github.com/mirage/ocaml-vhd"
 bug-reports: "https://github.com/mirage/ocaml-vhd/issues"
 dev-repo: "git://github.com/mirage/ocaml-vhd"
 build: [[ "jbuilder" "build" "-p" name "-j" jobs ]]
-build-test: [[ "jbuilder" "runtest" ]]
+build-test: [["jbuilder" "runtest" "-p" name "-j" jobs]]
 depends: [
   "cstruct"
   "lwt" {>= "2.4.3"}
