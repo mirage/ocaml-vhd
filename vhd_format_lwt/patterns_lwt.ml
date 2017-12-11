@@ -46,7 +46,7 @@ let fill_sector_with pattern =
   done;
   b
 
-let absolute_sector_of vhd Vhd_format.Patterns.{ block; sector } =
+let absolute_sector_of vhd position { Vhd_format.Patterns.block; sector } =
   let open F in
   if vhd.Vhd.header.Header.max_table_entries = 0
   then None
