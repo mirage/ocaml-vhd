@@ -22,7 +22,7 @@ let empty = Int64Map.empty
 
 let sector_size = 512
 
-let empty_sector = String.make sector_size '\000'
+let empty_sector = Bytes.make sector_size '\000'
 
 let write t ofs cstr = Int64Map.add ofs cstr t
 let write_string t ofs s =
@@ -33,7 +33,7 @@ let write_string t ofs s =
 let of_file filename =
   let result = ref Int64Map.empty in
   Lwt_unix.openfile filename [ Unix.O_RDONLY ] 0o0 >>= fun fd ->
-  let buf = String.make sector_size '\000' in
+  let buf = Bytes.make sector_size '\000' in
   let i = ref 0L in
   let finished = ref false in
   let%lwt () =
@@ -42,7 +42,7 @@ let of_file filename =
       finished := n <> sector_size;
       if buf <> empty_sector then begin
         let sector = Cstruct.create n in
-        Cstruct.blit_from_string buf 0 sector 0 n;
+        Cstruct.blit_from_bytes buf 0 sector 0 n;
         result := Int64Map.add !i sector !result;
       end;
       i := Int64.add !i 1L;
@@ -57,9 +57,9 @@ let print_ocaml out t =
   Printf.fprintf out "  let t = ref Disk.empty in\n";
   Int64Map.iter
     (fun ofs cstr ->
-      let buf = String.make (Cstruct.len cstr) '\000' in
-      Cstruct.blit_to_string cstr 0 buf 0 (Cstruct.len cstr);
-      Printf.fprintf out "  t := Disk.write_string !t %LdL \"%s\";\n" ofs (String.escaped buf)
+      let buf = Bytes.make (Cstruct.len cstr) '\000' in
+      Cstruct.blit_to_bytes cstr 0 buf 0 (Cstruct.len cstr);
+      Printf.fprintf out "  t := Disk.write_string !t %LdL \"%s\";\n" ofs (buf |> Bytes.to_string)
     ) t;
   Printf.fprintf out "  !t\n"
 

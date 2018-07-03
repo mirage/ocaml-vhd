@@ -863,6 +863,7 @@ module BAT = struct
   }
 
   let unused = 0xffffffffl
+  let unused' = 0xffffffffL
 
   let get t i = Cstruct.BE.get_uint32 t.data (i * 4)
   let set t i j =
@@ -874,13 +875,17 @@ module BAT = struct
 
   let length t = t.max_table_entries
 
+  let int64_from_uint32 u32 =
+    let (&&&) = Int64.logand in
+    Int64.(of_int32 u32 &&& 0x0000_0000_ffff_ffffL)
+
   let fold f t initial =
     let rec loop acc i =
       if i = t.max_table_entries
       then acc
       else
-        let v = get t i in
-        if v = unused
+        let v = get t i |> int64_from_uint32 in
+        if v = unused'
         then loop acc (i + 1)
         else loop (f i v acc) (i + 1) in
     loop initial 0
@@ -1425,7 +1430,7 @@ module From_input = functor (I: S.INPUT) -> struct
     let bat = BAT.unmarshal buffer header in
     Fragment.BAT bat >+> fun () ->
     (* Create a mapping of physical sector -> virtual sector *)
-    let module M = Map.Make(Int32) in
+    let module M = Map.Make(Int64) in
     let phys_to_virt = BAT.fold (fun idx sector acc -> M.add sector idx acc) bat M.empty in
     let bitmap = alloc (Header.sizeof_bitmap header) in
     let data = alloc (1 lsl (header.Header.block_size_sectors_shift + sector_shift)) in
@@ -1435,7 +1440,7 @@ module From_input = functor (I: S.INPUT) -> struct
       else
         let s, idx = M.min_binding blocks in
         let physical_block_offset = Int64.(shift_left (of_int idx) header.Header.block_size_sectors_shift) in
-        skip_to fd Int64.(shift_left (of_int32 s) sector_shift) >>= fun () ->
+        skip_to fd Int64.(shift_left s sector_shift) >>= fun () ->
         read fd bitmap >>= fun () ->
         let bitmap = Bitmap.Partial bitmap in
         let num_sectors = 1 lsl header.Header.block_size_sectors_shift in
