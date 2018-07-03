@@ -3,6 +3,7 @@
   (public_name vhd-format)
   (libraries
    (cstruct
+    integers
     io-page
     rresult
     uuidm))

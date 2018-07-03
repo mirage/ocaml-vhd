@@ -12,6 +12,7 @@ build: [[ "jbuilder" "build" "-p" name "-j" jobs ]]
 build-test: [["jbuilder" "runtest" "-p" name "-j" jobs]]
 depends: [
   "cstruct"
+  "integers"
   "lwt" {>= "2.4.3"}
   "mirage-block"
   "mirage-types-lwt" {>= "3.0.0"}
