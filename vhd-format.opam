@@ -15,6 +15,7 @@ depends: [
   "io-page"
   "rresult"
   "uuidm"
+  "lwt_ppx"
   "jbuilder" {build}
   "ppx_cstruct" {build}
 ]

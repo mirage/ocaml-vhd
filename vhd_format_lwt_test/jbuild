@@ -9,7 +9,7 @@
       oUnit
       vhd-format
       vhd_format_lwt))
-   (preprocess (pps (lwt.ppx)))))
+   (preprocess (pps (lwt_ppx)))))
 
 (alias
   ((name   runtest)

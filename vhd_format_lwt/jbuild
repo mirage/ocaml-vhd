@@ -4,7 +4,6 @@
   (libraries
    (cstruct
     lwt
-    lwt.preemptive
     lwt.unix
     mirage-block
     mirage-types-lwt
