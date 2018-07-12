@@ -11,9 +11,11 @@ dev-repo: "git://github.com/mirage/ocaml-vhd"
 build: [[ "jbuilder" "build" "-p" name "-j" jobs ]]
 depends: [
   "cstruct" {>= "1.9"}
+  "integers"
   "io-page"
   "rresult"
   "uuidm"
+  "lwt_ppx"
   "jbuilder" {build}
   "ppx_cstruct" {build}
 ]

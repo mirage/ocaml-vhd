@@ -4,4 +4,4 @@
    (cstruct
     lwt
     lwt.unix))
-  (preprocess (pps (lwt.ppx)))))
+  (preprocess (pps (lwt_ppx)))))
