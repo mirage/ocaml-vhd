@@ -59,7 +59,8 @@ let print_ocaml out t =
     (fun ofs cstr ->
       let buf = Bytes.make (Cstruct.len cstr) '\000' in
       Cstruct.blit_to_bytes cstr 0 buf 0 (Cstruct.len cstr);
-      Printf.fprintf out "  t := Disk.write_string !t %LdL \"%s\";\n" ofs (buf |> Bytes.to_string)
+      Printf.fprintf out "  t := Disk.write_string !t %LdL \"%s\";\n"
+        ofs (buf |> Bytes.to_string |> String.escaped)
     ) t;
   Printf.fprintf out "  !t\n"
 
