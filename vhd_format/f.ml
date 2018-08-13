@@ -863,7 +863,8 @@ module BAT = struct
     mutable highest_value: int32;
   }
 
-  let unused = 0xffffffffl
+  let unused  = 0xffffffffl
+  let unused' = 0xffffffffL
 
   let get t i = Cstruct.BE.get_uint32 t.data (i * 4)
   let set t i j =
@@ -881,7 +882,7 @@ module BAT = struct
       then acc
       else
         let v = get t i |> Unsigned.UInt32.of_int32 |> Unsigned.UInt32.to_int64 in
-        if v = Int64.of_int32 unused
+        if v = unused'
         then loop acc (i + 1)
         else loop (f i v acc) (i + 1) in
     loop initial 0
