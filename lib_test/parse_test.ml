@@ -246,7 +246,8 @@ let stream_vhd filename =
 	end;*)
       tl () >>= fun x ->
       loop x in
-  openstream (Input.of_fd (Vhd_lwt.IO.to_file_descr fd)) >>= fun stream ->
+  Vhd_lwt.IO.get_file_size filename >>= fun size ->
+  openstream (Some size) (Input.of_fd (Vhd_lwt.IO.to_file_descr fd)) >>= fun stream ->
   loop stream >>= fun () -> Vhd_lwt.IO.close fd
 
 let stream_test state =
