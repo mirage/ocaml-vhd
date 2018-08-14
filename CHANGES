@@ -1,3 +1,11 @@
+0.10.0 (2018-08-14)
+* support VDI larger than 1TB by moving to Int64
+* make code safe-string compatible
+* fix Travis CI
+* locate VHD footer based on file size (when available). This introduces
+  an interface change in F.openstream.
+* reduce compiler warnings
+
 0.9.2 (2018-02-27)
 * Fix exception handling in lwt really_{read,write}
 * Add missing jbuilder build dependency in the opam file

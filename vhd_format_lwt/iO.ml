@@ -53,11 +53,11 @@ module Fd = struct
     let lock = Lwt_mutex.create () in
     return { fd; filename; lock }
 
-  let fsync { fd = fd } =
+  let fsync { fd = fd; _ } =
     let fd' = Lwt_unix.unix_file_descr fd in
     File.fsync fd'
 
-  let size_of_file t =
+  let _size_of_file t =
     Lwt_unix.LargeFile.fstat t.fd >>= fun s ->
     return s.Lwt_unix.LargeFile.st_size
 
@@ -78,7 +78,7 @@ module Fd = struct
       raise (Not_sector_aligned n)
     end
 
-  let really_read { fd; filename; lock } offset (* in file *) buf =
+  let really_read { fd; lock; _ } offset (* in file *) buf =
     (* All reads and writes should be sector-aligned *)
     assert_sector_aligned offset;
     assert_sector_aligned (Int64.of_int buf.Cstruct.off);
@@ -103,7 +103,7 @@ module Fd = struct
         )
       )
 
-  let really_write { fd; filename; lock } offset (* in file *) buf =
+  let really_write { fd; lock; _ } offset (* in file *) buf =
     (* All reads and writes should be sector-aligned *)
     assert_sector_aligned offset;
     assert_sector_aligned (Int64.of_int buf.Cstruct.off);
@@ -128,9 +128,9 @@ module Fd = struct
         )
       )
 
-  let lseek { fd } ofs cmd = Lwt_unix.LargeFile.lseek fd ofs cmd
-  let lseek_data { fd } ofs = Lwt_preemptive.detach (File.lseek_data (Lwt_unix.unix_file_descr fd)) ofs
-  let lseek_hole { fd } ofs = Lwt_preemptive.detach (File.lseek_hole (Lwt_unix.unix_file_descr fd)) ofs
+  let lseek { fd; _ } ofs cmd = Lwt_unix.LargeFile.lseek fd ofs cmd
+  let lseek_data { fd; _ } ofs = Lwt_preemptive.detach (File.lseek_data (Lwt_unix.unix_file_descr fd)) ofs
+  let lseek_hole { fd; _ } ofs = Lwt_preemptive.detach (File.lseek_hole (Lwt_unix.unix_file_descr fd)) ofs
 end
 
 module IO = struct

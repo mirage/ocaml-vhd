@@ -76,9 +76,9 @@ let mib = Int64.(1024L ** kib)
 let gib = Int64.(1024L ** mib)
 let max_disk_size = Int64.(2040L ** gib)
 
-let kib_shift = 10
-let mib_shift = 20
-let gib_shift = 30
+let _kib_shift = 10
+let _mib_shift = 20
+let _gib_shift = 30
 
 let blank_uuid = match Uuidm.of_bytes (String.make 16 '\000') with
   | Some x -> x
@@ -285,7 +285,7 @@ module UTF16 = struct
 
   let unmarshal (buf: Cstruct.t) len =
     (* Check if there's a byte order marker *)
-    let bigendian, pos, max = match Cstruct.BE.get_uint16 buf 0 with
+    let _bigendian, pos, max = match Cstruct.BE.get_uint16 buf 0 with
       | 0xfeff -> true,  2, (len / 2 - 1)
       | 0xfffe -> false, 2, (len / 2 - 1)
       | _      -> true,  0, (len / 2) in
@@ -299,7 +299,7 @@ module UTF16 = struct
         else strlen (acc + 1) (i + 2) in
 
     let max = strlen 0 0 in
-    let string = Array.create max 0 in
+    let string = Array.make max 0 in
 
     let rec inner ofs n =
       if n >= max then string
@@ -743,7 +743,7 @@ module Header = struct
     Printf.printf "parent_time_stamp   : %lu\n" t.parent_time_stamp;
     let s = match UTF16.to_utf8 t.parent_unicode_name with
       | Ok s -> s
-      | Error e -> Printf.sprintf "<Unable to decode UTF-16: %s>" (String.concat " " (List.map (fun x -> Printf.sprintf "%02x" x) (Array.to_list t.parent_unicode_name))) in
+      | Error _e -> Printf.sprintf "<Unable to decode UTF-16: %s>" (String.concat " " (List.map (fun x -> Printf.sprintf "%02x" x) (Array.to_list t.parent_unicode_name))) in
     Printf.printf "parent_unicode_name : '%s' (%d bytes)\n" s (Array.length t.parent_unicode_name);
     Printf.printf "parent_locators     : %s\n" 
       (String.concat "\n                      " (List.map Parent_locator.to_string (Array.to_list t.parent_locators)))
@@ -833,7 +833,7 @@ module Header = struct
     let parent_time_stamp = get_header_parent_time_stamp buf in
     UTF16.unmarshal (Cstruct.sub buf unicode_offset 512) 512 >>= fun parent_unicode_name ->
     let parent_locators_buf = Cstruct.shift buf (unicode_offset + 512) in
-    let parent_locators = Array.create 8 Parent_locator.null in
+    let parent_locators = Array.make 8 Parent_locator.null in
     let rec loop = function
       | 8 -> R.ok ()
       | i ->
@@ -1067,7 +1067,7 @@ module Bitmap = struct
     let rec loop updates sector remaining = match updates, remaining with
     | None, 0L -> None
     | Some (offset, bufs), 0L -> Some (offset, List.rev bufs)
-    | _, n ->
+    | _, _n ->
       let sector' = Int64.succ sector in
       let remaining' = Int64.pred remaining in
       begin match updates, set t sector with
@@ -1518,7 +1518,6 @@ module From_file = functor(F: S.FILE) -> struct
     else unaligned_really_write fd (offset ++ (of_int useful_bytes_to_write)) (Cstruct.shift buffer useful_bytes_to_write)
 
   module Footer_IO = struct
-    open Footer
 
     let read fd pos =
       let buf = Memory.alloc Footer.sizeof in
@@ -1584,7 +1583,6 @@ module From_file = functor(F: S.FILE) -> struct
         | 8 -> return ()
         | n ->
           let p = t.parent_locators.(n) in
-          let open Parent_locator in
           Parent_locator_IO.read fd p >>= fun p ->
           t.parent_locators.(n) <- p;
           read_parent_locator (n + 1) in
@@ -1598,7 +1596,6 @@ module From_file = functor(F: S.FILE) -> struct
         | 8 -> return ()
         | n ->
           let p = t.parent_locators.(n) in
-          let open Parent_locator in
           Parent_locator_IO.write fd p >>= fun () ->
           write_parent_locator (n + 1) in
       really_write fd pos buf >>= fun () ->
@@ -1620,7 +1617,6 @@ module From_file = functor(F: S.FILE) -> struct
   end
 
   module Batmap_IO = struct
-    open Batmap
 
     let read fd (header: Header.t) =
       let buf = Memory.alloc Batmap_header.sizeof in
@@ -1899,7 +1895,7 @@ module From_file = functor(F: S.FILE) -> struct
 
     let write t offset bufs =
       let block_size_in_sectors = 1 lsl t.Vhd.header.Header.block_size_sectors_shift in
-      let bitmap_size = Header.sizeof_bitmap t.Vhd.header in
+      let _bitmap_size = Header.sizeof_bitmap t.Vhd.header in
       (* quantise the (offset, buffer) into within-block chunks *)
 
       (* We permute data and bitmap sector writes, but only flush the BAT at the end.
@@ -1990,7 +1986,6 @@ module From_file = functor(F: S.FILE) -> struct
   end
 
   include Stream(F)
-  open Element
 
   (* Test whether a block is in any BAT in the path to the root. If so then we will
      look up all sectors. *)
@@ -2007,10 +2002,10 @@ module From_file = functor(F: S.FILE) -> struct
     | End, None -> return End
     | End, Some x -> return (Cons(x, fun () -> return End))
     | Cons(`Sectors s, next), None -> return(Cons(`Sectors s, fun () -> coalesce_request None (next ())))
-    | Cons(`Sectors _, next), Some x -> return(Cons(x, fun () -> coalesce_request None s))
+    | Cons(`Sectors _, _next), Some x -> return(Cons(x, fun () -> coalesce_request None s))
     | Cons(`Empty n, next), None -> coalesce_request (Some(`Empty n)) (next ())
     | Cons(`Empty n, next), Some(`Empty m) -> coalesce_request (Some(`Empty (n ++ m))) (next ())
-    | Cons(`Empty n, next), Some x -> return (Cons(x, fun () -> coalesce_request None s))
+    | Cons(`Empty _n, _next), Some x -> return (Cons(x, fun () -> coalesce_request None s))
     | Cons(`Copy(h, ofs, len), next), None -> coalesce_request (Some (`Copy(h, ofs, len))) (next ())
     | Cons(`Copy(h, ofs, len), next), Some(`Copy(h', ofs', len')) ->
       if ofs ++ len = ofs' && h == h'
@@ -2018,7 +2013,7 @@ module From_file = functor(F: S.FILE) -> struct
       else if ofs' ++ len' = ofs && h == h'
       then coalesce_request (Some(`Copy(h, ofs', len ++ len'))) (next ())
       else return (Cons(`Copy(h', ofs', len'), fun () -> coalesce_request None s))
-    | Cons(`Copy(h, ofs, len), next), Some x -> return(Cons(x, fun () -> coalesce_request None s))
+    | Cons(`Copy(_h, _ofs, _len), _next), Some x -> return(Cons(x, fun () -> coalesce_request None s))
 
   let twomib_bytes = 2 * 1024 * 1024
   let twomib_sectors = twomib_bytes / 512
@@ -2093,7 +2088,7 @@ module From_file = functor(F: S.FILE) -> struct
              no-one else seems to really care to check) *)
           type key = Uuidm.t * string
           type t = (key * BAT.t)
-          let to_string ((uuid, filename), _) = Printf.sprintf "%s:%s" (Uuidm.to_string uuid) filename
+          let _to_string ((uuid, filename), _) = Printf.sprintf "%s:%s" (Uuidm.to_string uuid) filename
           let compare x y = compare (fst x) (fst y)
         end in
         let module BATS = Set.Make(E) in
@@ -2240,7 +2235,7 @@ module From_file = functor(F: S.FILE) -> struct
       checksum = Checksum.of_cstruct batmap;
       marker = 0;
     };
-    let rec write_sectors buf andthen =
+    let write_sectors buf andthen =
       return(Cons(`Sectors buf, andthen)) in
 
     let rec block i andthen =
@@ -2375,7 +2370,7 @@ module From_file = functor(F: S.FILE) -> struct
        loop 0
        >>= fun () ->
 
-       let rec write_sectors buf from andthen =
+       let write_sectors buf _from andthen =
          return(Cons(`Sectors buf, andthen)) in
        let rec block i andthen =
          if i >= blocks

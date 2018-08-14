@@ -39,14 +39,14 @@ let make_new_filename =
     incr counter;
     disk_name_stem ^ (string_of_int this) ^ disk_suffix
 
-let fill_sector_with pattern =
+let _fill_sector_with pattern =
   let b = Memory.alloc 512 in
   for i = 0 to 511 do
     Cstruct.set_char b i (pattern.[i mod (String.length pattern)])
   done;
   b
 
-let absolute_sector_of vhd position { Vhd_format.Patterns.block; sector } =
+let _absolute_sector_of vhd _position { Vhd_format.Patterns.block; sector } =
   let open F in
   if vhd.Vhd.header.Header.max_table_entries = 0
   then None
