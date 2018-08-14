@@ -1470,9 +1470,7 @@ module From_input = functor (I: S.INPUT) -> struct
     | None -> return ()
     | Some s ->
         let (&&&)  = Int64.logand in
-        let (~~~)  = Int64.lognot in
-        let sub1 n = Int64.(sub n 1L) in
-        let footer_offset = Int64.((sub1 s) &&& (~~~ 0b1_1111_1111L)) in
+        let footer_offset = Int64.(sub s 1L &&& lognot 0b1_1111_1111L) in
         (* offset is last 512-byte-aligned block in the file *)
         skip_to fd footer_offset) >>= fun () ->
     read fd buffer >>= fun () ->
