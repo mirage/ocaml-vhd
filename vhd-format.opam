@@ -22,4 +22,4 @@ depends: [
 depexts: [
  [["alpine"]["linux-headers"]]
 ]
-available: [ (os = "linux" | os = "darwin") & ocaml-version >= "4.02.3" ]
+available: [ (os = "linux" | os = "macos") & ocaml-version >= "4.02.3" ]
