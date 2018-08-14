@@ -375,7 +375,7 @@ module From_input : functor (I: S.INPUT) -> sig
     | End
   (** a lazy list *)
 
-  val openstream : fd -> Fragment.t ll t
+  val openstream : int64 option -> fd -> Fragment.t ll t
   (** produce a stream of Fragment.ts from a vhd stream, using constant space *)
 end
 
