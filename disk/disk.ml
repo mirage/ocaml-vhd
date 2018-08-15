@@ -31,26 +31,22 @@ let write_string t ofs s =
     write t ofs cstr
 
 let of_file filename =
-  let result = ref Int64Map.empty in
   Lwt_unix.openfile filename [ Unix.O_RDONLY ] 0o0 >>= fun fd ->
   let buf = Bytes.make sector_size '\000' in
-  let i = ref 0L in
-  let rec loop () =
+  let rec loop i result =
     Lwt_unix.read fd buf 0 sector_size >>= fun n ->
     let finished = n <> sector_size in
-    if buf <> empty_sector then begin
-      let sector = Cstruct.create n in
-      Cstruct.blit_from_bytes buf 0 sector 0 n;
-      result := Int64Map.add !i sector !result;
-    end;
-    i := Int64.add !i 1L;
-    if finished then
-      Lwt.return_unit
-    else loop ()
+    let result = if buf <> empty_sector then begin
+        let sector = Cstruct.create n in
+        Cstruct.blit_from_bytes buf 0 sector 0 n;
+        Int64Map.add i sector result
+      end else result in
+    if finished then Lwt.return result
+    else loop (Int64.add i 1L) result
   in
-  loop () >>= fun () ->
+  loop 0L Int64Map.empty >>= fun result ->
   Lwt_unix.close fd >>= fun () ->
-  return (!result)
+  return result
 
 let print_ocaml out t =
   Printf.fprintf out "let disk =\n";
