@@ -18,8 +18,6 @@ let (>>=) = Lwt.(>>=)
 let return = Lwt.return
 let fail = Lwt.fail
 
-open Lwt
-
 type fd = {
   fd: Lwt_unix.file_descr;
   mutable offset: int64;
