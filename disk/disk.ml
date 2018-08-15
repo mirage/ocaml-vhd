@@ -35,21 +35,21 @@ let of_file filename =
   Lwt_unix.openfile filename [ Unix.O_RDONLY ] 0o0 >>= fun fd ->
   let buf = Bytes.make sector_size '\000' in
   let i = ref 0L in
-  let finished = ref false in
-  let%lwt () =
-    while%lwt not !finished do
-      let%lwt n = Lwt_unix.read fd buf 0 sector_size in
-      finished := n <> sector_size;
-      if buf <> empty_sector then begin
-        let sector = Cstruct.create n in
-        Cstruct.blit_from_bytes buf 0 sector 0 n;
-        result := Int64Map.add !i sector !result;
-      end;
-      i := Int64.add !i 1L;
+  let rec loop () =
+    Lwt_unix.read fd buf 0 sector_size >>= fun n ->
+    let finished = n <> sector_size in
+    if buf <> empty_sector then begin
+      let sector = Cstruct.create n in
+      Cstruct.blit_from_bytes buf 0 sector 0 n;
+      result := Int64Map.add !i sector !result;
+    end;
+    i := Int64.add !i 1L;
+    if finished then
       Lwt.return_unit
-    done 
+    else loop ()
   in
-  let%lwt () = Lwt_unix.close fd in
+  loop () >>= fun () ->
+  Lwt_unix.close fd >>= fun () ->
   return (!result)
 
 let print_ocaml out t =

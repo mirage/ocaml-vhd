@@ -3,5 +3,4 @@
   (libraries
    (cstruct
     lwt
-    lwt.unix))
-  (preprocess (pps (lwt_ppx)))))
+    lwt.unix))))
