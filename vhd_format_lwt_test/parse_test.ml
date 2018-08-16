@@ -12,7 +12,6 @@
  * GNU Lesser General Public License for more details.
  *)
 open OUnit
-open Lwt
 
 open Vhd_format.Patterns
 module Impl = Vhd_format.F.From_file(Vhd_format_lwt.IO)
@@ -231,7 +230,7 @@ let stream_vhd filename =
   Vhd_format_lwt.IO.openfile filename false >>= fun fd ->
   let rec loop = function
     | End -> return ()
-    | Cons (hd, tl) ->
+    | Cons (_hd, tl) ->
 (*      begin match hd with
       | Fragment.Header x ->
         Printf.printf "Header\n%!"

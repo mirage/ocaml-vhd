@@ -18,8 +18,6 @@ let (>>=) = Lwt.(>>=)
 let return = Lwt.return
 let fail = Lwt.fail
 
-open Lwt
-
 type fd = {
   fd: Lwt_unix.file_descr;
   mutable offset: int64;
@@ -49,7 +47,7 @@ let complete name offset op fd buffer =
   else return ()
 
 let read fd buf =
-  let%lwt () = complete "read" (Some fd.offset) Lwt_bytes.read fd.fd buf in
+  complete "read" (Some fd.offset) Lwt_bytes.read fd.fd buf >>= fun () ->
   fd.offset <- Int64.(add fd.offset (of_int (Cstruct.len buf)));
   Lwt.return_unit
 
@@ -61,7 +59,7 @@ let skip_to fd n =
     else
       let this = Int64.(to_int (min remaining (of_int (Cstruct.len buf)))) in
       let frag = Cstruct.sub buf 0 this in
-      let%lwt () = complete "skip" (Some fd.offset) Lwt_bytes.read fd.fd frag in
+      complete "skip" (Some fd.offset) Lwt_bytes.read fd.fd frag >>= fun () ->
       fd.offset <- Int64.(add fd.offset (of_int this));
-      loop Int64.(sub remaining (of_int this)) in  
+      loop Int64.(sub remaining (of_int this)) in
   loop Int64.(sub n fd.offset)
