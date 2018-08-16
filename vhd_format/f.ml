@@ -876,12 +876,16 @@ module BAT = struct
 
   let length t = t.max_table_entries
 
+  let int64_from_uint32 u32 =
+    let (&&&) = Int64.logand in
+    Int64.(of_int32 u32 &&& 0x0000_0000_ffff_ffffL)
+
   let fold f t initial =
     let rec loop acc i =
       if i = t.max_table_entries
       then acc
       else
-        let v = get t i |> Unsigned.UInt32.of_int32 |> Unsigned.UInt32.to_int64 in
+        let v = get t i |> int64_from_uint32 in
         if v = unused'
         then loop acc (i + 1)
         else loop (f i v acc) (i + 1) in
