@@ -25,5 +25,5 @@ depexts: [
  [["alpine"]["linux-headers"]]
 ]
 dev-repo: "git://github.com/djs55/ocaml-vhd"
-available: [ (os = "linux" | os = "darwin") & ocaml-version >= "4.02.3" ]
+available: [ (os = "linux" | os = "macos") & ocaml-version >= "4.02.3" ]
 install: [make "install"]
