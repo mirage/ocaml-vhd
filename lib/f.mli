@@ -231,7 +231,7 @@ module BAT : sig
   val set: t -> int -> int32 -> unit
   (** [set t i j] sets the [i]th entry to [j] *)
 
-  val fold: (int -> int32 -> 'a -> 'a) -> t -> 'a -> 'a
+  val fold: (int -> int64 -> 'a -> 'a) -> t -> 'a -> 'a
   (** [fold f t initial] folds [f] across all valid entries *)
 
   val length: t -> int

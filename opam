@@ -11,9 +11,9 @@ build: make
 remove: [[make "uninstall"]]
 depends: [
   "ocamlfind"
-  "lwt" {>= "2.4.3"}
-  "cstruct" {>= "1.9"}
-  "mirage-types-lwt"
+  "lwt"     {>= "2.4.3"   & <= "2.6.0" }
+  "cstruct" {>= "1.9"     & <= "2.3.0" }
+  "mirage-types-lwt"      { <= "2.8.0" }
   "ipaddr"
   "io-page"
   "uuidm"
@@ -25,5 +25,5 @@ depexts: [
  [["alpine"]["linux-headers"]]
 ]
 dev-repo: "git://github.com/djs55/ocaml-vhd"
-available: [ (os = "linux" | os = "darwin") & ocaml-version >= "4.02.3" ]
+available: [ (os = "linux" | os = "macos") & ocaml-version >= "4.02.3" ]
 install: [make "install"]
