@@ -22,7 +22,7 @@ build: [
   ["dune" "runtest" "-p" name "-j" jobs] {with-test}
 ]
 depexts: ["linux-headers"] {os-distribution = "alpine"}
-dev-repo: "git://github.com/mirage/ocaml-vhd"
+dev-repo: "git+https://github.com/mirage/ocaml-vhd.git"
 synopsis: "Lwt interface to read/write VHD format data"
 description: """
 A pure OCaml library to read and write

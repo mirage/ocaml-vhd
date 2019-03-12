@@ -17,7 +17,7 @@ depends: [
 available: os = "linux" | os = "macos"
 build: ["dune" "build" "-p" name "-j" jobs]
 depexts: ["linux-headers"] {os-distribution = "alpine"}
-dev-repo: "git://github.com/mirage/ocaml-vhd"
+dev-repo: "git+https://github.com/mirage/ocaml-vhd.git"
 synopsis: "Pure OCaml library to read/write VHD format data"
 description: """
 A pure OCaml library to read and write
