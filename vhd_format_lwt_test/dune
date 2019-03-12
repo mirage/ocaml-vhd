@@ -5,6 +5,7 @@
 
 (alias
  (name runtest)
+ (package vhd-format-lwt)
  (deps
   (:< parse_test.exe))
  (action
