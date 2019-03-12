@@ -1,3 +1,8 @@
+v0.11.0 (2019-03-11)
+* Port to dune/dune-release (@avsm)
+* Use modern cstruct ppx name (@avsm)
+* Update Travis build matrix (@avsm)
+
 0.10.0 (2018-08-14)
 * support VDI larger than 1TB by moving to Int64
 * make code safe-string compatible

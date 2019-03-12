@@ -6,9 +6,10 @@ services:
 sudo: false
 env:
  global:
+   - PACKAGE=vhd-format
    - PINS="vhd-format:. vhd-format-lwt:."
  matrix:
-   - PACKAGE=vhd-format DISTRO=debian-stable OCAML_VERSION=4.04.2
-   - PACKAGE=vhd-format-lwt DISTRO=ubuntu-16.04 OCAML_VERSION=4.03.0
-   - PACKAGE=vhd-format-lwt DISTRO=debian-stable OCAML_VERSION=4.04.2
-   - PACKAGE=vhd-format-lwt DISTRO=alpine OCAML_VERSION=4.06.0
+   - DISTRO=debian-stable OCAML_VERSION=4.03
+   - DISTRO=ubuntu OCAML_VERSION=4.04
+   - DISTRO=debian-stable OCAML_VERSION=4.05
+   - DISTRO=alpine OCAML_VERSION=4.07
