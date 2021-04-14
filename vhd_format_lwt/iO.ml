@@ -31,7 +31,7 @@ let complete name offset op fd buffer =
   then Printf.fprintf stderr "%s offset=%s buffer = [%s](%d)\n%!"
     name (match offset with Some x -> Int64.to_string x | None -> "None")
     (if Cstruct.len buffer > 16
-     then (String.escaped (Cstruct.(to_string (sub buffer 0 13)))) ^ "..."
+     then (String.escaped (Cstruct.to_string (Cstruct.sub buffer 0 13))) ^ "..."
      else (String.escaped (Cstruct.to_string buffer)))
     (Cstruct.len buffer);
   if n = 0 && len <> 0
