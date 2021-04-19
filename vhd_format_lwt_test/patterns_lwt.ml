@@ -14,6 +14,8 @@
 open OUnit
 open Lwt
 
+module IO = Vhd_format_lwt.IO
+
 module Impl = Vhd_format.F.From_file(IO)
 module F = Vhd_format.F
 module Field = F.Vhd.Field
