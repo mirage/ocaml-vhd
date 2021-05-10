@@ -18,7 +18,7 @@ module Impl = Vhd_format.F.From_file(Vhd_format_lwt.IO)
 open Impl
 open Vhd_format.F
 open Vhd_format_lwt.IO
-open Vhd_format_lwt.Patterns_lwt
+open Patterns_lwt
 
 let cstruct_to_string c = String.escaped (Cstruct.to_string c)
 
