@@ -1,6 +1,8 @@
 ## v0.12.1 (2021-05-10)
 * Upgrade to `cstruct.6.0.0` (@psafont, #67)
 * Move `patterns_lwt` out of `vhd_format_lwt` (@psafont, #67)
+* Upgrade the code base with `mirage-block` (`mirage-types-lwt` is deprecated)
+  (@dinosaure, #70)
 
 ## v0.12.0 (2019-03-11)
 * Port to dune/dune-release (@avsm)
