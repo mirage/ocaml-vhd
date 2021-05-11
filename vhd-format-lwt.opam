@@ -10,7 +10,6 @@ depends: [
   "cstruct" {< "7.0.0"}
   "lwt" {>= "3.2.0"}
   "mirage-block" {>= "2.0.1"}
-  "mirage-types-lwt" {>= "3.7.1"}
   "ounit" {with-test}
   "vhd-format"
   "io-page-unix" {with-test}
