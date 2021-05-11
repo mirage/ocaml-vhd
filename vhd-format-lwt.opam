@@ -9,8 +9,7 @@ depends: [
   "ocaml" {>= "4.02.3"}
   "cstruct" {< "7.0.0"}
   "lwt" {>= "3.2.0"}
-  "mirage-block" {< "2.0.0"}
-  "mirage-types-lwt" {>= "3.0.0" & < "3.7.0"}
+  "mirage-block" {>= "2.0.1"}
   "ounit" {with-test}
   "vhd-format"
   "io-page-unix" {with-test}

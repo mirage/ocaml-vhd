@@ -16,8 +16,6 @@ open Lwt
 module M = Vhd_format.F.From_file(IO)
 open M
 
-type 'a io = 'a Lwt.t
-
 type error = Mirage_block.error
 
 let pp_error = Mirage_block.pp_error
@@ -25,8 +23,6 @@ let pp_error = Mirage_block.pp_error
 type write_error = Mirage_block.write_error
 
 let pp_write_error = Mirage_block.pp_write_error
-
-type page_aligned_buffer = Cstruct.t
 
 type info = Mirage_block.info
 
