@@ -1514,7 +1514,7 @@ module From_file = functor(F: S.FILE) -> struct
     let write_this_time = max adjusted_len 512L in
     let remaining_to_write = adjusted_len -- write_this_time in
 
-    let useful_bytes_to_write = min (Cstruct.len buffer) (to_int (write_this_time -- offset ++ sector_start)) in
+    let useful_bytes_to_write = Stdlib.min (Cstruct.len buffer) (to_int (write_this_time -- offset ++ sector_start)) in
     Cstruct.blit buffer 0 current (to_int (offset -- sector_start)) useful_bytes_to_write;
     really_write fd sector_start current >>= fun () ->
     if remaining_to_write <= 0L
