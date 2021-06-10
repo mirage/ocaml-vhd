@@ -11,6 +11,7 @@ depends: [
   "io-page"
   "rresult" {>= "0.2.0"}
   "uuidm"
+  "stdlib-shims"
   "dune" {>= "1.0"}
   "ppx_cstruct" {build & >= "3.0.0"}
 ]
