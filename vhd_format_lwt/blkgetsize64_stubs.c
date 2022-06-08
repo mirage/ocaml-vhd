@@ -29,6 +29,7 @@
 #include <caml/fail.h>
 #include <caml/callback.h>
 #include <caml/bigarray.h>
+#include <caml/unixsupport.h>
 
 #ifdef __linux__
 # include <linux/fs.h>
@@ -37,10 +38,6 @@
 # include <sys/ioctl.h>
 # include <sys/disk.h>
 #endif
-
-/* ocaml/ocaml/unixsupport.c */
-extern void uerror(char *cmdname, value cmdarg);
-#define Nothing ((value) 0)
 
 #define NOT_IMPLEMENTED (-1)
 #define TRIED_AND_FAILED (1)

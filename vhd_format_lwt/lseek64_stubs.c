@@ -30,14 +30,11 @@
 #include <caml/fail.h>
 #include <caml/callback.h>
 #include <caml/bigarray.h>
+#include <caml/unixsupport.h>
 
 #ifdef __linux__
 # include <linux/fs.h>
 #endif
-
-/* ocaml/ocaml/unixsupport.c */
-extern void uerror(char *cmdname, value cmdarg);
-#define Nothing ((value) 0)
 
 CAMLprim value stub_lseek64_data(value fd, value ofs) {
   CAMLparam2(fd, ofs);
