@@ -350,7 +350,7 @@ module Footer = struct
     ?(creator_host_os = Host_OS.Other 0l)
     ~current_size ?original_size
     ~disk_type
-    ?(uid = Uuidm.create `V4) ?(saved_state = false) () =
+    ?(uid = Uuidm.v `V4) ?(saved_state = false) () =
   let original_size = match original_size with
     | None -> current_size
     | Some x -> x in
@@ -1672,7 +1672,7 @@ module From_file = functor(F: S.FILE) -> struct
       return t
 
     let create_dynamic ~filename ~size
-      ?(uuid = Uuidm.create `V4)
+      ?(uuid = Uuidm.v `V4)
       ?(saved_state=false)
       ?(features=[]) () =
 
@@ -1723,7 +1723,7 @@ module From_file = functor(F: S.FILE) -> struct
 
     let create_difference ~filename ~parent
       ?(relative_path = true)
-      ?(uuid=Uuidm.create `V4)
+      ?(uuid=Uuidm.v `V4)
       ?(saved_state=false)
       ?(features=[]) () =
 

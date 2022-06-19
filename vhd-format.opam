@@ -2,16 +2,16 @@ opam-version: "2.0"
 maintainer: "dave@recoil.org"
 authors: ["Dave Scott" "Jon Ludlam"]
 tags: ["org:mirage" "org:xapi-project"]
-license: "LGPL-2.1only WITH OCaml-LGPL-linking-exception"
+license: "LGPL-2.1-only WITH OCaml-LGPL-linking-exception"
 homepage: "https://github.com/mirage/ocaml-vhd"
 doc: "https://mirage.github.io/ocaml-vhd/"
 bug-reports: "https://github.com/mirage/ocaml-vhd/issues"
 depends: [
   "ocaml" {>= "4.03.0"}
-  "cstruct" {>= "1.9"}
+  "cstruct" {>= "1.9" & < "6.0.0"}
   "io-page"
   "rresult" {>= "0.3.0"}
-  "uuidm"
+  "uuidm" {>= "0.9.6"}
   "stdlib-shims"
   "dune" {>= "1.0"}
   "ppx_cstruct" {build & >= "3.0.0"}
