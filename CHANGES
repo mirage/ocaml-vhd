@@ -1,3 +1,10 @@
+## v0.12.3 (2022-06-19)
+* Lint opam file (@kit-ty-kate, #72)
+* Use ounit2 (@Alessandro-Barbieri, #73)
+* Use unixsupport.h for OCaml 5.0 compat (@dra27, #74)
+* Set upper bounds on cstruct (@djs55, #75)
+* Set lower bound on uuidm (@djs55, #75)
+
 ## v0.12.2 (2021-06-25)
 * Add support for OCaml 4.13 (@kit-ty-kate, @dinosaure, #71)
 
