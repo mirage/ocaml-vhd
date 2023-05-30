@@ -8,12 +8,15 @@ doc: "https://mirage.github.io/ocaml-vhd/"
 bug-reports: "https://github.com/mirage/ocaml-vhd/issues"
 depends: [
   "ocaml" {>= "4.02.3"}
+  "bigarray-compat" {>= "1.1.0"}
   "cstruct" {>= "6.0.0"}
+  "cstruct-lwt"
   "lwt" {>= "3.2.0"}
-  "mirage-block" {>= "2.0.1"}
+  "mirage-block" {>= "3.0.0"}
   "ounit2" {with-test}
-  "vhd-format"
-  "dune" {>= "1.0"}
+  "rresult" {>= "0.7.0"}
+  "vhd-format" {= version}
+  "dune" {>= "2.0"}
   "io-page" {with-test & >= "2.4.0"}
 ]
 available: os = "linux" | os = "macos"
