@@ -275,12 +275,6 @@ let all_program_tests = List.map (fun p ->
 ) programs
 
 let _ =
-  let verbose = ref false in
-  Arg.parse [
-    "-verbose", Arg.Unit (fun _ -> verbose := true), "Run in verbose mode";
-  ] (fun x -> Printf.fprintf stderr "Ignoring argument: %s" x)
-    "Test vhd parser";
-
   let check_empty_disk size =
     Printf.sprintf "check_empty_disk_%Ld" size
     >:: (fun () -> Lwt_main.run (check_empty_disk size)) in
@@ -311,5 +305,4 @@ let _ =
        @ (List.map check_resize sizes)
        @ (List.map check_empty_snapshot sizes)
        @ all_program_tests in
-  run_test_tt ~verbose:!verbose suite
-
+  run_test_tt_main suite
