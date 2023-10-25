@@ -18,6 +18,12 @@
 let sector_size = 512
 let sector_shift = 9
 
+let mib n =
+  let ( ** ) = Int64.mul in
+  Int64.(1024L ** 1024L ** of_int n)
+
+let sync_limit = mib 4
+
 exception Cstruct_differ
 
 let cstruct_equal a b =
@@ -2000,7 +2006,11 @@ module From_file = functor(F: S.FILE) -> struct
     | false, Some parent -> in_any_bat parent i
     | false, None -> false
 
-  let rec coalesce_request acc s =
+    (* The coalesced_sectors variable accumulates the number of bytes that have
+       been coalesced so far. It is made optional because we only use it when we
+       continuously match with one pattern, i.e. the pattern where we coalesce
+       consecutive sectors, and default it to 1 when we are not coalescing. *)
+    let rec coalesce_request ?(coalesced_sectors = 1L) acc s =
     let open Int64 in
     s >>= fun next -> match next, acc with
     | End, None -> return End
@@ -2011,11 +2021,16 @@ module From_file = functor(F: S.FILE) -> struct
     | Cons(`Empty n, next), Some(`Empty m) -> coalesce_request (Some(`Empty (n ++ m))) (next ())
     | Cons(`Empty _n, _next), Some x -> return (Cons(x, fun () -> coalesce_request None s))
     | Cons(`Copy(h, ofs, len), next), None -> coalesce_request (Some (`Copy(h, ofs, len))) (next ())
-    | Cons(`Copy(h, ofs, len), next), Some(`Copy(h', ofs', len')) ->
-      if ofs ++ len = ofs' && h == h'
-      then coalesce_request (Some(`Copy(h, ofs, len ++ len'))) (next ())
-      else if ofs' ++ len' = ofs && h == h'
-      then coalesce_request (Some(`Copy(h, ofs', len ++ len'))) (next ())
+    | Cons (`Copy (h, ofs, len), next), Some (`Copy (h', ofs', len'))
+      when coalesced_sectors ** Int64.of_int sector_size <= sync_limit ->
+      if ofs ++ len = ofs' && h == h' then
+        coalesce_request ~coalesced_sectors:(coalesced_sectors ++ 1L)
+          (Some (`Copy (h, ofs, len ++ len')))
+          (next ())
+      else if ofs' ++ len' = ofs && h == h' then
+        coalesce_request ~coalesced_sectors:(coalesced_sectors ++ 1L)
+          (Some (`Copy (h, ofs', len ++ len')))
+          (next ())
       else return (Cons(`Copy(h', ofs', len'), fun () -> coalesce_request None s))
     | Cons(`Copy(_h, _ofs, _len), _next), Some x -> return(Cons(x, fun () -> coalesce_request None s))
 
