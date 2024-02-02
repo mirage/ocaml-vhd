@@ -31,7 +31,7 @@ module Memory = struct
       Cstruct.sub pages 0 bytes
 end
 
-let disk_name_stem = "/tmp/dynamic."
+let disk_name_stem = Filename.get_temp_dir_name () ^ "/dynamic."
 let disk_suffix = ".vhd"
 
 let make_new_filename =
