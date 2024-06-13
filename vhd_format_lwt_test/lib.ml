@@ -11,7 +11,6 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Lesser General Public License for more details.
  *)
-open OUnit
 open Lwt
 
 module IO = Vhd_format_lwt.IO
@@ -20,6 +19,19 @@ module Impl = Vhd_format.F.From_file(IO)
 module F = Vhd_format.F
 module Field = F.Vhd.Field
 open Impl
+
+let header =
+  Alcotest.testable (Fmt.of_to_string F.Header.to_string) F.Header.equal
+
+let footer = Alcotest.testable (Fmt.of_to_string F.Footer.to_string) ( = )
+
+let bat = Alcotest.testable (Fmt.of_to_string F.BAT.to_string) F.BAT.equal
+
+let cstruct_to_string c = String.escaped (Cstruct.to_string c)
+
+let cstruct =
+  Alcotest.testable (Fmt.of_to_string cstruct_to_string) F.cstruct_equal
+
 
 module Memory = struct
   let alloc bytes =
@@ -66,8 +78,6 @@ let _absolute_sector_of vhd _position { Vhd_format.Patterns.block; sector } =
     | Last -> sectors_per_block - 1 in
     Some (Int64.(add(mul (of_int block) (of_int sectors_per_block)) (of_int relative_sector)))
 
-let cstruct_to_string c = String.escaped (Cstruct.to_string c)
-
 (* Verify that vhd [t] contains the sectors [expected] *)
 let check_written_sectors t expected =
   let y = Memory.alloc 512 in
@@ -78,7 +88,7 @@ let check_written_sectors t expected =
     ( match empty with
     | false -> fail (Failure "read empty sector, expected data")
     | true ->
-      assert_equal ~printer:cstruct_to_string ~cmp:F.cstruct_equal data y;
+      Alcotest.check cstruct "Read sector matches" data y ;
       return () ) >>= fun () ->
       loop xs in
   loop expected
@@ -110,10 +120,10 @@ let check_raw_stream_contents t expected =
           let actual = Cstruct.sub data (i * 512) 512 in
 
           if not(List.mem_assoc sector expected) then begin
-            assert_equal ~printer:cstruct_to_string ~cmp:F.cstruct_equal empty_sector actual
+            Alcotest.check cstruct "Read sector matches empty" empty_sector actual
           end else begin
             let expected = List.assoc sector expected in
-            assert_equal ~printer:cstruct_to_string ~cmp:F.cstruct_equal expected actual;
+            Alcotest.check cstruct "Read sector matches" expected actual
           end;
           check (i + 1) in
       check 0;
@@ -129,7 +139,7 @@ let check_raw_stream_contents t expected =
           else
             let expected = List.assoc offset expected in
             let actual = Cstruct.sub remaining 0 F.sector_size in
-            assert_equal ~printer:cstruct_to_string ~cmp:F.cstruct_equal expected actual;
+            Alcotest.check cstruct "written sector matches" expected actual ;
             loop (Int64.(add offset 1L)) (Cstruct.shift remaining F.sector_size) in
       loop offset data
   ) 0L stream.elements >>= fun next_sector ->
