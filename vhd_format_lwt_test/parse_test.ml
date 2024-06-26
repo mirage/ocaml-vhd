@@ -165,11 +165,11 @@ let initial = {
 
 let sectors = Hashtbl.create 16
 let sector_lookup message =
-  if Hashtbl.mem sectors message
-  then Hashtbl.find sectors message
-  else
+  match Hashtbl.find_opt sectors message with
+  | Some x -> x
+  | None ->
     let data = fill_sector_with message in
-    Hashtbl.replace sectors message data;
+    Hashtbl.replace sectors message data ;
     data
 
 let execute state = function
