@@ -7,7 +7,7 @@ homepage: "https://github.com/mirage/ocaml-vhd"
 doc: "https://mirage.github.io/ocaml-vhd/"
 bug-reports: "https://github.com/mirage/ocaml-vhd/issues"
 depends: [
-  "ocaml" {>= "4.05"}
+  "ocaml" {>= "4.10"}
   "alcotest" {with-test}
   "alcotest-lwt" {with-test & >= "1.0.0"}
   "bigarray-compat" {>= "1.1.0"}

@@ -251,7 +251,7 @@ module UTF16 = struct
         end
       else
         failwith "Bad unicode character!" in
-    String.concat "" (List.map (fun c -> Printf.sprintf "%c" c) (List.flatten (List.map utf8_chars_of_int (Array.to_list s))))
+    String.concat "" (List.map (fun c -> Printf.sprintf "%c" c) (List.concat_map utf8_chars_of_int (Array.to_list s)))
 
   let to_utf8 x =
     try
@@ -1186,7 +1186,7 @@ module Vhd = struct
           let start = l.platform_data_offset in
           let length = Int64.of_int32 l.platform_data_space in
           tomarkers name start length) locators in
-        (List.flatten locations) @ blocks
+        (List.concat locations) @ blocks
       end else blocks in
     let bat_start = t.header.Header.table_offset in
     let bat_size = Int64.of_int t.header.Header.max_table_entries in

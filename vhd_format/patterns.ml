@@ -79,7 +79,7 @@ let string_of_operation = function
   | Write (p, _) -> Printf.sprintf "Write:%s:%s" (string_of_choice p.block) (string_of_choice p.sector)
 
 let descr_of_program p =
-  let lines = List.concat (List.map descr_of_operation p) in
+  let lines = List.concat_map descr_of_operation p in
   List.rev (fst (List.fold_left (fun (sofar, next) line ->
     Printf.sprintf "%d %s" (next * 10) line :: sofar, next + 1
   ) ([], 1) lines))

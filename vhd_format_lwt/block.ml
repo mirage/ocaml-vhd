@@ -55,7 +55,7 @@ let to_sectors bufs =
     if Cstruct.length remaining = 0 then List.rev acc else
     let available = min 512 (Cstruct.length remaining) in
     loop (Cstruct.sub remaining 0 available :: acc) (Cstruct.shift remaining available) in
-  List.concat (List.map (loop []) bufs)
+  List.concat_map (loop []) bufs
 
 let forall_sectors f offset bufs =
   let rec one offset = function
