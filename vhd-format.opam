@@ -12,7 +12,7 @@ depends: [
   "cstruct" {>= "6.0.0"}
   "io-page"
   "rresult" {>= "0.3.0"}
-  "uuidm" {>= "0.9.6"}
+  "uuidm" {>= "0.9.9"}
   "stdlib-shims"
   "dune" {>= "2.0"}
   "ppx_cstruct" {build & >= "3.0.0"}
