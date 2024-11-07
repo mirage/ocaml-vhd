@@ -1,3 +1,4 @@
 (library
  (name disk)
+ (package vhd-format-lwt)
  (libraries cstruct lwt lwt.unix))

@@ -14,7 +14,7 @@ depends: [
   "rresult" {>= "0.3.0"}
   "uuidm" {>= "0.9.9"}
   "stdlib-shims"
-  "dune" {>= "2.0"}
+  "dune" {>= "2.8"}
   "ppx_cstruct" {build & >= "3.0.0"}
 ]
 available: os = "linux" | os = "macos"
