@@ -18,16 +18,18 @@
 let sector_size = 512
 let sector_shift = 9
 
+let mib n =
+  let ( ** ) = Int64.mul in
+  Int64.(1024L ** 1024L ** of_int n)
+
+let sync_limit = mib 4
+
 exception Cstruct_differ
 
 let cstruct_equal a b =
   let check_contents a b =
     try
-      for i = 0 to Cstruct.length a - 1 do
-        let a' = Cstruct.get_char a i in
-        let b' = Cstruct.get_char b i in
-        if a' <> b' then raise Cstruct_differ
-      done;
+      if Cstruct.compare a b <> 0 then raise Cstruct_differ ;
       true
     with _ -> false in
   (Cstruct.length a = (Cstruct.length b)) && (check_contents a b)
@@ -80,9 +82,11 @@ let _kib_shift = 10
 let _mib_shift = 20
 let _gib_shift = 30
 
-let blank_uuid = match Uuidm.of_bytes (String.make 16 '\000') with
-  | Some x -> x
-  | None -> assert false (* never happens *)
+let blank_uuid = Uuidm.nil
+
+let new_uuid () =
+  let random = Random.State.make_self_init () in
+  Uuidm.v4_gen random ()
 
 module Feature = struct
   type t = 
@@ -247,7 +251,7 @@ module UTF16 = struct
         end
       else
         failwith "Bad unicode character!" in
-    String.concat "" (List.map (fun c -> Printf.sprintf "%c" c) (List.flatten (List.map utf8_chars_of_int (Array.to_list s))))
+    String.concat "" (List.map (fun c -> Printf.sprintf "%c" c) (List.concat_map utf8_chars_of_int (Array.to_list s)))
 
   let to_utf8 x =
     try
@@ -348,12 +352,9 @@ module Footer = struct
     ?(creator_application = default_creator_application)
     ?(creator_version = default_creator_version)
     ?(creator_host_os = Host_OS.Other 0l)
-    ~current_size ?original_size
+    ~current_size ?(original_size = current_size)
     ~disk_type
-    ?(uid = Uuidm.v `V4) ?(saved_state = false) () =
-  let original_size = match original_size with
-    | None -> current_size
-    | Some x -> x in
+    ?(uid = new_uuid ()) ?(saved_state = false) () =
   let geometry = Geometry.of_sectors Int64.(current_size lsr sector_shift) in
   let checksum = 0l in
   { features; data_offset; time_stamp; creator_application;
@@ -429,7 +430,7 @@ type footer = {
     set_footer_sectors buf t.geometry.Geometry.sectors;
     set_footer_disk_type buf (Disk_type.to_int32 t.disk_type);
     set_footer_checksum buf 0l;
-    set_footer_uid (Uuidm.to_bytes t.uid) 0 buf;
+    set_footer_uid (Uuidm.to_binary_string t.uid) 0 buf;
     set_footer_saved_state buf (if t.saved_state then 1 else 0);
     let remaining = Cstruct.shift buf sizeof_footer in
     for i = 0 to 426 do
@@ -464,7 +465,7 @@ type footer = {
     Disk_type.of_int32 (get_footer_disk_type buf) >>= fun disk_type ->
     let checksum = get_footer_checksum buf in
     let bytes = copy_footer_uid buf in
-    ( match Uuidm.of_bytes bytes with
+    ( match Uuidm.of_binary_string bytes with
       | None -> R.error (Failure (Printf.sprintf "Failed to decode UUID: %s" (String.escaped bytes)))
       | Some uid -> R.ok uid ) >>= fun uid ->
     let saved_state = get_footer_saved_state buf = 1 in
@@ -776,7 +777,7 @@ module Header = struct
     set_header_max_table_entries buf (Int32.of_int t.max_table_entries);
     set_header_block_size buf (Int32.of_int (1 lsl (t.block_size_sectors_shift + sector_shift)));
     set_header_checksum buf 0l;
-    set_header_parent_unique_id (Uuidm.to_bytes t.parent_unique_id) 0 buf;
+    set_header_parent_unique_id (Uuidm.to_binary_string t.parent_unique_id) 0 buf;
     set_header_parent_time_stamp buf t.parent_time_stamp;
     set_header_reserved buf 0l;
     for i = 0 to 511 do
@@ -827,7 +828,7 @@ module Header = struct
     let block_size_sectors_shift = block_size_shift - sector_shift in
     let checksum = get_header_checksum buf in
     let bytes = copy_header_parent_unique_id buf in
-    ( match (Uuidm.of_bytes bytes) with
+    ( match (Uuidm.of_binary_string bytes) with
       | None -> R.error (Failure (Printf.sprintf "Failed to decode UUID: %s" (String.escaped bytes)))
       | Some x -> R.ok x ) >>= fun parent_unique_id ->
     let parent_time_stamp = get_header_parent_time_stamp buf in
@@ -1185,7 +1186,7 @@ module Vhd = struct
           let start = l.platform_data_offset in
           let length = Int64.of_int32 l.platform_data_space in
           tomarkers name start length) locators in
-        (List.flatten locations) @ blocks
+        (List.concat locations) @ blocks
       end else blocks in
     let bat_start = t.header.Header.table_offset in
     let bat_size = Int64.of_int t.header.Header.max_table_entries in
@@ -1233,11 +1234,6 @@ module Vhd = struct
 
   module Field = struct
     (** Dynamically-typed field-level access *)
-
-    type 'a f = {
-      name: string;
-      get: 'a t -> string;
-    }
 
     let _features = "features"
     let _data_offset = "data-offset"
@@ -1339,8 +1335,6 @@ module Vhd = struct
       else if key = _batmap_checksum
       then opt (fun (t, _) -> Int32.to_string t.Batmap_header.checksum) t.batmap
       else None
-    type 'a t = 'a f
-
    end
 end
 
@@ -1672,7 +1666,7 @@ module From_file = functor(F: S.FILE) -> struct
       return t
 
     let create_dynamic ~filename ~size
-      ?(uuid = Uuidm.v `V4)
+      ?(uuid = new_uuid ())
       ?(saved_state=false)
       ?(features=[]) () =
 
@@ -1723,7 +1717,7 @@ module From_file = functor(F: S.FILE) -> struct
 
     let create_difference ~filename ~parent
       ?(relative_path = true)
-      ?(uuid=Uuidm.v `V4)
+      ?(uuid=new_uuid ())
       ?(saved_state=false)
       ?(features=[]) () =
 
@@ -2000,7 +1994,11 @@ module From_file = functor(F: S.FILE) -> struct
     | false, Some parent -> in_any_bat parent i
     | false, None -> false
 
-  let rec coalesce_request acc s =
+    (* The coalesced_sectors variable accumulates the number of bytes that have
+       been coalesced so far. It is made optional because we only use it when we
+       continuously match with one pattern, i.e. the pattern where we coalesce
+       consecutive sectors, and default it to 1 when we are not coalescing. *)
+    let rec coalesce_request ?(coalesced_sectors = 1L) acc s =
     let open Int64 in
     s >>= fun next -> match next, acc with
     | End, None -> return End
@@ -2011,11 +2009,16 @@ module From_file = functor(F: S.FILE) -> struct
     | Cons(`Empty n, next), Some(`Empty m) -> coalesce_request (Some(`Empty (n ++ m))) (next ())
     | Cons(`Empty _n, _next), Some x -> return (Cons(x, fun () -> coalesce_request None s))
     | Cons(`Copy(h, ofs, len), next), None -> coalesce_request (Some (`Copy(h, ofs, len))) (next ())
-    | Cons(`Copy(h, ofs, len), next), Some(`Copy(h', ofs', len')) ->
-      if ofs ++ len = ofs' && h == h'
-      then coalesce_request (Some(`Copy(h, ofs, len ++ len'))) (next ())
-      else if ofs' ++ len' = ofs && h == h'
-      then coalesce_request (Some(`Copy(h, ofs', len ++ len'))) (next ())
+    | Cons (`Copy (h, ofs, len), next), Some (`Copy (h', ofs', len'))
+      when coalesced_sectors ** Int64.of_int sector_size <= sync_limit ->
+      if ofs ++ len = ofs' && h == h' then
+        coalesce_request ~coalesced_sectors:(coalesced_sectors ++ 1L)
+          (Some (`Copy (h, ofs, len ++ len')))
+          (next ())
+      else if ofs' ++ len' = ofs && h == h' then
+        coalesce_request ~coalesced_sectors:(coalesced_sectors ++ 1L)
+          (Some (`Copy (h, ofs', len ++ len')))
+          (next ())
       else return (Cons(`Copy(h', ofs', len'), fun () -> coalesce_request None s))
     | Cons(`Copy(_h, _ofs, _len), _next), Some x -> return(Cons(x, fun () -> coalesce_request None s))
 
@@ -2314,103 +2317,122 @@ module From_file = functor(F: S.FILE) -> struct
     let vhd ?from (raw: 'a) (vhd: fd Vhd.t) = Vhd_input.vhd_common ?from ~raw vhd
   end
 
+
+  (* Create a VHD stream from data on t, using `include_block` guide us which blocks have data *)
+  let vhd_from_raw t find_data_blocks =
+    let open Raw in
+
+    (* The physical disk layout will be:
+       byte 0   - 511:  backup footer
+       byte 512 - 1535: file header
+       ... empty sector-- this is where we'll put the parent locator
+       byte 2048 - ...: BAT *)
+    let data_offset = 512L in
+    let table_offset = 2048L in
+
+    F.get_file_size t.filename >>= fun current_size ->
+    let header = Header.create ~table_offset ~current_size  () in
+
+    let current_size = Int64.(shift_left (of_int header.Header.max_table_entries) (header.Header.block_size_sectors_shift + sector_shift)) in
+    let footer = Footer.create ~data_offset ~current_size ~disk_type:Disk_type.Dynamic_hard_disk () in
+    let bat_buffer = Memory.alloc (BAT.sizeof_bytes header) in
+    let bat = BAT.of_buffer header bat_buffer in
+
+    let sizeof_bat = BAT.sizeof_bytes header in
+
+    let sizeof_bitmap = Header.sizeof_bitmap header in
+    (* We'll always set all bitmap bits *)
+    let bitmap = Memory.alloc sizeof_bitmap in
+    for i = 0 to sizeof_bitmap - 1 do
+      Cstruct.set_uint8 bitmap i 0xff
+    done;
+
+    let sizeof_data = 1 lsl (header.Header.block_size_sectors_shift + sector_shift) in
+
+    let blocks = header.Header.max_table_entries in
+
+    find_data_blocks ~blocks ~block_size:(Int64.of_int sizeof_data)
+    >>= fun data_block_indices ->
+
+    (* Fill up the BAT *)
+
+    (* Calculate where the first data block will go. Note the sizeof_bat is already
+       rounded up to the next sector boundary. *)
+    let first_block = Int64.(table_offset ++ (of_int sizeof_bat)) in
+    (* A data block contains a bitmap plus data *)
+    let size_of_data_block = Int64.of_int (sizeof_bitmap + sizeof_data) in
+    let rec set_next_bat_entry next_byte = function
+      | [] -> ()
+      | i :: next_indices ->
+          (* A BAT entry contains an absolute sector offset in four bytes *)
+          BAT.set bat i (Int64.(to_int32(next_byte lsr sector_shift))) ;
+          let next_byte' = Int64.(next_byte ++ size_of_data_block) in
+          set_next_bat_entry next_byte' next_indices
+    in
+    set_next_bat_entry first_block data_block_indices ;
+
+    (* Fill up the data blocks *)
+
+    let write_sectors buf andthen =
+      return(Cons(`Sectors buf, andthen)) in
+
+    let rec block andthen = function 
+      | [] -> andthen ()
+      | i :: next_indices ->
+          let length = Int64.(shift_left 1L header.Header.block_size_sectors_shift) in
+          let sector = Int64.(shift_left (of_int i) header.Header.block_size_sectors_shift) in
+          return (Cons(`Sectors bitmap, fun () -> return (Cons(`Copy(t.Raw.handle, sector, length), fun () -> block andthen next_indices))))
+    in
+
+    assert(Footer.sizeof = 512);
+    assert(Header.sizeof = 1024);
+
+    let buf = Memory.alloc (max Footer.sizeof (max Header.sizeof sizeof_bat)) in
+    let (_: Footer.t) = Footer.marshal buf footer in
+    coalesce_request None (return (Cons(`Sectors(Cstruct.sub buf 0 Footer.sizeof), fun () ->
+      let (_: Header.t) = Header.marshal buf header in
+      write_sectors (Cstruct.sub buf 0 Header.sizeof) (fun () ->
+        return(Cons(`Empty 1L, fun () ->
+          BAT.marshal buf bat;
+          write_sectors (Cstruct.sub buf 0 sizeof_bat) (fun () ->
+            let (_: Footer.t) = Footer.marshal buf footer in
+            block (fun () ->
+              return(Cons(`Sectors(Cstruct.sub buf 0 Footer.sizeof), fun () -> return End))
+            ) data_block_indices
+          )
+       ))
+     )
+    ))) >>= fun elements ->
+    let metadata = Int64.of_int ((2 * Footer.sizeof + Header.sizeof + sizeof_bat + sizeof_bitmap * blocks)) in
+    let size = { empty with metadata; total = current_size; copy = current_size } in
+    return { elements; size }
+
    module Raw_input = struct
      open Raw
 
      let vhd t =
-       (* The physical disk layout will be:
-          byte 0   - 511:  backup footer
-          byte 512 - 1535: file header
-          ... empty sector-- this is where we'll put the parent locator
-          byte 2048 - ...: BAT *)
-
-       let data_offset = 512L in
-       let table_offset = 2048L in
-
-       F.get_file_size t.filename >>= fun current_size ->
-       let header = Header.create ~table_offset ~current_size  () in
-
-       let current_size = Int64.(shift_left (of_int header.Header.max_table_entries) (header.Header.block_size_sectors_shift + sector_shift)) in
-       let footer = Footer.create ~data_offset ~current_size ~disk_type:Disk_type.Dynamic_hard_disk () in
-       let bat_buffer = Memory.alloc (BAT.sizeof_bytes header) in
-       let bat = BAT.of_buffer header bat_buffer in
-
-       let sizeof_bat = BAT.sizeof_bytes header in
-
-       let sizeof_bitmap = Header.sizeof_bitmap header in
-       (* We'll always set all bitmap bits *)
-       let bitmap = Memory.alloc sizeof_bitmap in
-       for i = 0 to sizeof_bitmap - 1 do
-         Cstruct.set_uint8 bitmap i 0xff
-       done;
-
-       let sizeof_data = 1 lsl (header.Header.block_size_sectors_shift + sector_shift) in
-
-       let include_block i =
-         let length = Int64.(shift_left 1L (sector_shift + header.Header.block_size_sectors_shift)) in
-         let offset = Int64.(shift_left (of_int i) (sector_shift + header.Header.block_size_sectors_shift)) in
+       let include_block block_size index =
          (* is the next data byte in the next block? *)
+         let offset = Int64.(mul block_size (of_int index)) in
          F.lseek_data t.Raw.handle offset
          >>= fun data ->
-         return (Int64.add offset length > data) in
-
-       (* Calculate where the first data block will go. Note the sizeof_bat is already
-          rounded up to the next sector boundary. *)
-       let first_block = Int64.(table_offset ++ (of_int sizeof_bat)) in
-       let next_byte = ref first_block in
-       let blocks = header.Header.max_table_entries in
-       let rec loop i =
-         if i = blocks
-         then return ()
-         else
-           include_block i
-           >>= function
-           | true ->
-             BAT.set bat i (Int64.(to_int32(!next_byte lsr sector_shift)));
-             next_byte := Int64.(!next_byte ++ (of_int sizeof_bitmap) ++ (of_int sizeof_data));
-             loop (i+1)
-           | false ->
-             loop (i+1) in
-       loop 0
-       >>= fun () ->
-
-       let write_sectors buf _from andthen =
-         return(Cons(`Sectors buf, andthen)) in
-       let rec block i andthen =
-         if i >= blocks
-         then andthen ()
-         else
-           include_block i
-           >>= function
-           | true ->
-             let length = Int64.(shift_left 1L header.Header.block_size_sectors_shift) in
-             let sector = Int64.(shift_left (of_int i) header.Header.block_size_sectors_shift) in
-             return (Cons(`Sectors bitmap, fun () -> return (Cons(`Copy(t.Raw.handle, sector, length), fun () -> block (i+1) andthen))))
-           | false ->
-             block (i + 1) andthen in
-
-       assert(Footer.sizeof = 512);
-       assert(Header.sizeof = 1024);
-
-       let buf = Memory.alloc (max Footer.sizeof (max Header.sizeof sizeof_bat)) in
-       let (_: Footer.t) = Footer.marshal buf footer in
-       coalesce_request None (return (Cons(`Sectors(Cstruct.sub buf 0 Footer.sizeof), fun () ->
-         let (_: Header.t) = Header.marshal buf header in
-         write_sectors (Cstruct.sub buf 0 Header.sizeof) 0 (fun () ->
-           return(Cons(`Empty 1L, fun () ->
-             BAT.marshal buf bat;
-             write_sectors (Cstruct.sub buf 0 sizeof_bat) 0 (fun () ->
-               let (_: Footer.t) = Footer.marshal buf footer in
-               block 0 (fun () ->
-                 return(Cons(`Sectors(Cstruct.sub buf 0 Footer.sizeof), fun () -> return End))
-               )
-             )
-          ))
-        )
-       ))) >>= fun elements ->
-       let metadata = Int64.of_int ((2 * Footer.sizeof + Header.sizeof + sizeof_bat + sizeof_bitmap * blocks)) in
-       let size = { empty with metadata; total = current_size; copy = current_size } in
-       return { elements; size } 
+         return Int64.(add offset block_size > data)
+       in
+       let find_data_blocks ~blocks ~block_size =
+         let rec loop index acc =
+           if index < blocks then
+             include_block block_size index
+             >>= function
+             | true ->
+               loop (index + 1) (index :: acc)
+             | false ->
+               loop (index + 1) acc
+           else
+             return (List.rev acc)
+         in
+         loop 0 []
+       in
+       vhd_from_raw t find_data_blocks
 
      let raw t =
        F.get_file_size t.filename >>= fun bytes ->
@@ -2445,5 +2467,9 @@ module From_file = functor(F: S.FILE) -> struct
        copy 0L (bytes lsr sector_shift)
        >>= fun elements ->
        return { size; elements }
+   end
+
+   module Hybrid_raw_input = struct
+     let vhd = vhd_from_raw
    end
 end

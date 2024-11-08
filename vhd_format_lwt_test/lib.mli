@@ -16,3 +16,11 @@ val verify: Vhd_format_lwt.IO.fd Vhd_format.F.Vhd.t -> (int64 * Cstruct.t) list 
 (** [verify vhd sectors] performs various checks on [vhd] to ensure it has
     exactly the content given by [sectors], an association list of sector
     number to 512-byte block. *)
+
+val header : Vhd_format.F.Header.t Alcotest.testable
+
+val footer : Vhd_format.F.Footer.t Alcotest.testable
+
+val bat : Vhd_format.F.BAT.t Alcotest.testable
+
+val cstruct : Cstruct.t Alcotest.testable
