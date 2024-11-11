@@ -1,3 +1,14 @@
+## v0.13.0 (2024-11-11)
+* Add explicit dependencies to the unix library (psafont, #79)
+* Include changes present in the in xapi. (#78)
+  - Add Hybrid_raw_input (robhoes)
+  - Limit the size of sectors when coalescing (Vincent-lau)
+  - Speed up unit tests, make them more reliable (etorok, psafont)
+  - Replace some existing patterns with functions in newer compiler versions,
+    requires OCaml 4.10 (last-genius, contificate)
+* Update usages of io-page and cstruct for compatibility with latest releases
+  (psafont #77)
+
 ## v0.12.3 (2022-06-19)
 * Lint opam file (@kit-ty-kate, #72)
 * Use ounit2 (@Alessandro-Barbieri, #73)

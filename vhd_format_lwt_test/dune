@@ -1,5 +1,5 @@
 (test
  (name parse_test)
  (package vhd-format-lwt)
- (libraries alcotest alcotest-lwt cstruct disk io-page fmt lwt lwt.unix vhd-format
+ (libraries alcotest alcotest-lwt cstruct disk io-page fmt lwt lwt.unix unix vhd-format
    vhd_format_lwt))
